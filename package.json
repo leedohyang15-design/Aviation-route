@@ -1,0 +1,37 @@
+{
+  "name": "aviation-route",
+  "version": "0.1.0",
+  "description": "Science-museum exhibit: real-time worldwide flight tracker for equirectangular sphere projection, with a dual-monitor 2D control screen.",
+  "author": "leedohyang15-design",
+  "license": "MIT",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "hub": "tsx server/standalone.ts",
+    "test:projection": "tsx server/../scripts/test-projection.ts"
+  },
+  "dependencies": {
+    "maplibre-gl": "^4.7.1",
+    "three": "^0.169.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.169.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

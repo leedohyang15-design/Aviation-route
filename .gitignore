@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+# Optional large earth texture (drop your own; not tracked)
+public/earth_equirect.jpg
