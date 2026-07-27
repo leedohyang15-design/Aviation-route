@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { defineConfig } from 'electron-vite'
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
 // The renderer has TWO entry points that ship as separate windows:
@@ -7,6 +7,9 @@ import react from '@vitejs/plugin-react'
 //   - display.html  → equirectangular three.js frame (sphere projector)
 export default defineConfig({
   main: {
+    // Keep node_modules (e.g. `ws`) external so their optional native deps
+    // (bufferutil/utf-8-validate) resolve at runtime instead of being bundled.
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'electron/main.ts') }
@@ -14,6 +17,7 @@ export default defineConfig({
     }
   },
   preload: {
+    plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'electron/preload.ts') }
