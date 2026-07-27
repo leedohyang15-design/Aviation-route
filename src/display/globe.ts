@@ -26,14 +26,17 @@ function altitudeColor(alt: number | null): THREE.Color {
 }
 
 interface Eased {
-  lon: number
+  lon: number // current rendered position
   lat: number
-  heading: number
-  tLon: number
+  heading: number // radians
+  speed: number // ground speed, m/s (for dead reckoning)
+  tLon: number // latest snapshot position (correction target)
   tLat: number
   tHeading: number
   color: THREE.Color
 }
+
+const M_PER_DEG = 111_320 // metres per degree of latitude
 
 export class Globe {
   private renderer: THREE.WebGLRenderer
@@ -45,6 +48,7 @@ export class Globe {
   private selectedRing: THREE.Mesh
   private routeGroup = new THREE.Group()
   private raf = 0
+  private lastFrame = 0
 
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
@@ -169,17 +173,20 @@ export class Globe {
       seen.add(a.icao24)
       const color = altitudeColor(a.altitude)
       const h = ((a.heading ?? 0) * Math.PI) / 180
+      const speed = a.onGround ? 0 : a.velocity ?? 0
       const cur = this.eased.get(a.icao24)
       if (cur) {
         cur.tLon = a.lon
         cur.tLat = a.lat
         cur.tHeading = h
+        cur.speed = speed
         cur.color = color
       } else {
         this.eased.set(a.icao24, {
           lon: a.lon,
           lat: a.lat,
           heading: h,
+          speed,
           tLon: a.lon,
           tLat: a.lat,
           tHeading: h,
@@ -235,19 +242,30 @@ export class Globe {
     )
   }
 
-  private frame = (): void => {
-    // Ease each aircraft toward its target (wrap-aware in longitude).
-    const k = 0.12
+  private frame = (now: number): void => {
+    // Time step (seconds), capped so a backgrounded tab doesn't teleport planes.
+    const dt = this.lastFrame ? Math.min(0.5, (now - this.lastFrame) / 1000) : 0
+    this.lastFrame = now
+
+    // Dead reckoning: advance each plane along its heading at its ground speed,
+    // then gently correct toward the latest snapshot. This keeps motion smooth
+    // even when real updates are 15–60s apart (OpenSky credit budget).
+    const correct = 0.08
     let i = 0
     for (const id of this.order) {
       const e = this.eased.get(id)
       if (!e) continue
-      e.lon += wrapLon(e.tLon - e.lon) * k
-      e.lat += (e.tLat - e.lat) * k
+      if (e.speed > 0 && dt > 0) {
+        const cosLat = Math.max(0.05, Math.cos((e.lat * Math.PI) / 180))
+        e.lat += ((e.speed * Math.cos(e.heading)) / M_PER_DEG) * dt
+        e.lon += ((e.speed * Math.sin(e.heading)) / (M_PER_DEG * cosLat)) * dt
+      }
+      e.lon = wrapLon(e.lon + wrapLon(e.tLon - e.lon) * correct)
+      e.lat += (e.tLat - e.lat) * correct
       e.heading += ((((e.tHeading - e.heading + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) %
         (2 * Math.PI) -
         Math.PI) *
-        k
+        0.1
       const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
       this.dummy.position.set(u, 1 - v, 0)
       this.dummy.rotation.z = -e.heading
@@ -273,6 +291,7 @@ export class Globe {
   }
 
   start(): void {
+    this.lastFrame = 0
     if (!this.raf) this.raf = requestAnimationFrame(this.frame)
   }
 

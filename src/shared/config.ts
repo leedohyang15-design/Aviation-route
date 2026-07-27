@@ -18,8 +18,16 @@ export const HUB_PORT = Number(readEnv('HUB_PORT') ?? 8787)
 /** ws:// URL the renderer windows connect to (hub is always local). */
 export const HUB_URL = readEnv('HUB_URL') ?? `ws://127.0.0.1:${HUB_PORT}`
 
-/** Poll interval (ms) for the upstream flight-data source. */
-export const POLL_INTERVAL_MS = Number(readEnv('POLL_INTERVAL_MS') ?? 8000)
+/**
+ * Poll interval (ms) for OpenSky. The free tier is 4000 credits/day and a
+ * worldwide /states/all request costs ~4 credits, so ~1000 requests/day. To run
+ * all day, keep this fairly high (e.g. 30000–60000); dead-reckoning keeps motion
+ * smooth between polls. Default 15s suits demo sessions.
+ */
+export const OPENSKY_POLL_INTERVAL_MS = Number(readEnv('OPENSKY_POLL_INTERVAL_MS') ?? 15000)
+
+/** Poll interval (ms) for the mock feed (no credit limits — can be brisk). */
+export const MOCK_POLL_INTERVAL_MS = Number(readEnv('MOCK_POLL_INTERVAL_MS') ?? 5000)
 
 /** Equirectangular render target. Must stay exactly 2:1 for sphere projection. */
 export const EQUIRECT_WIDTH = Number(readEnv('EQUIRECT_WIDTH') ?? 4096)

@@ -5,7 +5,10 @@
 
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
+import { loadEnv } from '../server/env'
 import { startHub, type Hub } from '../server/hub'
+
+loadEnv() // read OPENSKY_* from .env (project root in dev) before starting the hub
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL
 

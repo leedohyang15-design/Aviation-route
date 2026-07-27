@@ -9,7 +9,7 @@
 
 import type { Aircraft } from '../src/shared/types'
 import type { FlightFeed } from './feed'
-import { POLL_INTERVAL_MS } from '../src/shared/config'
+import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -86,10 +86,11 @@ export function createOpenSkyFeed(): FlightFeed {
     return out
   }
 
+  /** Poll once; returns how many ms to wait before the next poll. */
   async function poll(
     onSnapshot: (a: Aircraft[]) => void,
     onStatus: (connected: boolean) => void
-  ): Promise<void> {
+  ): Promise<number> {
     try {
       const bearer = await fetchToken()
       const ctrl = new AbortController()
@@ -99,30 +100,43 @@ export function createOpenSkyFeed(): FlightFeed {
         signal: ctrl.signal
       })
       clearTimeout(to)
+
+      if (res.status === 429) {
+        // Out of credits: honour the server's retry-after (default 5 min).
+        const retry = Number(res.headers.get('X-Rate-Limit-Retry-After-Seconds')) || 300
+        onStatus(false)
+        console.warn(`[opensky] rate limited (429). Backing off ${retry}s.`)
+        return retry * 1000
+      }
       if (!res.ok) throw new Error(`OpenSky /states/all failed: ${res.status}`)
+
+      const remaining = res.headers.get('X-Rate-Limit-Remaining')
       const json = (await res.json()) as { time: number; states: RawState[] | null }
       const aircraft = normalize(json.states ?? [], json.time)
       onStatus(true)
       onSnapshot(aircraft)
+      if (remaining != null) console.log(`[opensky] ${aircraft.length} aircraft, ${remaining} credits left`)
+      return OPENSKY_POLL_INTERVAL_MS
     } catch (err) {
       onStatus(false)
       console.error('[opensky] poll error:', (err as Error).message)
+      return OPENSKY_POLL_INTERVAL_MS
     }
   }
 
   return {
     source: 'opensky',
     start(onSnapshot, onStatus) {
-      const tick = () => {
+      const loop = async () => {
         if (stopped) return
-        void poll(onSnapshot, onStatus)
+        const wait = await poll(onSnapshot, onStatus)
+        if (!stopped) timer = setTimeout(loop, wait)
       }
-      tick()
-      timer = setInterval(tick, POLL_INTERVAL_MS)
+      void loop()
     },
     stop() {
       stopped = true
-      if (timer) clearInterval(timer)
+      if (timer) clearTimeout(timer)
     },
     // OpenSky /states/all carries no origin/destination, so no route yet.
     // P3 enrichment (adsbdb.com / hexdb.io) would populate this.

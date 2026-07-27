@@ -31,15 +31,22 @@ npm run dev        # Electron: 컨트롤 창 + 디스플레이 창을 각 모니
 
 ### OpenSky 실데이터 연결
 
-[OpenSky](https://opensky-network.org/) 계정에서 API 클라이언트를 만들고 환경변수로 주입:
+1. [opensky-network.org](https://opensky-network.org/) 로그인 → **Account → API Client** 에서
+   클라이언트를 만들어 `client_id` / `client_secret` 을 받는다.
+2. 프로젝트 루트의 `.env.example` 을 `.env` 로 복사하고 값을 채운다:
+   ```
+   OPENSKY_CLIENT_ID=...
+   OPENSKY_CLIENT_SECRET=...
+   ```
+3. `npm run dev` — 자격증명이 있으면 자동으로 OpenSky를 폴링한다. (`.env` 는 git 제외)
 
-```bash
-export OPENSKY_CLIENT_ID=...
-export OPENSKY_CLIENT_SECRET=...
-npm run dev
-```
+`FEED=mock` 을 주면 자격증명이 있어도 강제로 mock을 쓴다.
 
-자격증명이 있으면 자동으로 OpenSky를 폴링한다. `FEED=mock` 을 주면 강제로 mock을 쓴다.
+> **크레딧 주의:** 무료 티어는 하루 4,000 크레딧이고 전 세계 `/states/all` 요청은 약 4 크레딧
+> (하루 ~1,000회)이다. 하루 종일 켜두려면 `OPENSKY_POLL_INTERVAL_MS` 를 30000–60000으로
+> 올리는 게 안전하다. 폴링 간격이 길어도 **dead-reckoning**(속도·방위 기반 추측항법)으로
+> 비행기가 끊김 없이 움직이고, 새 데이터가 오면 위치를 부드럽게 보정한다. 크레딧이 소진되면
+> (429) 서버가 알려주는 시간만큼 자동으로 백오프한다.
 
 ### 허브만 단독 실행 (개발/디버깅)
 

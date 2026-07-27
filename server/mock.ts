@@ -5,7 +5,7 @@
 import type { Aircraft, GeoPoint } from '../src/shared/types'
 import type { FlightFeed } from './feed'
 import { greatCirclePoints } from '../src/shared/projection'
-import { POLL_INTERVAL_MS } from '../src/shared/config'
+import { MOCK_POLL_INTERVAL_MS } from '../src/shared/config'
 
 interface Airport {
   code: string
@@ -138,7 +138,7 @@ export function createMockFeed(count = 400): FlightFeed {
       timer = setInterval(() => {
         advance()
         onSnapshot(snapshot())
-      }, POLL_INTERVAL_MS)
+      }, MOCK_POLL_INTERVAL_MS)
     },
     stop() {
       if (timer) clearInterval(timer)
