@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
-import { FlightDetailCard } from '../common/FlightDetailCard'
 import { CompassRose } from '../common/CompassRose'
 import { Globe } from './globe'
 
@@ -37,9 +36,6 @@ export function DisplayApp(): JSX.Element {
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
   }, [detail, state.selected])
 
-  const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
-  const d = detail && detail.icao24 === state.selected ? detail : null
-
   return (
     <div className="display-root">
       <div className="stage">
@@ -66,12 +62,6 @@ export function DisplayApp(): JSX.Element {
       <div className="hud hud-compass">
         <CompassRose />
       </div>
-
-      {sel && (
-        <div className="hud hud-card">
-          <FlightDetailCard aircraft={sel} detail={d} />
-        </div>
-      )}
     </div>
   )
 }

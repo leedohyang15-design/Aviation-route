@@ -1,95 +1,200 @@
-.fdcard {
-  color: #eef2f8;
+/* Boarding-pass style flight card (shown on the control panel). */
+.bpass {
+  background: #ffffff;
+  color: #1b2430;
+  border-radius: 18px;
+  padding: 18px 18px 14px;
   font-family: 'Pretendard', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  position: relative;
+  overflow: hidden;
 }
-.fd-airline {
+.bpass::before {
+  /* top accent stripe like a real pass */
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 6px;
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
+.bp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+.bp-airline {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 1.05em;
-  font-weight: 700;
-  opacity: 0.92;
-}
-.fd-airline img {
-  width: 20px;
-  height: 20px;
-}
-.fd-flightno {
-  font-size: clamp(22px, 2vw, 34px);
   font-weight: 800;
-  color: #ffe08a;
-  letter-spacing: 0.02em;
-  margin-bottom: 14px;
+  color: #1b2430;
 }
-.fd-od {
+.bp-plane {
+  color: #1b2430;
+  font-size: 1.1em;
+  line-height: 1;
+}
+.bp-badge {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.62em;
+  letter-spacing: 0.22em;
+  color: #8a97a6;
+  border: 1.5px solid #d7dee6;
+  border-radius: 8px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.bp-flightrow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 6px 0 12px;
+}
+.bp-flightno {
+  font-size: clamp(30px, 4vw, 44px);
+  font-weight: 900;
+  color: #f0920c;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.bp-seat {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.78em;
+  letter-spacing: 0.15em;
+  color: #8a97a6;
+}
+
+.bp-rule {
+  height: 1px;
+  background: #e6ebf0;
+  margin: 4px 0 14px;
+}
+
+.bp-od {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  align-items: start;
+  gap: 8px;
+}
+.bp-end .bp-code {
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 900;
+  line-height: 1;
+  color: #1b2430;
+}
+.bp-end .bp-city {
+  font-size: 0.9em;
+  color: #59667a;
+  margin-top: 6px;
+}
+.bp-end .bp-time {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.82em;
+  color: #8a97a6;
+  margin-top: 4px;
+}
+.bp-right {
+  text-align: right;
+}
+.bp-mid {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  align-items: center;
+  padding-top: 4px;
 }
-.fd-port {
+.bp-planeicon {
+  color: #f0920c;
+  font-size: 1.2em;
+}
+.bp-dashline {
+  width: 100%;
+  border-top: 2px dashed #cfd8e2;
+  margin: 6px 0;
+}
+.bp-dur {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.72em;
+  letter-spacing: 0.12em;
+  color: #8a97a6;
+}
+
+.bp-tear {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 16px -18px;
 }
-.fd-pin {
-  font-size: 1.1em;
+.bp-notch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #10182b; /* matches control panel bg to look punched-out */
+  flex: none;
 }
-.fd-city {
-  font-size: 1.25em;
-  font-weight: 700;
+.bp-dots {
+  flex: 1;
+  border-top: 2px dashed #d7dee6;
+  height: 0;
 }
-.fd-code {
-  font-size: 0.9em;
-  opacity: 0.6;
-}
-.fd-arrow {
-  font-size: 1.1em;
-  opacity: 0.7;
-  line-height: 1;
-  margin: 1px 0;
-}
-.fd-metrics {
+
+.bp-metrics {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 20px;
-  margin-top: 12px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px 12px;
+  margin: 0 0 14px;
 }
-.fdcard dt {
+.bp-metrics dt {
   font-size: 0.72em;
-  opacity: 0.55;
+  color: #8a97a6;
 }
-.fdcard dd {
-  font-size: 1.1em;
+.bp-metrics dd {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 1.02em;
   font-weight: 700;
+  color: #1b2430;
+  margin: 2px 0 0;
 }
-.fd-type {
-  margin-top: 10px;
-}
-.fd-progress {
-  margin-top: 14px;
-}
-.fd-pbar {
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.12);
+
+.bp-pbar {
+  height: 7px;
+  border-radius: 4px;
+  background: #eaeff4;
   overflow: hidden;
 }
-.fd-pbar span {
+.bp-pbar span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #ff3b30, #ffb03a);
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
 }
-.fd-ptimes {
+.bp-ptimes {
   display: flex;
   justify-content: space-between;
   font-size: 0.8em;
-  opacity: 0.75;
-  margin: 6px 0 10px;
+  color: #59667a;
+  margin: 8px 0 12px;
 }
-.mini-route {
+
+.bp-map {
   display: block;
-  border-radius: 8px;
+  border-radius: 10px;
+  border: 1px solid #e0e6ec;
+}
+
+.bp-barcode {
+  display: block;
+  width: 100%;
+  height: 42px;
+  margin: 14px 0 6px;
+}
+.bp-footer {
+  text-align: center;
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.78em;
+  letter-spacing: 0.18em;
+  color: #8a97a6;
 }

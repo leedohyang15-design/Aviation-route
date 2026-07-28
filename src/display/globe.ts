@@ -134,6 +134,12 @@ export class Globe {
   private targetSpan = 1
   private lonOffset = 0 // eased longitude offset (= -centerLon)
   private targetLonOffset = 0
+  // The projected display never zooms: it always shows the whole world. The only
+  // freedom is the horizontal spin (longitude offset). When a route is selected
+  // we lock the spin so origin+destination sit symmetrically around center;
+  // otherwise the control map's pan drives it.
+  private controlCenterLon = 0
+  private routeCenterLon: number | null = null
   private hasEarthTexture = false
   private nightHourOverride: number | null = null // null = live time
 
@@ -308,30 +314,23 @@ export class Globe {
     )
   }
 
-  /** Set the equirectangular view (center + zoom); the camera eases toward it.
-   * Horizontal is handled by a longitude offset so panning wraps around the
-   * globe; only vertical + zoom use the camera rect. */
+  /** The control map's viewport. On the projected display we only take the
+   * horizontal center (the spin) and ignore zoom/vertical entirely — the sphere
+   * always shows the whole world so nothing is ever cropped on the dome. */
   setView(view: ViewState): void {
-    const s = Math.max(0.02, Math.min(1, view.span))
-    this.targetLonOffset = -view.centerLon
-    const yc = (view.centerLat + 90) / 180 // worldY center (y-up)
-    let bottom = yc - s / 2
-    let top = yc + s / 2
-    if (s >= 1) {
-      bottom = 0
-      top = 1
-    } else {
-      if (bottom < 0) {
-        top -= bottom
-        bottom = 0
-      }
-      if (top > 1) {
-        bottom -= top - 1
-        top = 1
-      }
-    }
-    this.targetRect = { left: 0.5 - s / 2, right: 0.5 + s / 2, top: Math.min(1, top), bottom: Math.max(0, bottom) }
-    this.targetSpan = s
+    this.controlCenterLon = view.centerLon
+    this.applyViewTarget()
+  }
+
+  /** Recompute the camera target: always full-world (no zoom). When a route is
+   * selected, center the spin on the midpoint longitude between origin and
+   * destination so both endpoints sit as close to center as possible; otherwise
+   * follow the control map's horizontal pan. */
+  private applyViewTarget(): void {
+    const center = this.routeCenterLon ?? this.controlCenterLon
+    this.targetLonOffset = -center
+    this.targetRect = { left: 0, right: 1, top: 1, bottom: 0 }
+    this.targetSpan = 1
   }
 
   setOverlays(overlays: Record<OverlayKey, boolean>): void {
@@ -422,6 +421,15 @@ export class Globe {
     this.originMarker.visible = on
     this.destMarker.visible = on
     // Marker positions are updated each frame (they move with the pan offset).
+    // Center the spin between origin and destination so the whole route is framed.
+    if (this.routePoints) {
+      const o = this.routePoints[0]
+      const d = this.routePoints[this.routePoints.length - 1]
+      this.routeCenterLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
+    } else {
+      this.routeCenterLon = null
+    }
+    this.applyViewTarget()
   }
 
   /** Add fat (Line2) segments for a polyline, split at the actual display seam.

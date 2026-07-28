@@ -89,10 +89,9 @@ section {
   opacity: 0.6;
 }
 .selcard {
-  background: rgba(127, 212, 255, 0.08);
-  border: 1px solid rgba(127, 212, 255, 0.25);
-  border-radius: 12px;
-  padding: 14px;
+  /* Transparent wrapper — the white boarding pass provides its own surface. */
+  display: flex;
+  flex-direction: column;
 }
 .selcard .callsign {
   font-size: 20px;
