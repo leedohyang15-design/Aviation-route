@@ -56,7 +56,11 @@ export function createOpenSkyFeed(): FlightFeed {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body
     })
-    if (!res.ok) throw new Error(`OpenSky token request failed: ${res.status}`)
+    if (!res.ok) {
+      // Surface OpenSky's reason (e.g. "invalid_client") to make 401s diagnosable.
+      const detail = await res.text().catch(() => '')
+      throw new Error(`OpenSky token request failed: ${res.status} ${detail}`.trim())
+    }
     const json = (await res.json()) as { access_token: string; expires_in: number }
     token = json.access_token
     tokenExpiry = now + json.expires_in * 1000
