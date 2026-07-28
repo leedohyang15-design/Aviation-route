@@ -16,7 +16,7 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
-import { projectNorm, wrapLon, splitAtAntimeridian, nearestRouteIndex } from '@shared/projection'
+import { projectNorm, wrapLon, nearestRouteIndex } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 
@@ -424,21 +424,30 @@ export class Globe {
     // Marker positions are updated each frame (they move with the pan offset).
   }
 
-  /** Add antimeridian-split fat (Line2) segments for a polyline. */
+  /** Add fat (Line2) segments for a polyline, split at the actual display seam.
+   * The seam (where projected u wraps 0↔1) depends on the pan offset, NOT on
+   * geographic ±180, so we project first and cut where u jumps — otherwise the
+   * line breaks mid-screen whenever the map is panned off the prime meridian. */
   private addRouteLines(points: GeoPoint[], mat: LineMaterial): void {
-    for (const seg of splitAtAntimeridian(points)) {
-      if (seg.length < 2) continue
-      const positions: number[] = []
-      for (const p of seg) {
-        const { u, v } = projectNorm(p.lon, p.lat, this.lonOffset)
-        positions.push(u, 1 - v, 0.2)
+    let positions: number[] = []
+    let prevU = NaN
+    const flush = () => {
+      if (positions.length >= 6) {
+        const geo = new LineGeometry()
+        geo.setPositions(positions)
+        const line = new Line2(geo, mat)
+        line.frustumCulled = false
+        this.routeGroup.add(line)
       }
-      const geo = new LineGeometry()
-      geo.setPositions(positions)
-      const line = new Line2(geo, mat)
-      line.frustumCulled = false
-      this.routeGroup.add(line)
+      positions = []
     }
+    for (const p of points) {
+      const { u, v } = projectNorm(p.lon, p.lat, this.lonOffset)
+      if (!Number.isNaN(prevU) && Math.abs(u - prevU) > 0.5) flush() // wrapped the seam
+      positions.push(u, 1 - v, 0.2)
+      prevU = u
+    }
+    flush()
   }
 
   /** Rebuild the route split at `idx`: flown (origin→now) red, remaining faint. */

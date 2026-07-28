@@ -42,7 +42,9 @@ function createWindows(): void {
     height: Math.min(900, primary.workAreaSize.height),
     title: 'Aviation Route — Control',
     backgroundColor: '#0b1020',
-    webPreferences: { preload, contextIsolation: true, sandbox: false }
+    // Keep running full-speed even when minimized/backgrounded so plane tracking
+    // and the display sync don't stall when the operator lowers this window.
+    webPreferences: { preload, contextIsolation: true, sandbox: false, backgroundThrottling: false }
   })
   loadPage(controlWin, 'control')
 
@@ -59,7 +61,9 @@ function createWindows(): void {
     kiosk: onProjector,
     fullscreen: onProjector,
     autoHideMenuBar: true,
-    webPreferences: { preload, contextIsolation: true, sandbox: false }
+    // Keep rendering at full rate even if this window is ever backgrounded, so the
+    // projected view never stalls (Electron throttles background rAF/timers by default).
+    webPreferences: { preload, contextIsolation: true, sandbox: false, backgroundThrottling: false }
   })
   loadPage(displayWin, 'display')
 
