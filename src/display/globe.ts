@@ -118,6 +118,10 @@ export class Globe {
     )
     this.planes = new THREE.InstancedMesh(tri, new THREE.MeshBasicMaterial(), CAPACITY)
     this.planes.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    // The base geometry sits at the origin (a corner of our [0,1] view), so its
+    // bounding sphere makes three.js frustum-cull the whole mesh even though the
+    // instances are spread across the frame. Disable culling for it.
+    this.planes.frustumCulled = false
     this.planes.count = 0
     this.scene.add(this.planes)
 

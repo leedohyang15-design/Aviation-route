@@ -65,7 +65,9 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
   filter: { airborneOnly: true },
   lonOffset: 0,
-  overlays: { dayNight: true, airports: false, stats: true, grid: false }
+  // Grid on / day-night off by default so the frame reads as a 2:1 world map
+  // even before a photographic earth texture is added. Toggle from the control.
+  overlays: { dayNight: false, airports: false, stats: true, grid: true }
 }
 
 // ---------------------------------------------------------------------------
