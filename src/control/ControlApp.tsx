@@ -8,7 +8,7 @@ import type { FlightFilter } from '@shared/types'
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, route, detail } = useHub('control')
   const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
-  const sel = state.selected ? aircraft.find((a) => a.icao24 === state.selected) : null
+  const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
 
   const countries = useMemo(() => {

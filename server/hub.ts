@@ -69,22 +69,25 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
   }
 
   // Fetch the selected aircraft's detail (async: real sources enrich over the
-  // network) and push both the route line and the rich detail. A generation
-  // guard drops results for a selection that changed while we were fetching.
-  let detailGen = 0
+  // network) and push both the route line and the rich detail. Guarding on the
+  // selection value (not a shared counter) means concurrent connect-time sends
+  // and broadcasts don't cancel each other.
   const sendDetail = async (ws: WebSocket | null) => {
     const icao24 = state.selected
-    const gen = ++detailGen
-    const detail = icao24 ? await feed.getDetail(icao24) : null
-    if (gen !== detailGen) return // selection changed mid-fetch
-    const route: ServerMessage = { type: 'route', icao24: icao24 ?? '', points: detail?.route ?? null }
-    const det: ServerMessage = { type: 'detail', detail }
-    if (ws) {
-      send(ws, route)
-      send(ws, det)
-    } else {
-      broadcast(route)
-      broadcast(det)
+    try {
+      const detail = icao24 ? await feed.getDetail(icao24) : null
+      if (state.selected !== icao24) return // selection changed mid-fetch
+      const route: ServerMessage = { type: 'route', icao24: icao24 ?? '', points: detail?.route ?? null }
+      const det: ServerMessage = { type: 'detail', detail }
+      if (ws) {
+        send(ws, route)
+        send(ws, det)
+      } else {
+        broadcast(route)
+        broadcast(det)
+      }
+    } catch (err) {
+      console.error('[hub] getDetail failed:', (err as Error).message)
     }
   }
 

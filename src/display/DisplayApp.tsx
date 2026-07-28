@@ -32,7 +32,7 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])
   useEffect(() => globeRef.current?.setRoute(route.points), [route])
 
-  const sel = state.selected ? aircraft.find((a) => a.icao24 === state.selected) : null
+  const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
 
   return (

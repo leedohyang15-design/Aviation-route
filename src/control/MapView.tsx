@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { Aircraft, GeoPoint, ViewState } from '@shared/types'
-import { nearestRouteIndex, wrapLon } from '@shared/projection'
+import { nearestRouteIndex, wrapLon, splitAtAntimeridian } from '@shared/projection'
 import { planeImageData } from '@shared/plane'
 
 /** Convert the map's current viewport into the display's ViewState. */
@@ -21,6 +21,10 @@ const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
 /** Zoom level used when focusing/following a selected aircraft. */
 const FOLLOW_ZOOM = 4
 
+/** Default / "전체 보기" world view — centered on Korea. */
+const HOME_CENTER: [number, number] = [127.5, 37.5]
+const HOME_ZOOM = 1.3
+
 function toFeatureCollection(aircraft: Aircraft[]): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -37,24 +41,26 @@ function toFeatureCollection(aircraft: Aircraft[]): GeoJSON.FeatureCollection {
   }
 }
 
-/** Route split into flown (origin→now) and remaining (now→dest) for coloring. */
+/** Route split into flown (origin→now) and remaining (now→dest) for coloring.
+ * Each part is further split at the antimeridian so a transpacific/polar route
+ * doesn't streak straight across the map. */
 function toRouteFC(route: GeoPoint[] | null, selPos: GeoPoint | null): GeoJSON.FeatureCollection {
   if (!route || route.length < 2) return { type: 'FeatureCollection', features: [] }
   const idx = selPos ? nearestRouteIndex(route, selPos) : route.length - 1
-  const line = (pts: GeoPoint[], kind: string): GeoJSON.Feature | null =>
-    pts.length >= 2
-      ? {
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: pts.map((p) => [p.lon, p.lat]) },
-          properties: { kind }
-        }
-      : null
-  return {
-    type: 'FeatureCollection',
-    features: [line(route.slice(idx), 'remaining'), line(route.slice(0, idx + 1), 'flown')].filter(
-      (f): f is GeoJSON.Feature => f !== null
-    )
+  const features: GeoJSON.Feature[] = []
+  const addLines = (pts: GeoPoint[], kind: string) => {
+    for (const seg of splitAtAntimeridian(pts)) {
+      if (seg.length < 2) continue
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: seg.map((p) => [p.lon, p.lat]) },
+        properties: { kind }
+      })
+    }
   }
+  addLines(route.slice(idx), 'remaining')
+  addLines(route.slice(0, idx + 1), 'flown')
+  return { type: 'FeatureCollection', features }
 }
 
 interface Props {
@@ -74,6 +80,11 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
   const onViewRef = useRef(onView)
   onViewRef.current = onView
   const followRef = useRef<string | null>(null) // icao24 being followed, or null
+  // Latest props for the async `load` handler (which closes over mount-time values).
+  const aircraftRef = useRef(aircraft)
+  aircraftRef.current = aircraft
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
 
   // Init once.
   useEffect(() => {
@@ -81,8 +92,8 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: STYLE_URL,
-      center: [10, 25],
-      zoom: 1.3,
+      center: HOME_CENTER,
+      zoom: HOME_ZOOM,
       attributionControl: false,
       renderWorldCopies: true // pan past an edge wraps to the other side of the globe
     })
@@ -132,7 +143,7 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
         type: 'circle',
         source: 'aircraft',
         paint: {
-          'circle-radius': ['case', ['==', ['get', 'icao24'], selected ?? '__none__'], 0, 4],
+          'circle-radius': ['case', ['==', ['get', 'icao24'], selectedRef.current ?? '__none__'], 0, 4],
           'circle-color': [
             'interpolate',
             ['linear'],
@@ -153,7 +164,7 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
         id: 'aircraft-selected',
         type: 'symbol',
         source: 'aircraft',
-        filter: ['==', ['get', 'icao24'], selected ?? '__none__'],
+        filter: ['==', ['get', 'icao24'], selectedRef.current ?? '__none__'],
         layout: {
           'icon-image': 'plane',
           'icon-size': 0.5,
@@ -179,7 +190,9 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
       onViewRef.current(mapToView(map)) // initial sync
 
       loadedRef.current = true
-      map.getSource<maplibregl.GeoJSONSource>('aircraft')?.setData(toFeatureCollection(aircraft))
+      map
+        .getSource<maplibregl.GeoJSONSource>('aircraft')
+        ?.setData(toFeatureCollection(aircraftRef.current))
     })
 
     return () => {
@@ -238,8 +251,9 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
   }, [aircraft])
 
   const resetView = () => {
+    followRef.current = null // stop following immediately (don't wait for the hub echo)
     onSelectRef.current(null)
-    mapRef.current?.flyTo({ center: [10, 25], zoom: 1.3, duration: 900 })
+    mapRef.current?.flyTo({ center: HOME_CENTER, zoom: HOME_ZOOM, duration: 900 })
   }
 
   return (

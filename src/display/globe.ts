@@ -338,11 +338,21 @@ export class Globe {
     this.order = this.order.filter((id) => this.eased.has(id))
   }
 
+  /** Free the route lines' GPU geometries before clearing (they are rebuilt on
+   * pan/progress; without disposal the buffers leak over a long session). */
+  private disposeRouteGroup(): void {
+    for (const child of this.routeGroup.children) {
+      const line = child as Line2
+      line.geometry?.dispose()
+    }
+    this.routeGroup.clear()
+  }
+
   setRoute(points: GeoPoint[] | null): void {
     this.routePoints = points && points.length >= 2 ? points : null
     this.lastRouteIdx = -1
     this.lastRouteOffset = NaN // force rebuild
-    this.routeGroup.clear()
+    this.disposeRouteGroup()
     const on = !!this.routePoints
     this.originMarker.visible = on
     this.destMarker.visible = on
@@ -368,7 +378,7 @@ export class Globe {
 
   /** Rebuild the route split at `idx`: flown (origin→now) red, remaining faint. */
   private buildRoute(idx: number): void {
-    this.routeGroup.clear()
+    this.disposeRouteGroup()
     const pts = this.routePoints
     if (!pts) return
     const remaining = pts.slice(idx)
@@ -408,8 +418,12 @@ export class Globe {
     // then gently correct toward the latest snapshot. This keeps motion smooth
     // even when real updates are 15–60s apart (OpenSky credit budget).
     const correct = 0.08
+    // Only dim others when the selected plane is actually on screen (else a
+    // filtered-out/dropped selection would darken the whole map).
+    const selVisible = this.selected != null && this.eased.has(this.selected)
     let i = 0
     for (const id of this.order) {
+      if (i >= CAPACITY) break // never write past the instance buffer
       const e = this.eased.get(id)
       if (!e) continue
       if (e.speed > 0 && dt > 0) {
@@ -433,7 +447,7 @@ export class Globe {
       this.planes.setMatrixAt(i, this.dummy.matrix)
       // Dim every other plane while one is selected so it stands out.
       this.scratchColor.copy(e.color)
-      if (this.selected && !isSel) this.scratchColor.multiplyScalar(0.28)
+      if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
       if (isSel) {
         this.selectedPlane.position.set(u, 1 - v, 0.7)
@@ -451,10 +465,16 @@ export class Globe {
           this.destMarker.position.set(dp.u, 1 - dp.v, 0.65)
           this.originMarker.scale.set(ps, ps, 1)
           this.destMarker.scale.set(ps, ps, 1)
+          this.originMarker.visible = true
+          this.destMarker.visible = true
           // Split the route at the plane's position; rebuild also when the pan
           // offset changed (great-circle re-projects under wrap).
+          // Rebuild only when the split point moved or the pan offset changed
+          // meaningfully (>~0.25°) — not every frame while easing, which would
+          // thrash Line2 geometries.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
-          if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
+          const offsetMoved = !(Math.abs(this.lonOffset - this.lastRouteOffset) < 0.25)
+          if (idx !== this.lastRouteIdx || offsetMoved) {
             this.buildRoute(idx)
             this.lastRouteIdx = idx
             this.lastRouteOffset = this.lonOffset
@@ -466,7 +486,12 @@ export class Globe {
     this.planes.count = i
     this.planes.instanceMatrix.needsUpdate = true
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
-    if (this.selected && !this.eased.has(this.selected)) this.selectedPlane.visible = false
+    // If the selected plane vanished (filtered out / dropped), hide its overlays.
+    if (!this.selected || !this.eased.has(this.selected)) {
+      this.selectedPlane.visible = false
+      this.originMarker.visible = false
+      this.destMarker.visible = false
+    }
 
     // Ease the camera toward the target view (zoom/pan) and keep icon size
     // constant on screen by scaling geometry with the view span.

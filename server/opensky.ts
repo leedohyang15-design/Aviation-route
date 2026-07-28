@@ -100,16 +100,22 @@ export function createOpenSkyFeed(): FlightFeed {
     onSnapshot: (a: Aircraft[]) => void,
     onStatus: (connected: boolean) => void
   ): Promise<number> {
+    const ctrl = new AbortController()
+    const to = setTimeout(() => ctrl.abort(), 15_000)
     try {
       const bearer = await fetchToken()
-      const ctrl = new AbortController()
-      const to = setTimeout(() => ctrl.abort(), 15_000)
       const res = await fetch(STATES_URL, {
         headers: { Authorization: `Bearer ${bearer}` },
         signal: ctrl.signal
       })
-      clearTimeout(to)
 
+      if (res.status === 401) {
+        // Token rejected (revoked / early expiry). Drop it so the next poll
+        // fetches a fresh one instead of looping on the dead token.
+        token = null
+        tokenExpiry = 0
+        throw new Error('OpenSky /states/all failed: 401 (token invalidated)')
+      }
       if (res.status === 429) {
         // Out of credits: honour the server's retry-after but cap it so we
         // re-check periodically and recover automatically after the daily reset.
@@ -138,6 +144,8 @@ export function createOpenSkyFeed(): FlightFeed {
       onStatus(false)
       console.error('[opensky] poll error:', (err as Error).message)
       return OPENSKY_POLL_INTERVAL_MS
+    } finally {
+      clearTimeout(to)
     }
   }
 
@@ -207,13 +215,17 @@ async function buildDetail(
   cache: Map<string, FlightDetail>
 ): Promise<FlightDetail | null> {
   const ac = latest.get(icao24)
-  const cached = cache.get(icao24)
+  // Key by icao24 + callsign so a new leg (new callsign) re-enriches instead of
+  // reusing the previous leg's origin/destination.
+  const key = `${icao24}|${ac?.callsign ?? ''}`
+  const cached = cache.get(key)
   // Route/type are static per airframe/leg; recompute only progress/ETA below.
-  const enrich = cached ?? {
-    icao24,
-    ...(await (async () => {
+  const enrich =
+    cached ??
+    (await (async () => {
       const [ports, type] = await Promise.all([fetchRoute(ac?.callsign ?? ''), fetchType(icao24)])
       return {
+        icao24,
         airline: ports?.airline,
         flightNo: ac?.callsign,
         origin: ports?.origin,
@@ -221,8 +233,9 @@ async function buildDetail(
         aircraftType: type
       }
     })())
-  }
-  if (!cached) cache.set(icao24, enrich as FlightDetail)
+  // Only cache once the route actually resolved — otherwise a transient adsbdb
+  // failure would be cached permanently and never retried.
+  if (!cached && enrich.origin && enrich.destination) cache.set(key, enrich as FlightDetail)
 
   const detail: FlightDetail = { ...(enrich as FlightDetail), route: null }
   const o = detail.origin
