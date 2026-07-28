@@ -68,12 +68,24 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
     }
   }
 
-  const sendRoute = (ws: WebSocket | null) => {
+  // Fetch the selected aircraft's detail (async: real sources enrich over the
+  // network) and push both the route line and the rich detail. A generation
+  // guard drops results for a selection that changed while we were fetching.
+  let detailGen = 0
+  const sendDetail = async (ws: WebSocket | null) => {
     const icao24 = state.selected
-    const points = icao24 ? feed.getRoute(icao24) : null
-    const msg: ServerMessage = { type: 'route', icao24: icao24 ?? '', points }
-    if (ws) send(ws, msg)
-    else broadcast(msg)
+    const gen = ++detailGen
+    const detail = icao24 ? await feed.getDetail(icao24) : null
+    if (gen !== detailGen) return // selection changed mid-fetch
+    const route: ServerMessage = { type: 'route', icao24: icao24 ?? '', points: detail?.route ?? null }
+    const det: ServerMessage = { type: 'detail', detail }
+    if (ws) {
+      send(ws, route)
+      send(ws, det)
+    } else {
+      broadcast(route)
+      broadcast(det)
+    }
   }
 
   feed.start(
@@ -93,7 +105,7 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
     send(ws, { type: 'state', state })
     send(ws, { type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
     send(ws, { type: 'status', source: feed.source, connected, count: aircraft.length })
-    sendRoute(ws)
+    void sendDetail(ws)
 
     ws.on('message', (raw) => {
       let msg: ClientMessage
@@ -113,14 +125,14 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
       case 'select':
         state.selected = msg.icao24
         broadcast({ type: 'state', state })
-        sendRoute(null)
+        void sendDetail(null)
         return
       case 'setFilter':
         state.filter = msg.filter
         broadcast({ type: 'state', state })
         return
-      case 'setRotation':
-        state.lonOffset = msg.lonOffset
+      case 'setView':
+        state.view = msg.view
         broadcast({ type: 'state', state })
         return
       case 'toggleOverlay':

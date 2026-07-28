@@ -91,6 +91,17 @@ export function greatCirclePoints(a: GeoPoint, b: GeoPoint, segments = 128): Geo
   return out
 }
 
+/** Great-circle distance between two points in kilometres. */
+export function greatCircleDistanceKm(a: GeoPoint, b: GeoPoint): number {
+  const R = 6371
+  const φ1 = a.lat * DEG2RAD
+  const φ2 = b.lat * DEG2RAD
+  const dφ = (b.lat - a.lat) * DEG2RAD
+  const dλ = (b.lon - a.lon) * DEG2RAD
+  const h = Math.sin(dφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
 /** Index of the route point nearest a position (squared lon/lat distance). */
 export function nearestRouteIndex(route: GeoPoint[], pos: GeoPoint): number {
   let best = 0

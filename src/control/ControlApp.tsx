@@ -26,6 +26,7 @@ export function ControlApp(): JSX.Element {
         selected={state.selected}
         route={route.points}
         onSelect={(icao24) => send({ type: 'select', icao24 })}
+        onView={(view) => send({ type: 'setView', view })}
       />
 
       <aside className="panel">

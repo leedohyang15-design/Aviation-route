@@ -1,8 +1,17 @@
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
-import type { Aircraft, GeoPoint } from '@shared/types'
+import type { Aircraft, GeoPoint, ViewState } from '@shared/types'
 import { nearestRouteIndex } from '@shared/projection'
 import { planeImageData } from '@shared/plane'
+
+/** Convert the map's current viewport into the display's ViewState. */
+function mapToView(map: maplibregl.Map): ViewState {
+  const c = map.getCenter()
+  const b = map.getBounds()
+  let span = (b.getEast() - b.getWest()) / 360
+  if (span <= 0) span += 1 // antimeridian wrap
+  return { centerLon: c.lng, centerLat: c.lat, span: Math.max(0.02, Math.min(1, span)) }
+}
 
 // Free MapLibre demo vector style — no API token required. Needs network; if the
 // exhibit runs offline, swap for a locally hosted style/tiles.
@@ -49,14 +58,17 @@ interface Props {
   selected: string | null
   route: GeoPoint[] | null
   onSelect: (icao24: string | null) => void
+  onView: (view: ViewState) => void
 }
 
-export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Element {
+export function MapView({ aircraft, selected, route, onSelect, onView }: Props): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const loadedRef = useRef(false)
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const onViewRef = useRef(onView)
+  onViewRef.current = onView
 
   // Init once.
   useEffect(() => {
@@ -144,6 +156,10 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
       map.on('mouseenter', 'aircraft-dots', () => (map.getCanvas().style.cursor = 'pointer'))
       map.on('mouseleave', 'aircraft-dots', () => (map.getCanvas().style.cursor = ''))
 
+      // The display mirrors the control map's viewport (live while panning/zooming).
+      map.on('move', () => onViewRef.current(mapToView(map)))
+      onViewRef.current(mapToView(map)) // initial sync
+
       loadedRef.current = true
       map.getSource<maplibregl.GeoJSONSource>('aircraft')?.setData(toFeatureCollection(aircraft))
     })
@@ -173,7 +189,8 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
     map.getSource<maplibregl.GeoJSONSource>('route')?.setData(toRouteFC(route, selPos))
   }, [route, selected, aircraft])
 
-  // Selection: hide the selected dot, show the airplane icon on it.
+  // Selection: hide the selected dot, show the airplane icon on it, and fly to it.
+  const prevSel = useRef<string | null>(null)
   useEffect(() => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
@@ -184,7 +201,12 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
       4
     ])
     map.setFilter('aircraft-selected', ['==', ['get', 'icao24'], selected ?? '__none__'])
-  }, [selected])
+    if (selected && selected !== prevSel.current) {
+      const a = aircraft.find((x) => x.icao24 === selected)
+      if (a) map.flyTo({ center: [a.lon, a.lat], zoom: Math.max(map.getZoom(), 4), duration: 1500 })
+    }
+    prevSel.current = selected
+  }, [selected, aircraft])
 
   return <div ref={containerRef} className="map" />
 }

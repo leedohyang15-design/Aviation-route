@@ -70,31 +70,100 @@ body,
   color: #ffcf6b;
 }
 .hud-card {
-  right: 3vw;
+  right: 2.2vw;
   bottom: 3vh;
-  min-width: 240px;
-  padding: 18px 22px;
-  background: rgba(10, 16, 30, 0.72);
+  width: 300px;
+  padding: 20px 22px;
+  background: rgba(10, 16, 30, 0.78);
   border: 1px solid rgba(127, 212, 255, 0.35);
-  border-radius: 14px;
-  backdrop-filter: blur(8px);
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
 }
-.hud-card .callsign {
-  font-size: clamp(18px, 1.8vw, 32px);
+.hud-card .airline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05em;
+  font-weight: 700;
+  opacity: 0.92;
+}
+.hud-card .airline img {
+  width: 20px;
+  height: 20px;
+}
+.hud-card .flightno {
+  font-size: clamp(22px, 2vw, 34px);
   font-weight: 800;
   color: #ffe08a;
-  margin-bottom: 10px;
+  letter-spacing: 0.02em;
+  margin-bottom: 14px;
 }
-.hud-card dl {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 20px;
+.route-od {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
-.hud-card dt {
-  font-size: 0.75em;
+.route-od .port {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.route-od .city {
+  font-size: 1.25em;
+  font-weight: 700;
+}
+.route-od .code {
+  font-size: 0.9em;
   opacity: 0.6;
 }
+.route-od .arrow {
+  font-size: 1.1em;
+  opacity: 0.7;
+  line-height: 1;
+  margin: 1px 0;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 20px;
+  margin-top: 12px;
+}
+.hud-card dt {
+  font-size: 0.72em;
+  opacity: 0.55;
+}
 .hud-card dd {
-  font-size: 1.05em;
-  font-weight: 600;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.hud-card .type {
+  margin-top: 10px;
+}
+.progress-block {
+  margin-top: 14px;
+}
+.pbar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.pbar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ff3b30, #ffb03a);
+}
+.ptimes {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8em;
+  opacity: 0.75;
+  margin: 6px 0 10px;
+}
+.mini-route {
+  display: block;
+  border-radius: 8px;
 }

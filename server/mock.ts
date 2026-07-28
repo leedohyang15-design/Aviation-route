@@ -1,51 +1,71 @@
 // Deterministic-ish mock flight feed for development and as an offline fallback,
 // so the exhibit keeps moving even when OpenSky is rate-limited or unreachable.
-// Planes fly real great-circle routes between major airports.
+// Planes fly real great-circle routes between major airports, and carry full
+// detail (airline, route, aircraft type, progress, times) for the panel.
 
-import type { Aircraft, GeoPoint } from '../src/shared/types'
+import type { Aircraft, FlightDetail, GeoPoint } from '../src/shared/types'
 import type { FlightFeed } from './feed'
-import { greatCirclePoints } from '../src/shared/projection'
+import { greatCirclePoints, greatCircleDistanceKm } from '../src/shared/projection'
 import { MOCK_POLL_INTERVAL_MS } from '../src/shared/config'
 
 interface Airport {
   code: string
+  city: string
   lon: number
   lat: number
   country: string
 }
 
 const AIRPORTS: Airport[] = [
-  { code: 'ICN', lon: 126.45, lat: 37.46, country: 'Republic of Korea' },
-  { code: 'HND', lon: 139.78, lat: 35.55, country: 'Japan' },
-  { code: 'PEK', lon: 116.6, lat: 40.08, country: 'China' },
-  { code: 'SIN', lon: 103.99, lat: 1.36, country: 'Singapore' },
-  { code: 'SYD', lon: 151.18, lat: -33.95, country: 'Australia' },
-  { code: 'DXB', lon: 55.36, lat: 25.25, country: 'United Arab Emirates' },
-  { code: 'DEL', lon: 77.1, lat: 28.57, country: 'India' },
-  { code: 'FRA', lon: 8.57, lat: 50.03, country: 'Germany' },
-  { code: 'LHR', lon: -0.46, lat: 51.47, country: 'United Kingdom' },
-  { code: 'CDG', lon: 2.55, lat: 49.01, country: 'France' },
-  { code: 'JFK', lon: -73.78, lat: 40.64, country: 'United States' },
-  { code: 'LAX', lon: -118.41, lat: 33.94, country: 'United States' },
-  { code: 'ORD', lon: -87.9, lat: 41.98, country: 'United States' },
-  { code: 'GRU', lon: -46.47, lat: -23.43, country: 'Brazil' },
-  { code: 'JNB', lon: 28.24, lat: -26.14, country: 'South Africa' },
-  { code: 'YYZ', lon: -79.63, lat: 43.68, country: 'Canada' },
-  { code: 'MEX', lon: -99.07, lat: 19.44, country: 'Mexico' },
-  { code: 'SFO', lon: -122.38, lat: 37.62, country: 'United States' },
-  { code: 'HKG', lon: 113.91, lat: 22.31, country: 'China' },
-  { code: 'BKK', lon: 100.75, lat: 13.69, country: 'Thailand' }
+  { code: 'ICN', city: '서울', lon: 126.45, lat: 37.46, country: 'Republic of Korea' },
+  { code: 'HND', city: '도쿄', lon: 139.78, lat: 35.55, country: 'Japan' },
+  { code: 'PEK', city: '베이징', lon: 116.6, lat: 40.08, country: 'China' },
+  { code: 'SIN', city: '싱가포르', lon: 103.99, lat: 1.36, country: 'Singapore' },
+  { code: 'SYD', city: '시드니', lon: 151.18, lat: -33.95, country: 'Australia' },
+  { code: 'DXB', city: '두바이', lon: 55.36, lat: 25.25, country: 'United Arab Emirates' },
+  { code: 'DEL', city: '델리', lon: 77.1, lat: 28.57, country: 'India' },
+  { code: 'FRA', city: '프랑크푸르트', lon: 8.57, lat: 50.03, country: 'Germany' },
+  { code: 'LHR', city: '런던', lon: -0.46, lat: 51.47, country: 'United Kingdom' },
+  { code: 'CDG', city: '파리', lon: 2.55, lat: 49.01, country: 'France' },
+  { code: 'JFK', city: '뉴욕', lon: -73.78, lat: 40.64, country: 'United States' },
+  { code: 'LAX', city: 'LA', lon: -118.41, lat: 33.94, country: 'United States' },
+  { code: 'ORD', city: '시카고', lon: -87.9, lat: 41.98, country: 'United States' },
+  { code: 'GRU', city: '상파울루', lon: -46.47, lat: -23.43, country: 'Brazil' },
+  { code: 'JNB', city: '요하네스버그', lon: 28.24, lat: -26.14, country: 'South Africa' },
+  { code: 'YYZ', city: '토론토', lon: -79.63, lat: 43.68, country: 'Canada' },
+  { code: 'MEX', city: '멕시코시티', lon: -99.07, lat: 19.44, country: 'Mexico' },
+  { code: 'SFO', city: '샌프란시스코', lon: -122.38, lat: 37.62, country: 'United States' },
+  { code: 'HKG', city: '홍콩', lon: 113.91, lat: 22.31, country: 'China' },
+  { code: 'BKK', city: '방콕', lon: 100.75, lat: 13.69, country: 'Thailand' }
 ]
 
-const AIRLINES = ['KAL', 'AAR', 'UAL', 'DAL', 'BAW', 'AFR', 'DLH', 'UAE', 'SIA', 'ANA', 'QFA', 'JAL']
+const AIRLINES: Record<string, string> = {
+  KAL: 'Korean Air',
+  AAR: 'Asiana Airlines',
+  UAL: 'United Airlines',
+  DAL: 'Delta Air Lines',
+  BAW: 'British Airways',
+  AFR: 'Air France',
+  DLH: 'Lufthansa',
+  UAE: 'Emirates',
+  SIA: 'Singapore Airlines',
+  ANA: 'All Nippon Airways',
+  QFA: 'Qantas',
+  JAL: 'Japan Airlines'
+}
+const AIRLINE_CODES = Object.keys(AIRLINES)
+const TYPES = ['B787-9', 'A350-900', 'B777-300ER', 'A330-300', 'B747-8', 'A380-800', 'B737-800']
 
 interface MockPlane {
   icao24: string
   callsign: string
+  airlineCode: string
+  aircraftType: string
   from: Airport
   to: Airport
   progress: number // 0..1 along the route
   speed: number // progress per tick
+  velocity: number // m/s ground speed
   altitude: number
   originCountry: string
 }
@@ -79,14 +99,17 @@ export function createMockFeed(count = 400): FlightFeed {
     const from = pick(AIRPORTS)
     let to = pick(AIRPORTS)
     while (to === from) to = pick(AIRPORTS)
-    const airline = pick(AIRLINES)
+    const airlineCode = pick(AIRLINE_CODES)
     planes.push({
       icao24: (0x400000 + i).toString(16).padStart(6, '0'),
-      callsign: `${airline}${100 + rnd(900)}`,
+      callsign: `${airlineCode}${100 + rnd(900)}`,
+      airlineCode,
+      aircraftType: pick(TYPES),
       from,
       to,
       progress: Math.random(),
       speed: 0.004 + Math.random() * 0.01,
+      velocity: 230 + rnd(30),
       altitude: 9000 + rnd(3500),
       originCountry: from.country
     })
@@ -96,7 +119,6 @@ export function createMockFeed(count = 400): FlightFeed {
     const now = Date.now()
     return planes.map((pl) => {
       const { p, heading } = pointAlong(pl.from, pl.to, pl.progress)
-      // Fade altitude near the ends to fake climb/descent.
       const edge = Math.min(pl.progress, 1 - pl.progress)
       const alt = pl.altitude * Math.min(1, edge * 8)
       return {
@@ -105,7 +127,7 @@ export function createMockFeed(count = 400): FlightFeed {
         lon: p.lon,
         lat: p.lat,
         altitude: Math.round(alt),
-        velocity: 220 + (pl.icao24.charCodeAt(0) % 40),
+        velocity: pl.velocity,
         heading,
         verticalRate: 0,
         onGround: edge < 0.01,
@@ -119,13 +141,13 @@ export function createMockFeed(count = 400): FlightFeed {
     for (const pl of planes) {
       pl.progress += pl.speed
       if (pl.progress >= 1) {
-        // Arrived: depart again from the destination to a fresh airport.
         pl.from = pl.to
         let to = pick(AIRPORTS)
         while (to === pl.from) to = pick(AIRPORTS)
         pl.to = to
         pl.progress = 0
         pl.originCountry = pl.from.country
+        pl.aircraftType = pick(TYPES)
       }
     }
   }
@@ -143,10 +165,24 @@ export function createMockFeed(count = 400): FlightFeed {
     stop() {
       if (timer) clearInterval(timer)
     },
-    getRoute(icao24) {
+    async getDetail(icao24: string): Promise<FlightDetail | null> {
       const pl = planes.find((p) => p.icao24 === icao24)
       if (!pl) return null
-      return greatCirclePoints(pl.from, pl.to, 128)
+      const distanceKm = greatCircleDistanceKm(pl.from, pl.to)
+      const durationSec = (distanceKm * 1000) / pl.velocity
+      const now = Date.now()
+      return {
+        icao24,
+        airline: AIRLINES[pl.airlineCode] ?? pl.airlineCode,
+        flightNo: pl.callsign,
+        origin: { code: pl.from.code, city: pl.from.city, lon: pl.from.lon, lat: pl.from.lat },
+        destination: { code: pl.to.code, city: pl.to.city, lon: pl.to.lon, lat: pl.to.lat },
+        aircraftType: pl.aircraftType,
+        departureTime: now - pl.progress * durationSec * 1000,
+        etaRemainingSec: (1 - pl.progress) * durationSec,
+        progress: pl.progress,
+        route: greatCirclePoints(pl.from, pl.to, 128)
+      }
     }
   }
 }

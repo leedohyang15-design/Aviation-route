@@ -1,17 +1,18 @@
 // Equirectangular display engine (three.js). Renders a 2:1 frame that the
 // sphere-projection software wraps onto the physical globe:
-//   - background: earth texture (or procedural ocean) + optional graticule and
-//     day/night terminator, shifted horizontally by the longitude spin;
-//   - aircraft: an InstancedMesh of heading-oriented triangles, colored by
-//     altitude, positioned with the shared equirectangular projection and eased
-//     between polls for smooth motion;
-//   - the selected aircraft's great-circle route, split at the antimeridian.
+//   - background: earth texture (or procedural ocean) + graticule and a
+//     real-time day/night terminator;
+//   - aircraft: unselected as altitude-colored dots (an InstancedMesh), the
+//     selected one as an airplane sprite rotated by heading; positions eased and
+//     dead-reckoned between polls for smooth motion;
+//   - the selected aircraft's great-circle route (flown red, remaining faint).
 //
-// Coordinate convention: an orthographic camera with x∈[0,1] (left→right =
-// −180→+180 after spin) and y∈[0,1] (bottom→top = −90→+90). worldY = 1 − v.
+// Coordinate convention: an orthographic camera over the [0,1]×[0,1] earth
+// (x = (lon+180)/360, worldY = (lat+90)/180). The camera rect is the zoom/pan
+// view, eased toward the target set by setView() (driven by the control map).
 
 import * as THREE from 'three'
-import type { Aircraft, GeoPoint, OverlayKey } from '@shared/types'
+import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
 import { projectNorm, wrapLon, splitAtAntimeridian, nearestRouteIndex } from '@shared/projection'
 import { EARTH_TEXTURE_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
@@ -57,9 +58,12 @@ export class Globe {
 
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
-  private lonOffset = 0
   private selected: string | null = null
   private dummy = new THREE.Object3D()
+  // Camera view rect in normalized [0,1] coords: current (eased) + target.
+  private viewRect = { left: 0, right: 1, top: 1, bottom: 0 }
+  private targetRect = { left: 0, right: 1, top: 1, bottom: 0 }
+  private targetSpan = 1
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -164,9 +168,29 @@ export class Globe {
     )
   }
 
-  setLonOffset(deg: number): void {
-    this.lonOffset = deg
-    this.bgUniforms.uLonOffset.value = deg
+  /** Set the equirectangular view (center + zoom); the camera eases toward it. */
+  setView(view: ViewState): void {
+    const s = Math.max(0.02, Math.min(1, view.span))
+    const uc = (view.centerLon + 180) / 360
+    const yc = (view.centerLat + 90) / 180 // worldY center (y-up)
+    const clamp = (c: number): [number, number] => {
+      if (s >= 1) return [0, 1]
+      let lo = c - s / 2
+      let hi = c + s / 2
+      if (lo < 0) {
+        hi -= lo
+        lo = 0
+      }
+      if (hi > 1) {
+        lo -= hi - 1
+        hi = 1
+      }
+      return [Math.max(0, lo), Math.min(1, hi)]
+    }
+    const [left, right] = clamp(uc)
+    const [bottom, top] = clamp(yc)
+    this.targetRect = { left, right, top, bottom }
+    this.targetSpan = s
   }
 
   setOverlays(overlays: Record<OverlayKey, boolean>): void {
@@ -230,7 +254,7 @@ export class Globe {
       const geo = new THREE.BufferGeometry()
       const pos = new Float32Array(seg.length * 3)
       seg.forEach((p, i) => {
-        const { u, v } = projectNorm(p.lon, p.lat, this.lonOffset)
+        const { u, v } = projectNorm(p.lon, p.lat, 0)
         pos[i * 3] = u
         pos[i * 3 + 1] = 1 - v
         pos[i * 3 + 2] = 0.2
@@ -285,6 +309,9 @@ export class Globe {
     const dt = this.lastFrame ? Math.min(0.5, (now - this.lastFrame) / 1000) : 0
     this.lastFrame = now
 
+    // Keep dot/icon on-screen size roughly constant across zoom levels.
+    this.planeBaseScale += (this.targetSpan - this.planeBaseScale) * 0.15
+
     // Dead reckoning: advance each plane along its heading at its ground speed,
     // then gently correct toward the latest snapshot. This keeps motion smooth
     // even when real updates are 15–60s apart (OpenSky credit budget).
@@ -304,7 +331,7 @@ export class Globe {
         (2 * Math.PI) -
         Math.PI) *
         0.1
-      const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
+      const { u, v } = projectNorm(e.lon, e.lat, 0)
       // Unselected → a dot (no heading rotation). Selected → the airplane sprite.
       this.dummy.position.set(u, 1 - v, 0)
       this.dummy.rotation.z = 0
@@ -333,6 +360,19 @@ export class Globe {
     this.planes.instanceMatrix.needsUpdate = true
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
     if (this.selected && !this.eased.has(this.selected)) this.selectedPlane.visible = false
+
+    // Ease the camera toward the target view (zoom/pan) and keep icon size
+    // constant on screen by scaling geometry with the view span.
+    const vk = 0.15
+    this.viewRect.left += (this.targetRect.left - this.viewRect.left) * vk
+    this.viewRect.right += (this.targetRect.right - this.viewRect.right) * vk
+    this.viewRect.top += (this.targetRect.top - this.viewRect.top) * vk
+    this.viewRect.bottom += (this.targetRect.bottom - this.viewRect.bottom) * vk
+    this.camera.left = this.viewRect.left
+    this.camera.right = this.viewRect.right
+    this.camera.top = this.viewRect.top
+    this.camera.bottom = this.viewRect.bottom
+    this.camera.updateProjectionMatrix()
 
     this.updateSunDir()
     this.renderer.render(this.scene, this.camera)

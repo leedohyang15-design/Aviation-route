@@ -6,8 +6,6 @@ export function applyFilter(aircraft: Aircraft[], f: FlightFilter): Aircraft[] {
   return aircraft.filter((a) => {
     if (f.airborneOnly && a.onGround) return false
     if (f.originCountry && a.originCountry !== f.originCountry) return false
-    if (f.airlinePrefix && !a.callsign.toUpperCase().startsWith(f.airlinePrefix.toUpperCase()))
-      return false
     if (f.minAltitude != null && (a.altitude ?? 0) < f.minAltitude) return false
     if (f.maxAltitude != null && (a.altitude ?? Infinity) > f.maxAltitude) return false
     return true

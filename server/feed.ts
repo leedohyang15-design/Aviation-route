@@ -1,7 +1,7 @@
 // A FlightFeed is any source of live aircraft snapshots. The hub is agnostic to
 // which one is running (real OpenSky vs. dev mock), so they share this shape.
 
-import type { Aircraft, GeoPoint } from '../src/shared/types'
+import type { Aircraft, FlightDetail } from '../src/shared/types'
 
 export interface FlightFeed {
   readonly source: 'opensky' | 'mock'
@@ -9,8 +9,9 @@ export interface FlightFeed {
   start(onSnapshot: (aircraft: Aircraft[]) => void, onStatus: (connected: boolean) => void): void
   stop(): void
   /**
-   * Best-effort route for one aircraft as geographic points (great-circle
-   * origin→destination). Returns null when the source can't supply a route.
+   * Rich detail for one aircraft (route + origin/destination/type/times).
+   * Async because real sources may enrich over the network. Returns null when
+   * nothing is known.
    */
-  getRoute(icao24: string): GeoPoint[] | null
+  getDetail(icao24: string): Promise<FlightDetail | null>
 }

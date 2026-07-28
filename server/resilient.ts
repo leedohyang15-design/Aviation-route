@@ -52,10 +52,9 @@ export function createResilientFeed(): FlightFeed {
       opensky.stop()
       mock.stop()
     },
-    getRoute(icao24: string) {
-      // In mock mode the ids are mock ids → mock route; in real mode OpenSky has
-      // no route data yet (returns null).
-      return isRealFresh() ? opensky.getRoute(icao24) : mock.getRoute(icao24)
+    getDetail(icao24: string) {
+      // Delegate to whichever source is currently on screen.
+      return isRealFresh() ? opensky.getDetail(icao24) : mock.getDetail(icao24)
     }
   }
 }

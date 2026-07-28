@@ -33,13 +33,43 @@ export interface GeoPoint {
   lat: number
 }
 
+export interface Airport {
+  code: string // IATA/ICAO code shown in the panel, e.g. "ICN"
+  city?: string // human city name, e.g. "서울"
+  lon: number
+  lat: number
+}
+
+/**
+ * Rich, on-demand detail for the selected aircraft (panel + route). Fully
+ * populated by the mock feed; best-effort (adsbdb/hexdb) for real OpenSky data.
+ */
+export interface FlightDetail {
+  icao24: string
+  airline?: string // "Korean Air"
+  flightNo?: string // callsign, "KE902"
+  origin?: Airport
+  destination?: Airport
+  aircraftType?: string // "B787-9"
+  departureTime?: number // epoch millis
+  etaRemainingSec?: number // seconds to arrival
+  progress?: number // 0..1 along the route
+  route: GeoPoint[] | null // great-circle origin→destination
+}
+
+/** The equirectangular view the display shows, driven by the control map. */
+export interface ViewState {
+  centerLon: number
+  centerLat: number
+  /** Normalized span (1 = whole world, smaller = zoomed in). */
+  span: number
+}
+
 export type OverlayKey = 'dayNight' | 'airports' | 'stats' | 'grid'
 
 /** Filters the operator can apply; an empty/undefined field means "no filter". */
 export interface FlightFilter {
   originCountry?: string
-  /** Callsign prefix (airline ICAO), case-insensitive. */
-  airlinePrefix?: string
   /** Only show aircraft at or above this altitude (metres). */
   minAltitude?: number
   /** Only show aircraft at or below this altitude (metres). */
@@ -56,18 +86,17 @@ export interface PresentationState {
   /** Currently selected aircraft (icao24), or null. */
   selected: string | null
   filter: FlightFilter
-  /** Longitude spin offset in degrees applied to the equirectangular display. */
-  lonOffset: number
+  /** Equirectangular view (center + zoom), driven by the control map. */
+  view: ViewState
   overlays: Record<OverlayKey, boolean>
 }
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
   filter: { airborneOnly: true },
-  lonOffset: 0,
-  // Grid on / day-night off by default so the frame reads as a 2:1 world map
-  // even before a photographic earth texture is added. Toggle from the control.
-  overlays: { dayNight: false, airports: false, stats: true, grid: true }
+  view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
+  // Day/night is always on (automatic). Grid on so the frame reads as a map.
+  overlays: { dayNight: true, airports: false, stats: true, grid: true }
 }
 
 // ---------------------------------------------------------------------------
@@ -79,12 +108,13 @@ export type ServerMessage =
   | { type: 'aircraft'; mode: 'full' | 'delta'; data: Aircraft[]; removed?: string[]; serverTime: number }
   | { type: 'state'; state: PresentationState }
   | { type: 'route'; icao24: string; points: GeoPoint[] | null }
+  | { type: 'detail'; detail: FlightDetail | null }
   | { type: 'status'; source: 'opensky' | 'mock'; connected: boolean; count: number }
 
 /** Commands clients send to the hub. The hub applies them to PresentationState. */
 export type ClientMessage =
   | { type: 'select'; icao24: string | null }
   | { type: 'setFilter'; filter: FlightFilter }
-  | { type: 'setRotation'; lonOffset: number }
+  | { type: 'setView'; view: ViewState }
   | { type: 'toggleOverlay'; key: OverlayKey; value?: boolean }
   | { type: 'hello'; role: 'control' | 'display' }
