@@ -112,6 +112,61 @@ function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number }
   return { tex, aspect: w / h }
 }
 
+/** A compact multi-line info chip (dark rounded background) shown next to the
+ * selected aircraft: line0 = flight no (amber), line1 = route, line2 = metrics. */
+function infoTexture(lines: string[]): { tex: THREE.CanvasTexture; aspect: number } {
+  const styles = [
+    { size: 46, color: '#ffb020', weight: '800' },
+    { size: 34, color: '#ffffff', weight: '700' },
+    { size: 26, color: '#cfe0f5', weight: '600' }
+  ]
+  const st = (i: number) => styles[Math.min(i, styles.length - 1)]
+  const padX = 22
+  const padY = 16
+  const gap = 8
+  const c = document.createElement('canvas')
+  let ctx = c.getContext('2d')!
+  let w = 0
+  let h = padY * 2
+  lines.forEach((t, i) => {
+    const s = st(i)
+    ctx.font = `${s.weight} ${s.size}px sans-serif`
+    w = Math.max(w, ctx.measureText(t).width)
+    h += s.size + (i > 0 ? gap : 0)
+  })
+  c.width = Math.ceil(w + padX * 2)
+  c.height = Math.ceil(h + 8) // extra room so descenders on the last line aren't clipped
+  ctx = c.getContext('2d')!
+  const r = 18
+  const W = c.width
+  const H = c.height
+  ctx.beginPath()
+  ctx.moveTo(r, 0)
+  ctx.arcTo(W, 0, W, H, r)
+  ctx.arcTo(W, H, 0, H, r)
+  ctx.arcTo(0, H, 0, 0, r)
+  ctx.arcTo(0, 0, W, 0, r)
+  ctx.closePath()
+  ctx.fillStyle = 'rgba(8,12,24,0.74)'
+  ctx.fill()
+  ctx.lineWidth = 2
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+  ctx.stroke()
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  let y = padY
+  lines.forEach((t, i) => {
+    const s = st(i)
+    ctx.font = `${s.weight} ${s.size}px sans-serif`
+    ctx.fillStyle = s.color
+    ctx.fillText(t, padX, y)
+    y += s.size + gap
+  })
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return { tex, aspect: W / H }
+}
+
 function altitudeColor(alt: number | null): THREE.Color {
   // Low = warm, high = cool. Mirrors typical flight-tracker palettes.
   const a = Math.max(0, Math.min(1, (alt ?? 0) / 12000))
@@ -145,6 +200,7 @@ export class Globe {
   private destMarker!: THREE.Mesh
   private originLabel!: THREE.Mesh
   private destLabel!: THREE.Mesh
+  private infoLabel!: THREE.Mesh
   /** Base on-screen size of the airplane sprite (world units), scaled by zoom. */
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
@@ -332,6 +388,7 @@ export class Globe {
     }
     this.originLabel = label()
     this.destLabel = label()
+    this.infoLabel = label() // flight info chip next to the selected plane
 
     this.tryLoadEarth()
     this.resize()
@@ -720,6 +777,21 @@ export class Globe {
     apply(this.destLabel, destCity)
   }
 
+  /** Compact info chip shown next to the selected plane (null clears it). */
+  setInfoLabel(lines: string[] | null): void {
+    const mat = this.infoLabel.material as THREE.MeshBasicMaterial
+    mat.map?.dispose()
+    if (lines && lines.length) {
+      const { tex, aspect } = infoTexture(lines)
+      mat.map = tex
+      mat.needsUpdate = true
+      this.infoLabel.userData.aspect = aspect
+    } else {
+      mat.map = null
+      this.infoLabel.visible = false
+    }
+  }
+
   /** Free the route lines' GPU geometries before clearing (they are rebuilt on
    * pan/progress; without disposal the buffers leak over a long session). */
   private disposeRouteGroup(): void {
@@ -872,6 +944,18 @@ export class Globe {
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
+        // Info chip next to the plane (flips to the left near the right edge).
+        const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
+        if (infoMat.map) {
+          const lh = 0.06 * ps
+          const asp = (this.infoLabel.userData.aspect as number) || 3
+          const lw = lh * asp
+          const right = u + 0.018 + lw < 1
+          const cx = right ? u + 0.018 + lw / 2 : u - 0.018 - lw / 2
+          this.infoLabel.scale.set(lw, lh, 1)
+          this.infoLabel.position.set(cx, 1 - v, 0.75)
+          this.infoLabel.visible = true
+        }
         // Reposition origin/destination markers (they move with the pan offset).
         if (this.routePoints) {
           const o = this.routePoints[0]
@@ -919,6 +1003,7 @@ export class Globe {
       this.destMarker.visible = false
       this.originLabel.visible = false
       this.destLabel.visible = false
+      this.infoLabel.visible = false
     }
 
     // Ease the camera toward the target view (zoom/pan) and keep icon size

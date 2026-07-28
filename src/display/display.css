@@ -34,38 +34,6 @@ body,
   display: block;
 }
 
-/* Boarding-pass ticket centered on the projected frame (same top-left origin as
-   the canvas), shown on selection. Keyed re-mount replays the pop each time. */
-.display-card-wrap {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: flex;
-  /* On the sphere only the central front band is readable (corners = poles/back).
-     Keep the ticket horizontally centered but low — the route (usually northern
-     mid-latitudes) runs through the upper-centre, so a small low card clears it
-     while staying on the visible front of the dome. */
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 11%;
-  pointer-events: none;
-}
-.display-card {
-  width: clamp(180px, 14vw, 250px);
-  animation: cardPop 0.42s cubic-bezier(0.2, 0.85, 0.25, 1);
-  filter: drop-shadow(0 8px 30px rgba(0, 0, 0, 0.7));
-}
-@keyframes cardPop {
-  from {
-    transform: scale(0.82);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
 .hud {
   position: absolute;
   pointer-events: none;

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
-import { FlightDetailCard } from '../common/FlightDetailCard'
 import { Globe } from './globe'
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
@@ -16,6 +15,23 @@ export function DisplayApp(): JSX.Element {
   const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
+
+  // Compact info string shown next to the selected plane (instead of a big card):
+  // flight no / origin→destination / altitude·speed·type.
+  const infoLines = useMemo(() => {
+    if (!sel) return null
+    const flightNo = d?.flightNo ?? sel.callsign?.trim() ?? sel.icao24.toUpperCase()
+    const lines = [flightNo]
+    if (d?.origin?.code || d?.destination?.code) {
+      lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
+    }
+    const bits: string[] = []
+    if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)
+    if (sel.velocity != null) bits.push(`${Math.round(sel.velocity * 3.6)}km/h`)
+    if (d?.aircraftType) bits.push(d.aircraftType)
+    if (bits.length) lines.push(bits.join(' · '))
+    return lines
+  }, [sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -40,19 +56,12 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => {
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
   }, [d])
+  useEffect(() => globeRef.current?.setInfoLabel(infoLines), [infoLines])
 
   return (
     <div className="display-root">
       <div className="stage">
         <canvas ref={canvasRef} />
-        {/* Boarding-pass ticket, centered on the projected frame when selected. */}
-        <div className="display-card-wrap" style={{ width: FRAME.w, height: FRAME.h }}>
-          {sel && (
-            <div className="display-card" key={state.selected ?? ''}>
-              <FlightDetailCard aircraft={sel} detail={d} />
-            </div>
-          )}
-        </div>
       </div>
     </div>
   )
