@@ -31,6 +31,11 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])
   useEffect(() => globeRef.current?.setRoute(route.points), [route])
+  useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
+  useEffect(() => {
+    const d = detail && detail.icao24 === state.selected ? detail : null
+    globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
+  }, [detail, state.selected])
 
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null

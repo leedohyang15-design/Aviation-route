@@ -89,6 +89,8 @@ export interface PresentationState {
   /** Equirectangular view (center + zoom), driven by the control map. */
   view: ViewState
   overlays: Record<OverlayKey, boolean>
+  /** Day/night preview hour 0–24 (KST), or null = live current time. */
+  dayNightHour: number | null
 }
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
@@ -96,7 +98,8 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   filter: { airborneOnly: true },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
-  overlays: { dayNight: true, airports: false, stats: true, grid: true }
+  overlays: { dayNight: true, airports: false, stats: true, grid: true },
+  dayNightHour: null // live time
 }
 
 // ---------------------------------------------------------------------------
@@ -117,4 +120,5 @@ export type ClientMessage =
   | { type: 'setFilter'; filter: FlightFilter }
   | { type: 'setView'; view: ViewState }
   | { type: 'toggleOverlay'; key: OverlayKey; value?: boolean }
+  | { type: 'setDayNight'; hour: number | null }
   | { type: 'hello'; role: 'control' | 'display' }

@@ -47,6 +47,31 @@ function emojiTexture(emoji: string): THREE.CanvasTexture {
   return tex
 }
 
+/** A CanvasTexture of a text label (white with dark outline). Returns aspect w/h. */
+function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
+  const fontSize = 44
+  const pad = 12
+  const c = document.createElement('canvas')
+  let ctx = c.getContext('2d')!
+  ctx.font = `bold ${fontSize}px sans-serif`
+  const w = Math.ceil(ctx.measureText(text).width) + pad * 2
+  const h = fontSize + pad * 2
+  c.width = w
+  c.height = h
+  ctx = c.getContext('2d')!
+  ctx.font = `bold ${fontSize}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.lineWidth = 7
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)'
+  ctx.strokeText(text, w / 2, h / 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillText(text, w / 2, h / 2)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return { tex, aspect: w / h }
+}
+
 function altitudeColor(alt: number | null): THREE.Color {
   // Low = warm, high = cool. Mirrors typical flight-tracker palettes.
   const a = Math.max(0, Math.min(1, (alt ?? 0) / 12000))
@@ -78,6 +103,8 @@ export class Globe {
   private selectedPlane: THREE.Mesh
   private originMarker!: THREE.Mesh
   private destMarker!: THREE.Mesh
+  private originLabel!: THREE.Mesh
+  private destLabel!: THREE.Mesh
   /** Base on-screen size of the airplane sprite (world units), scaled by zoom. */
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
@@ -108,6 +135,7 @@ export class Globe {
   private lonOffset = 0 // eased longitude offset (= -centerLon)
   private targetLonOffset = 0
   private hasEarthTexture = false
+  private nightHourOverride: number | null = null // null = live time
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -139,8 +167,10 @@ export class Globe {
         uniform sampler2D uNightMap; uniform float uHasNight; uniform float uNight;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
-          float texU = fract(vUv.x - uLonOffset / 360.0);
-          vec2 uv = vec2(texU, vUv.y);
+          // No fract(): let RepeatWrapping tile the texture. fract() creates a
+          // huge UV derivative at the wrap, which picks the wrong mip level and
+          // draws a vertical seam when the map wraps around.
+          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, vUv.y);
           vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
           // Brightness + saturation grade on the daytime image.
           float luma = dot(day, vec3(0.299, 0.587, 0.114));
@@ -209,6 +239,21 @@ export class Globe {
     }
     this.originMarker = marker('🚩')
     this.destMarker = marker('📍')
+
+    // Origin / destination place-name labels (created empty; text set on select).
+    const label = (): THREE.Mesh => {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ transparent: true, depthTest: false })
+      )
+      m.visible = false
+      m.renderOrder = 10
+      m.frustumCulled = false
+      this.scene.add(m)
+      return m
+    }
+    this.originLabel = label()
+    this.destLabel = label()
 
     this.tryLoadEarth()
     this.resize()
@@ -338,6 +383,26 @@ export class Globe {
     this.order = this.order.filter((id) => this.eased.has(id))
   }
 
+  /** Set origin/destination place-name labels (null clears them). */
+  setEndpointLabels(originCity: string | null, destCity: string | null): void {
+    const apply = (mesh: THREE.Mesh, text: string | null) => {
+      const mat = mesh.material as THREE.MeshBasicMaterial
+      mat.map?.dispose()
+      if (text) {
+        const { tex, aspect } = textTexture(text)
+        mat.map = tex
+        mat.needsUpdate = true
+        mesh.userData.aspect = aspect
+        mesh.visible = true
+      } else {
+        mat.map = null
+        mesh.visible = false
+      }
+    }
+    apply(this.originLabel, originCity)
+    apply(this.destLabel, destCity)
+  }
+
   /** Free the route lines' GPU geometries before clearing (they are rebuilt on
    * pan/progress; without disposal the buffers leak over a long session). */
   private disposeRouteGroup(): void {
@@ -387,17 +452,27 @@ export class Globe {
     if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
   }
 
+  /** Override the day/night clock (KST hour 0–24), or null for live time. */
+  setNightHour(hour: number | null): void {
+    this.nightHourOverride = hour
+  }
+
   private updateNight(): void {
-    // Whole-screen day/night by Korea time: 0 at noon, 1 at midnight (KST).
-    const kstHour = Number(
-      new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Seoul',
-        hour: 'numeric',
-        hour12: false
-      }).format(new Date())
-    )
-    const kstMin = new Date().getUTCMinutes() // minutes are timezone-invariant
-    const hour = (kstHour % 24) + kstMin / 60
+    let hour: number
+    if (this.nightHourOverride != null) {
+      hour = this.nightHourOverride
+    } else {
+      // Whole-screen day/night by Korea time: 0 at noon, 1 at midnight (KST).
+      const kstHour = Number(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Seoul',
+          hour: 'numeric',
+          hour12: false
+        }).format(new Date())
+      )
+      const kstMin = new Date().getUTCMinutes() // minutes are timezone-invariant
+      hour = (kstHour % 24) + kstMin / 60
+    }
     // 1 at midnight (hour 0), 0 at noon (hour 12).
     this.bgUniforms.uNight.value = 0.5 + 0.5 * Math.cos((hour / 24) * 2 * Math.PI)
   }
@@ -467,6 +542,15 @@ export class Globe {
           this.destMarker.scale.set(ps, ps, 1)
           this.originMarker.visible = true
           this.destMarker.visible = true
+          // Place-name labels sit just above each marker (constant screen size).
+          const lblH = 0.03 * ps
+          const placeLabel = (lbl: THREE.Mesh, u: number, v: number) => {
+            const asp = (lbl.userData.aspect as number) || 4
+            lbl.scale.set(lblH * asp, lblH, 1)
+            lbl.position.set(u, 1 - v + 0.035 * ps, 0.68)
+          }
+          placeLabel(this.originLabel, op.u, op.v)
+          placeLabel(this.destLabel, dp.u, dp.v)
           // Split the route at the plane's position; rebuild also when the pan
           // offset changed (great-circle re-projects under wrap).
           // Rebuild only when the split point moved or the pan offset changed
@@ -491,6 +575,8 @@ export class Globe {
       this.selectedPlane.visible = false
       this.originMarker.visible = false
       this.destMarker.visible = false
+      this.originLabel.visible = false
+      this.destLabel.visible = false
     }
 
     // Ease the camera toward the target view (zoom/pan) and keep icon size

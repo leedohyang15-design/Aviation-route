@@ -138,6 +138,10 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
         state.view = msg.view
         broadcast({ type: 'state', state })
         return
+      case 'setDayNight':
+        state.dayNightHour = msg.hour
+        broadcast({ type: 'state', state })
+        return
       case 'toggleOverlay':
         state.overlays[msg.key] = msg.value ?? !state.overlays[msg.key]
         broadcast({ type: 'state', state })
