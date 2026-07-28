@@ -6,7 +6,10 @@ import { MapView } from './MapView'
 
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, route, detail } = useHub('control')
-  const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
+  const visible = useMemo(
+    () => applyFilter(aircraft, state.filter, state.selected),
+    [aircraft, state.filter, state.selected]
+  )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
 

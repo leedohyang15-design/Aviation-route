@@ -96,6 +96,9 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
       aircraft = snapshot
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length })
+      // Keep the selected plane's route/progress/ETA live (e.g. after a mock
+      // re-route on arrival) so the old route doesn't linger.
+      if (state.selected) void sendDetail(null)
     },
     (isConnected) => {
       connected = isConnected

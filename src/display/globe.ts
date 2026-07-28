@@ -561,6 +561,15 @@ export class Globe {
         best = id
       }
     }
+    if (best) {
+      // A deliberate click holds the selection: pause the attract auto-cycle so
+      // it doesn't replace the clicked plane after 30s. Any later pan/zoom/reset
+      // re-arms attract.
+      if (this.idleTimer) {
+        clearTimeout(this.idleTimer)
+        this.idleTimer = null
+      }
+    }
     this.onSelectChange?.(best)
   }
 

@@ -12,7 +12,10 @@ export function DisplayApp(): JSX.Element {
   const globeRef = useRef<Globe | null>(null)
   const { aircraft, state, route, detail } = useHub('display')
 
-  const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
+  const visible = useMemo(
+    () => applyFilter(aircraft, state.filter, state.selected),
+    [aircraft, state.filter, state.selected]
+  )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
 

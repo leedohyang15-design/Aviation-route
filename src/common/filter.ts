@@ -2,8 +2,12 @@
 // control map and the display so the two screens always show the same set.
 import type { Aircraft, FlightFilter } from '@shared/types'
 
-export function applyFilter(aircraft: Aircraft[], f: FlightFilter): Aircraft[] {
+export function applyFilter(aircraft: Aircraft[], f: FlightFilter, keepId?: string | null): Aircraft[] {
   return aircraft.filter((a) => {
+    // Always keep the selected/tracked plane, even if it momentarily goes
+    // on-ground near its endpoints — otherwise dropping it mid-flight would
+    // vanish the selection and freeze the dome that follows it.
+    if (keepId && a.icao24 === keepId) return true
     if (f.airborneOnly && a.onGround) return false
     if (f.originCountry && a.originCountry !== f.originCountry) return false
     if (f.minAltitude != null && (a.altitude ?? 0) < f.minAltitude) return false
