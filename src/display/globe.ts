@@ -944,6 +944,9 @@ export class Globe {
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
+        // On the projected display, keep the dome centred on the selected plane
+        // (horizontal spin follows it smoothly). Interactive control is separate.
+        if (!this.interactive) this.targetLonOffset = -e.lon
         // Info chip next to the plane (flips to the left near the right edge).
         const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
         if (infoMat.map) {
