@@ -34,6 +34,33 @@ body,
   display: block;
 }
 
+/* Boarding-pass ticket centered on the projected frame (same top-left origin as
+   the canvas), shown on selection. Keyed re-mount replays the pop each time. */
+.display-card-wrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.display-card {
+  width: clamp(300px, 26vw, 420px);
+  animation: cardPop 0.42s cubic-bezier(0.2, 0.85, 0.25, 1);
+  filter: drop-shadow(0 10px 40px rgba(0, 0, 0, 0.6));
+}
+@keyframes cardPop {
+  from {
+    transform: scale(0.82);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 .hud {
   position: absolute;
   pointer-events: none;

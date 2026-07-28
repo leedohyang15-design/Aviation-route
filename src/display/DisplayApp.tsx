@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
+import { FlightDetailCard } from '../common/FlightDetailCard'
 import { Globe } from './globe'
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
@@ -13,6 +14,8 @@ export function DisplayApp(): JSX.Element {
   const { aircraft, state, route, detail } = useHub('display')
 
   const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
+  const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
+  const d = detail && detail.icao24 === state.selected ? detail : null
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -35,15 +38,21 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setRoute(route.points), [route])
   useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
   useEffect(() => {
-    const d = detail && detail.icao24 === state.selected ? detail : null
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
-  }, [detail, state.selected])
+  }, [d])
 
-  // Clean projector frame: just the map in the fixed top-left region, rest black.
   return (
     <div className="display-root">
       <div className="stage">
         <canvas ref={canvasRef} />
+        {/* Boarding-pass ticket, centered on the projected frame when selected. */}
+        <div className="display-card-wrap" style={{ width: FRAME.w, height: FRAME.h }}>
+          {sel && (
+            <div className="display-card" key={state.selected ?? ''}>
+              <FlightDetailCard aircraft={sel} detail={d} />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
