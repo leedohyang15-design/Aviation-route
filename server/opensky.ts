@@ -106,11 +106,17 @@ export function createOpenSkyFeed(): FlightFeed {
       clearTimeout(to)
 
       if (res.status === 429) {
-        // Out of credits: honour the server's retry-after (default 5 min).
+        // Out of credits: honour the server's retry-after but cap it so we
+        // re-check periodically and recover automatically after the daily reset.
+        // The mock fallback covers the screen meanwhile.
         const retry = Number(res.headers.get('X-Rate-Limit-Retry-After-Seconds')) || 300
+        const wait = Math.min(retry, 30 * 60) // cap at 30 min
         onStatus(false)
-        console.warn(`[opensky] rate limited (429). Backing off ${retry}s.`)
-        return retry * 1000
+        console.warn(
+          `[opensky] rate limited (429). Credits exhausted; server says retry in ${retry}s. ` +
+            `Re-checking in ${wait}s; mock fallback is covering the display.`
+        )
+        return wait * 1000
       }
       if (!res.ok) throw new Error(`OpenSky /states/all failed: ${res.status}`)
 
