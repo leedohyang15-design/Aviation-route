@@ -18,6 +18,9 @@ function mapToView(map: maplibregl.Map): ViewState {
 // exhibit runs offline, swap for a locally hosted style/tiles.
 const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
 
+/** Zoom level used when focusing/following a selected aircraft. */
+const FOLLOW_ZOOM = 4
+
 function toFeatureCollection(aircraft: Aircraft[]): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -214,18 +217,19 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     if (selected && selected !== prevSel.current) {
       followRef.current = selected // start following the newly selected plane
       const a = aircraft.find((x) => x.icao24 === selected)
-      if (a) map.flyTo({ center: [a.lon, a.lat], zoom: Math.max(map.getZoom(), 4), duration: 1500 })
+      if (a) map.flyTo({ center: [a.lon, a.lat], zoom: FOLLOW_ZOOM, duration: 1500 })
     }
     if (!selected) followRef.current = null
     prevSel.current = selected
   }, [selected, aircraft])
 
-  // Follow the selected plane: recenter on it each snapshot (until the user drags).
+  // Follow the selected plane: recenter (and keep zoomed in) each snapshot,
+  // until the user drags the map. Include zoom so the focus level persists.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !loadedRef.current || !followRef.current) return
     const a = aircraft.find((x) => x.icao24 === followRef.current)
-    if (a) map.easeTo({ center: [a.lon, a.lat], duration: 1200 })
+    if (a) map.easeTo({ center: [a.lon, a.lat], zoom: FOLLOW_ZOOM, duration: 1200 })
   }, [aircraft])
 
   const resetView = () => {

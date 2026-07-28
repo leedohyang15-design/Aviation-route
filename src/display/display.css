@@ -59,6 +59,12 @@ body,
   font-size: clamp(13px, 1.1vw, 20px);
   line-height: 1.5;
 }
+.hud-compass {
+  top: 3vh;
+  right: 3vw;
+  width: clamp(70px, 6vw, 120px);
+  height: clamp(70px, 6vw, 120px);
+}
 .hud-stats b {
   font-size: 1.4em;
   color: #7fd4ff;

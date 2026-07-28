@@ -17,7 +17,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
 import { projectNorm, wrapLon, splitAtAntimeridian, nearestRouteIndex } from '@shared/projection'
-import { EARTH_TEXTURE_URL } from '@shared/config'
+import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 
 const CAPACITY = 16000 // max aircraft instances
@@ -118,9 +118,10 @@ export class Globe {
     this.bgUniforms = {
       uMap: { value: null },
       uHasMap: { value: 0 },
+      uNightMap: { value: null },
+      uHasNight: { value: 0 },
       uLonOffset: { value: 0 },
-      uSunDir: { value: new THREE.Vector3(1, 0, 0) },
-      uShowDayNight: { value: 1 }, // day/night is always on (auto, real-time)
+      uNight: { value: 0 }, // 0 = full day, 1 = full night (from Korea time)
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.5 }, // lift the dark satellite photo
       uSaturation: { value: 1.25 } // boost vividness (was over-desaturated)
@@ -135,31 +136,31 @@ export class Globe {
         precision highp float;
         varying vec2 vUv;
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
-        uniform vec3 uSunDir; uniform float uShowDayNight; uniform float uShowGrid;
-        uniform float uBrightness; uniform float uSaturation;
+        uniform sampler2D uNightMap; uniform float uHasNight; uniform float uNight;
+        uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
           float texU = fract(vUv.x - uLonOffset / 360.0);
           vec2 uv = vec2(texU, vUv.y);
-          vec3 col = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
-          // Brightness + saturation grade on the earth image.
-          float luma = dot(col, vec3(0.299, 0.587, 0.114));
-          col = mix(vec3(luma), col, uSaturation) * uBrightness;
-          float lon = uv.x * 360.0 - 180.0;
-          float lat = vUv.y * 180.0 - 90.0;
+          vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
+          // Brightness + saturation grade on the daytime image.
+          float luma = dot(day, vec3(0.299, 0.587, 0.114));
+          day = mix(vec3(luma), day, uSaturation) * uBrightness;
+
           if (uShowGrid > 0.5) {
+            float lon = uv.x * 360.0 - 180.0;
+            float lat = vUv.y * 180.0 - 90.0;
             float glon = abs(fract(lon / 30.0 + 0.5) - 0.5);
             float glat = abs(fract(lat / 30.0 + 0.5) - 0.5);
-            float line = min(glon, glat);
-            float grid = smoothstep(0.015, 0.0, line);
-            col = mix(col, vec3(0.4, 0.6, 0.85), grid * 0.3);
+            float grid = smoothstep(0.015, 0.0, min(glon, glat));
+            day = mix(day, vec3(0.4, 0.6, 0.85), grid * 0.3);
           }
-          if (uShowDayNight > 0.5) {
-            float la = radians(lat); float lo = radians(lon);
-            vec3 n = vec3(cos(la) * cos(lo), cos(la) * sin(lo), sin(la));
-            float d = dot(n, normalize(uSunDir));
-            float night = smoothstep(0.12, -0.12, d);
-            col *= mix(1.0, 0.55, night);
-          }
+
+          // Whole-screen day↔night by Korea time. Night = darkened earth + city
+          // lights (from the night texture) glowing.
+          vec3 nightBase = day * 0.10;
+          vec3 lights = uHasNight > 0.5 ? texture2D(uNightMap, uv).rgb * 1.6 : vec3(0.0);
+          vec3 night = nightBase + lights;
+          vec3 col = mix(day, night, uNight);
           gl_FragColor = vec4(col, 1.0);
         }
       `
@@ -213,19 +214,30 @@ export class Globe {
     this.resize()
   }
 
+  /** Apply crisp filtering (mipmaps + anisotropy) to reduce shimmer/blur. */
+  private tuneTexture(tex: THREE.Texture): void {
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.wrapS = THREE.RepeatWrapping
+    tex.generateMipmaps = true
+    tex.minFilter = THREE.LinearMipmapLinearFilter
+    tex.magFilter = THREE.LinearFilter
+    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
+    tex.needsUpdate = true
+  }
+
   /** Try to swap in a real photographic earth if the asset is present. */
   private tryLoadEarth(): void {
-    new THREE.TextureLoader().load(
+    const loader = new THREE.TextureLoader()
+    loader.load(
       EARTH_TEXTURE_URL,
       (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.wrapS = THREE.RepeatWrapping
+        this.tuneTexture(tex)
         this.bgUniforms.uMap.value = tex
         this.bgUniforms.uHasMap.value = 1
         // Photographic maps carry their own graticule — drop the procedural grid.
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
-        console.log(`[earth] loaded texture "${EARTH_TEXTURE_URL}"`)
+        console.log(`[earth] loaded day texture "${EARTH_TEXTURE_URL}"`)
       },
       undefined,
       () => {
@@ -233,6 +245,20 @@ export class Globe {
           `[earth] no/invalid texture at "${EARTH_TEXTURE_URL}" — using procedural ocean+grid. ` +
             `Put a 2:1 image at public/${EARTH_TEXTURE_URL}.`
         )
+      }
+    )
+    // Optional night-lights texture (city lights) for the KST night effect.
+    loader.load(
+      EARTH_NIGHT_URL,
+      (tex) => {
+        this.tuneTexture(tex)
+        this.bgUniforms.uNightMap.value = tex
+        this.bgUniforms.uHasNight.value = 1
+        console.log(`[earth] loaded night texture "${EARTH_NIGHT_URL}"`)
+      },
+      undefined,
+      () => {
+        /* no night texture — night side just dims globally */
       }
     )
   }
@@ -351,23 +377,19 @@ export class Globe {
     if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
   }
 
-  private updateSunDir(): void {
-    // Subsolar point from UTC time (low-precision, good enough for a terminator).
-    const now = new Date()
-    const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60
-    const subLon = -(utcHours - 12) * 15
-    const dayOfYear =
-      (Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) -
-        Date.UTC(now.getUTCFullYear(), 0, 0)) /
-      86400000
-    const decl = 23.44 * Math.sin(((360 / 365) * (dayOfYear - 81) * Math.PI) / 180)
-    const la = (decl * Math.PI) / 180
-    const lo = (subLon * Math.PI) / 180
-    ;(this.bgUniforms.uSunDir.value as THREE.Vector3).set(
-      Math.cos(la) * Math.cos(lo),
-      Math.cos(la) * Math.sin(lo),
-      Math.sin(la)
+  private updateNight(): void {
+    // Whole-screen day/night by Korea time: 0 at noon, 1 at midnight (KST).
+    const kstHour = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Seoul',
+        hour: 'numeric',
+        hour12: false
+      }).format(new Date())
     )
+    const kstMin = new Date().getUTCMinutes() // minutes are timezone-invariant
+    const hour = (kstHour % 24) + kstMin / 60
+    // 1 at midnight (hour 0), 0 at noon (hour 12).
+    this.bgUniforms.uNight.value = 0.5 + 0.5 * Math.cos((hour / 24) * 2 * Math.PI)
   }
 
   private frame = (now: number): void => {
@@ -459,7 +481,7 @@ export class Globe {
     this.camera.bottom = this.viewRect.bottom
     this.camera.updateProjectionMatrix()
 
-    this.updateSunDir()
+    this.updateNight()
     this.renderer.render(this.scene, this.camera)
     this.raf = requestAnimationFrame(this.frame)
   }
@@ -486,7 +508,7 @@ export class Globe {
       rh = h
       rw = h * 2
     }
-    const pr = Math.min(window.devicePixelRatio, 2)
+    const pr = Math.min(window.devicePixelRatio, 3) // higher cap → sharper output
     this.renderer.setPixelRatio(pr)
     this.renderer.setSize(rw, rh, true)
     this.canvas.style.width = `${rw}px`

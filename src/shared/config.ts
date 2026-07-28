@@ -39,3 +39,9 @@ export const EQUIRECT_HEIGHT = EQUIRECT_WIDTH / 2
  * If absent, the display falls back to a procedural ocean + graticule.
  */
 export const EARTH_TEXTURE_URL = 'earth_equirect.jpg'
+
+/**
+ * Optional night-lights (city lights) texture, shown at night per Korea time.
+ * Drop a 2:1 "Black Marble" image here; if absent, night just dims globally.
+ */
+export const EARTH_NIGHT_URL = 'earth_night.jpg'

@@ -1,13 +1,15 @@
 import { useMemo } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
+import { FlightDetailCard } from '../common/FlightDetailCard'
 import { MapView } from './MapView'
-import type { FlightFilter, OverlayKey } from '@shared/types'
+import type { FlightFilter } from '@shared/types'
 
 export function ControlApp(): JSX.Element {
-  const { send, aircraft, state, connected, source, route } = useHub('control')
+  const { send, aircraft, state, connected, source, route, detail } = useHub('control')
   const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
   const sel = state.selected ? aircraft.find((a) => a.icao24 === state.selected) : null
+  const d = detail && detail.icao24 === state.selected ? detail : null
 
   const countries = useMemo(() => {
     const set = new Set<string>()
@@ -17,7 +19,6 @@ export function ControlApp(): JSX.Element {
 
   const patchFilter = (patch: Partial<FlightFilter>) =>
     send({ type: 'setFilter', filter: { ...state.filter, ...patch } })
-  const toggleOverlay = (key: OverlayKey) => send({ type: 'toggleOverlay', key })
 
   return (
     <div className="control-root">
@@ -41,23 +42,7 @@ export function ControlApp(): JSX.Element {
           <h2>선택된 비행기</h2>
           {sel ? (
             <div className="selcard">
-              <div className="callsign">{sel.callsign || sel.icao24.toUpperCase()}</div>
-              <div className="row">
-                <span>고도</span>
-                <b>{sel.altitude != null ? `${Math.round(sel.altitude).toLocaleString()} m` : '—'}</b>
-              </div>
-              <div className="row">
-                <span>속도</span>
-                <b>{sel.velocity != null ? `${Math.round(sel.velocity * 3.6)} km/h` : '—'}</b>
-              </div>
-              <div className="row">
-                <span>방위</span>
-                <b>{sel.heading != null ? `${Math.round(sel.heading)}°` : '—'}</b>
-              </div>
-              <div className="row">
-                <span>국적</span>
-                <b>{sel.originCountry || '—'}</b>
-              </div>
+              <FlightDetailCard aircraft={sel} detail={d} />
               <button onClick={() => send({ type: 'select', icao24: null })}>선택 해제</button>
             </div>
           ) : (
@@ -100,25 +85,6 @@ export function ControlApp(): JSX.Element {
               onChange={(e) => patchFilter({ minAltitude: Number(e.target.value) || undefined })}
             />
           </label>
-        </section>
-
-        <section>
-          <h2>오버레이</h2>
-          {(
-            [
-              ['grid', '위경도 격자'],
-              ['stats', '통계 표시']
-            ] as [OverlayKey, string][]
-          ).map(([key, label]) => (
-            <label className="check" key={key}>
-              <input
-                type="checkbox"
-                checked={!!state.overlays[key]}
-                onChange={() => toggleOverlay(key)}
-              />
-              {label}
-            </label>
-          ))}
         </section>
       </aside>
     </div>
