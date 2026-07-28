@@ -108,8 +108,11 @@ body,
 }
 .route-od .port {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+}
+.route-od .pin {
+  font-size: 1.1em;
 }
 .route-od .city {
   font-size: 1.25em;

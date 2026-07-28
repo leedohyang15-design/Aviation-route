@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { Aircraft, GeoPoint, ViewState } from '@shared/types'
-import { nearestRouteIndex } from '@shared/projection'
+import { nearestRouteIndex, wrapLon } from '@shared/projection'
 import { planeImageData } from '@shared/plane'
 
 /** Convert the map's current viewport into the display's ViewState. */
@@ -10,7 +10,8 @@ function mapToView(map: maplibregl.Map): ViewState {
   const b = map.getBounds()
   let span = (b.getEast() - b.getWest()) / 360
   if (span <= 0) span += 1 // antimeridian wrap
-  return { centerLon: c.lng, centerLat: c.lat, span: Math.max(0.02, Math.min(1, span)) }
+  // Normalize longitude so it never leaves [-180,180] (else the display clamp breaks).
+  return { centerLon: wrapLon(c.lng), centerLat: c.lat, span: Math.max(0.02, Math.min(1, span)) }
 }
 
 // Free MapLibre demo vector style — no API token required. Needs network; if the
@@ -78,12 +79,18 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
       style: STYLE_URL,
       center: [10, 25],
       zoom: 1.3,
-      attributionControl: false
+      attributionControl: false,
+      renderWorldCopies: false // single world → pan stays bounded and lng in range
     })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
     map.on('load', async () => {
+      // Hide the demo style's dashed graticule so it doesn't clash with routes.
+      for (const id of ['geolines', 'geolines-label']) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none')
+      }
+
       // Register the airplane icon (used only for the selected aircraft).
       try {
         const img = await planeImageData(64)
@@ -208,5 +215,17 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     prevSel.current = selected
   }, [selected, aircraft])
 
-  return <div ref={containerRef} className="map" />
+  const resetView = () => {
+    onSelectRef.current(null)
+    mapRef.current?.flyTo({ center: [10, 25], zoom: 1.3, duration: 900 })
+  }
+
+  return (
+    <div className="map-wrap">
+      <div ref={containerRef} className="map" />
+      <button className="reset-btn" onClick={resetView}>
+        🌏 전체 보기
+      </button>
+    </div>
+  )
 }

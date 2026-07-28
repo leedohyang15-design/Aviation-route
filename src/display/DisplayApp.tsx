@@ -4,6 +4,7 @@ import { applyFilter } from '../common/filter'
 import { splitAtAntimeridian } from '@shared/projection'
 import type { FlightDetail, GeoPoint } from '@shared/types'
 import { PLANE_DATA_URI } from '@shared/plane'
+import { EARTH_TEXTURE_URL } from '@shared/config'
 import { Globe } from './globe'
 
 const KST = 'Asia/Seoul'
@@ -47,12 +48,23 @@ function MiniRoute({ detail }: { detail: FlightDetail }): JSX.Element | null {
     )
   const now = route[Math.min(idx, route.length - 1)]
   const [nx, ny] = toXY(now)
+  const [ox, oy] = toXY(route[0])
+  const [dx, dy] = toXY(route[route.length - 1])
   return (
     <svg className="mini-route" viewBox={`0 0 ${W} ${H}`} width="100%">
-      <rect x={0} y={0} width={W} height={H} rx={8} fill="#0a1020" stroke="#22304e" />
-      {poly(route.slice(idx), '#ffe08a', 0.35, 1.5)}
-      {poly(route.slice(0, idx + 1), '#ff3b30', 0.95, 2)}
-      <circle cx={nx} cy={ny} r={3.5} fill="#fff" />
+      <clipPath id="mini-clip">
+        <rect x={0} y={0} width={W} height={H} rx={8} />
+      </clipPath>
+      <g clipPath="url(#mini-clip)">
+        <image href={EARTH_TEXTURE_URL} x={0} y={0} width={W} height={H} preserveAspectRatio="none" opacity={0.55} />
+        <rect x={0} y={0} width={W} height={H} fill="#0a1020" opacity={0.35} />
+        {poly(route.slice(idx), '#ffe08a', 0.5, 1.5)}
+        {poly(route.slice(0, idx + 1), '#ff3b30', 0.95, 2.5)}
+        <circle cx={nx} cy={ny} r={3.5} fill="#fff" />
+        <text x={ox} y={oy} fontSize={13} textAnchor="middle" dominantBaseline="central">🚩</text>
+        <text x={dx} y={dy} fontSize={13} textAnchor="middle" dominantBaseline="central">📍</text>
+      </g>
+      <rect x={0} y={0} width={W} height={H} rx={8} fill="none" stroke="#22304e" />
     </svg>
   )
 }
@@ -120,11 +132,13 @@ export function DisplayApp(): JSX.Element {
 
           <div className="route-od">
             <div className="port">
+              <span className="pin">🚩</span>
               <span className="city">{d?.origin?.city ?? '—'}</span>
               <span className="code">{d?.origin?.code ?? ''}</span>
             </div>
             <div className="arrow">↓</div>
             <div className="port">
+              <span className="pin">📍</span>
               <span className="city">{d?.destination?.city ?? '—'}</span>
               <span className="code">{d?.destination?.code ?? ''}</span>
             </div>

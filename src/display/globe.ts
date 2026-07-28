@@ -12,12 +12,40 @@
 // view, eased toward the target set by setView() (driven by the control map).
 
 import * as THREE from 'three'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
 import { projectNorm, wrapLon, splitAtAntimeridian, nearestRouteIndex } from '@shared/projection'
 import { EARTH_TEXTURE_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 
 const CAPACITY = 16000 // max aircraft instances
+
+/** Screen-space heading (radians) for the icon: on equirectangular a great
+ * circle is curved, so the on-screen tangent differs from the geographic
+ * bearing — 1/cos(lat) stretches longitude. This keeps icons aligned to motion. */
+function screenAngle(headingRad: number, latDeg: number): number {
+  const cosLat = Math.max(0.05, Math.cos((latDeg * Math.PI) / 180))
+  const dx = Math.sin(headingRad) / cosLat
+  const dy = Math.cos(headingRad)
+  return Math.atan2(-dx, dy)
+}
+
+/** A CanvasTexture of a single emoji (for origin/destination markers). */
+function emojiTexture(emoji: string): THREE.CanvasTexture {
+  const size = 64
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  const ctx = c.getContext('2d')!
+  ctx.font = `${size * 0.8}px serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(emoji, size / 2, size / 2)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
 
 function altitudeColor(alt: number | null): THREE.Color {
   // Low = warm, high = cool. Mirrors typical flight-tracker palettes.
@@ -48,11 +76,20 @@ export class Globe {
   private bgUniforms: Record<string, THREE.IUniform>
   private planes: THREE.InstancedMesh
   private selectedPlane: THREE.Mesh
+  private originMarker!: THREE.Mesh
+  private destMarker!: THREE.Mesh
   /** Base on-screen size of the airplane sprite (world units), scaled by zoom. */
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
   private routePoints: GeoPoint[] | null = null
   private lastRouteIdx = -1
+  private flownMat = new LineMaterial({ color: 0xff3b30, linewidth: 5, transparent: true })
+  private remainMat = new LineMaterial({
+    color: 0xffe08a,
+    linewidth: 3,
+    transparent: true,
+    opacity: 0.4
+  })
   private raf = 0
   private lastFrame = 0
 
@@ -60,6 +97,7 @@ export class Globe {
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
   private dummy = new THREE.Object3D()
+  private scratchColor = new THREE.Color()
   // Camera view rect in normalized [0,1] coords: current (eased) + target.
   private viewRect = { left: 0, right: 1, top: 1, bottom: 0 }
   private targetRect = { left: 0, right: 1, top: 1, bottom: 0 }
@@ -78,8 +116,8 @@ export class Globe {
       uSunDir: { value: new THREE.Vector3(1, 0, 0) },
       uShowDayNight: { value: 1 }, // day/night is always on (auto, real-time)
       uShowGrid: { value: 1 },
-      uBrightness: { value: 1.4 }, // lift the dark satellite photo
-      uSaturation: { value: 0.85 } // tame the high saturation
+      uBrightness: { value: 1.5 }, // lift the dark satellite photo
+      uSaturation: { value: 1.25 } // boost vividness (was over-desaturated)
     }
     const bgMat = new THREE.ShaderMaterial({
       uniforms: this.bgUniforms,
@@ -114,7 +152,7 @@ export class Globe {
             vec3 n = vec3(cos(la) * cos(lo), cos(la) * sin(lo), sin(la));
             float d = dot(n, normalize(uSunDir));
             float night = smoothstep(0.12, -0.12, d);
-            col *= mix(1.0, 0.4, night);
+            col *= mix(1.0, 0.55, night);
           }
           gl_FragColor = vec4(col, 1.0);
         }
@@ -124,28 +162,46 @@ export class Globe {
     this.bg.position.set(0.5, 0.5, -1)
     this.scene.add(this.bg)
 
-    // --- Aircraft dots (unselected): small circles colored by altitude ---
-    const dot = new THREE.CircleGeometry(0.004, 12)
-    this.planes = new THREE.InstancedMesh(dot, new THREE.MeshBasicMaterial(), CAPACITY)
+    // --- Aircraft: every plane is a small airplane icon, colored by altitude ---
+    const planeTex = new THREE.TextureLoader().load(PLANE_DATA_URI)
+    planeTex.colorSpace = THREE.SRGBColorSpace
+    const quad = new THREE.PlaneGeometry(0.011, 0.011)
+    this.planes = new THREE.InstancedMesh(
+      quad,
+      new THREE.MeshBasicMaterial({ map: planeTex, transparent: true, alphaTest: 0.35 }),
+      CAPACITY
+    )
     this.planes.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    // The base geometry sits at the origin (a corner of our [0,1] view), so its
-    // bounding sphere makes three.js frustum-cull the whole mesh even though the
-    // instances are spread across the frame. Disable culling for it.
+    // Base geometry sits at the origin (a corner of the [0,1] view), so its
+    // bounding sphere would frustum-cull the whole mesh — disable culling.
     this.planes.frustumCulled = false
     this.planes.count = 0
     this.scene.add(this.planes)
 
-    // --- Selected aircraft: an airplane icon sprite, rotated by heading ---
-    const planeTex = new THREE.TextureLoader().load(PLANE_DATA_URI)
-    planeTex.colorSpace = THREE.SRGBColorSpace
+    // --- Selected aircraft: a larger, bright airplane icon ---
     this.selectedPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.03, 0.03),
+      new THREE.PlaneGeometry(0.032, 0.032),
       new THREE.MeshBasicMaterial({ map: planeTex, transparent: true })
     )
     this.selectedPlane.visible = false
-    this.selectedPlane.position.z = 0.6
+    this.selectedPlane.position.z = 0.7
     this.selectedPlane.frustumCulled = false
     this.scene.add(this.selectedPlane)
+
+    // --- Origin / destination markers on the selected route ---
+    const marker = (emoji: string): THREE.Mesh => {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.03, 0.03),
+        new THREE.MeshBasicMaterial({ map: emojiTexture(emoji), transparent: true })
+      )
+      m.visible = false
+      m.position.z = 0.65
+      m.frustumCulled = false
+      this.scene.add(m)
+      return m
+    }
+    this.originMarker = marker('🚩')
+    this.destMarker = marker('📍')
 
     this.tryLoadEarth()
     this.resize()
@@ -245,22 +301,35 @@ export class Globe {
     this.routePoints = points && points.length >= 2 ? points : null
     this.lastRouteIdx = -1
     this.routeGroup.clear()
+    // Place origin/destination markers at the route ends.
+    const pts = this.routePoints
+    if (pts) {
+      const a = projectNorm(pts[0].lon, pts[0].lat, 0)
+      const b = projectNorm(pts[pts.length - 1].lon, pts[pts.length - 1].lat, 0)
+      this.originMarker.position.set(a.u, 1 - a.v, 0.65)
+      this.destMarker.position.set(b.u, 1 - b.v, 0.65)
+      this.originMarker.visible = true
+      this.destMarker.visible = true
+    } else {
+      this.originMarker.visible = false
+      this.destMarker.visible = false
+    }
   }
 
-  /** Add antimeridian-split line segments for a polyline in one colour. */
-  private addRouteLines(points: GeoPoint[], mat: THREE.LineBasicMaterial): void {
+  /** Add antimeridian-split fat (Line2) segments for a polyline. */
+  private addRouteLines(points: GeoPoint[], mat: LineMaterial): void {
     for (const seg of splitAtAntimeridian(points)) {
       if (seg.length < 2) continue
-      const geo = new THREE.BufferGeometry()
-      const pos = new Float32Array(seg.length * 3)
-      seg.forEach((p, i) => {
+      const positions: number[] = []
+      for (const p of seg) {
         const { u, v } = projectNorm(p.lon, p.lat, 0)
-        pos[i * 3] = u
-        pos[i * 3 + 1] = 1 - v
-        pos[i * 3 + 2] = 0.2
-      })
-      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-      this.routeGroup.add(new THREE.Line(geo, mat))
+        positions.push(u, 1 - v, 0.2)
+      }
+      const geo = new LineGeometry()
+      geo.setPositions(positions)
+      const line = new Line2(geo, mat)
+      line.frustumCulled = false
+      this.routeGroup.add(line)
     }
   }
 
@@ -269,20 +338,10 @@ export class Globe {
     this.routeGroup.clear()
     const pts = this.routePoints
     if (!pts) return
-    const flown = pts.slice(0, idx + 1)
     const remaining = pts.slice(idx)
-    if (remaining.length >= 2) {
-      this.addRouteLines(
-        remaining,
-        new THREE.LineBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.28 })
-      )
-    }
-    if (flown.length >= 2) {
-      this.addRouteLines(
-        flown,
-        new THREE.LineBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.95 })
-      )
-    }
+    const flown = pts.slice(0, idx + 1)
+    if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat)
+    if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
   }
 
   private updateSunDir(): void {
@@ -332,19 +391,25 @@ export class Globe {
         Math.PI) *
         0.1
       const { u, v } = projectNorm(e.lon, e.lat, 0)
-      // Unselected → a dot (no heading rotation). Selected → the airplane sprite.
+      const angle = screenAngle(e.heading, e.lat) // align icon to on-screen motion
+      const isSel = id === this.selected
       this.dummy.position.set(u, 1 - v, 0)
-      this.dummy.rotation.z = 0
+      this.dummy.rotation.z = angle
       this.dummy.scale.set(this.planeBaseScale, this.planeBaseScale, 1)
       this.dummy.updateMatrix()
       this.planes.setMatrixAt(i, this.dummy.matrix)
-      this.planes.setColorAt(i, e.color)
-      if (id === this.selected) {
-        this.selectedPlane.position.set(u, 1 - v, 0.6)
-        this.selectedPlane.rotation.z = -e.heading
+      // Dim every other plane while one is selected so it stands out.
+      this.scratchColor.copy(e.color)
+      if (this.selected && !isSel) this.scratchColor.multiplyScalar(0.28)
+      this.planes.setColorAt(i, this.scratchColor)
+      if (isSel) {
+        this.selectedPlane.position.set(u, 1 - v, 0.7)
+        this.selectedPlane.rotation.z = angle
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
+        this.originMarker.scale.set(ps, ps, 1)
+        this.destMarker.scale.set(ps, ps, 1)
         // Split the route at the plane's current position: flown red, rest faint.
         if (this.routePoints) {
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
@@ -401,10 +466,14 @@ export class Globe {
       rh = h
       rw = h * 2
     }
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    const pr = Math.min(window.devicePixelRatio, 2)
+    this.renderer.setPixelRatio(pr)
     this.renderer.setSize(rw, rh, true)
     this.canvas.style.width = `${rw}px`
     this.canvas.style.height = `${rh}px`
+    // Fat lines need the drawing-buffer resolution in pixels.
+    this.flownMat.resolution.set(rw * pr, rh * pr)
+    this.remainMat.resolution.set(rw * pr, rh * pr)
   }
 
   dispose(): void {
