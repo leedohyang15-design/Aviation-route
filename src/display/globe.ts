@@ -143,7 +143,27 @@ export class Globe {
   private hasEarthTexture = false
   private nightHourOverride: number | null = null // null = live time
 
-  constructor(private canvas: HTMLCanvasElement) {
+  // Interactive (control) mode: the operator drives the camera locally with
+  // drag/wheel and clicks to select, emitting view/selection back to the hub.
+  private interactive = false
+  onViewChange: ((v: ViewState) => void) | null = null
+  onSelectChange: ((icao24: string | null) => void) | null = null
+  private iCenterLon = 127.5
+  private iCenterLat = 37.5
+  private iSpan = 1
+  private lastViewEmit = 0
+  private viewEmitTimer: ReturnType<typeof setTimeout> | null = null
+  private dragging = false
+  private lastPX = 0
+  private lastPY = 0
+  private movedDuringDrag = false
+  private inputCleanup: (() => void) | null = null
+
+  constructor(
+    private canvas: HTMLCanvasElement,
+    opts: { interactive?: boolean } = {}
+  ) {
+    this.interactive = !!opts.interactive
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setClearColor(0x000000, 1)
     this.scene.add(this.routeGroup)
@@ -234,7 +254,7 @@ export class Globe {
     // --- Origin / destination markers on the selected route ---
     const marker = (emoji: string): THREE.Mesh => {
       const m = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.03, 0.03),
+        new THREE.PlaneGeometry(0.016, 0.016),
         new THREE.MeshBasicMaterial({ map: emojiTexture(emoji), transparent: true })
       )
       m.visible = false
@@ -263,6 +283,10 @@ export class Globe {
 
     this.tryLoadEarth()
     this.resize()
+    if (this.interactive) {
+      this.attachInput()
+      this.applyInteractiveView()
+    }
   }
 
   /** Apply crisp filtering (mipmaps + anisotropy) to reduce shimmer/blur. */
@@ -316,13 +340,16 @@ export class Globe {
 
   /** The control map's viewport. On the projected display we only take the
    * horizontal center (the spin) and ignore zoom/vertical entirely — the sphere
-   * always shows the whole world so nothing is ever cropped on the dome. */
+   * always shows the whole world so nothing is ever cropped on the dome. In
+   * interactive mode the operator's own camera is authoritative, so this is a
+   * no-op (feeding the hub's echoed view back in would fight the input). */
   setView(view: ViewState): void {
+    if (this.interactive) return
     this.controlCenterLon = view.centerLon
     this.applyViewTarget()
   }
 
-  /** Recompute the camera target: always full-world (no zoom). When a route is
+  /** Display mode camera target: always full-world (no zoom). When a route is
    * selected, center the spin on the midpoint longitude between origin and
    * destination so both endpoints sit as close to center as possible; otherwise
    * follow the control map's horizontal pan. */
@@ -331,6 +358,161 @@ export class Globe {
     this.targetLonOffset = -center
     this.targetRect = { left: 0, right: 1, top: 1, bottom: 0 }
     this.targetSpan = 1
+  }
+
+  /** Interactive mode camera target from the operator's intent (drag/wheel).
+   * Horizontal via lonOffset (wraps); vertical + zoom via the camera y-rect,
+   * clamped so the rect never leaves the [0,1] background plane. */
+  private applyInteractiveView(): void {
+    const s = Math.max(0.05, Math.min(1, this.iSpan))
+    this.targetLonOffset = -this.iCenterLon
+    let vCenter = (this.iCenterLat + 90) / 180
+    vCenter = Math.max(s / 2, Math.min(1 - s / 2, vCenter))
+    this.iCenterLat = vCenter * 180 - 90 // reflect the clamp back so drag stays consistent
+    this.targetRect = {
+      left: 0.5 - s / 2,
+      right: 0.5 + s / 2,
+      top: vCenter + s / 2,
+      bottom: vCenter - s / 2
+    }
+    this.targetSpan = s
+  }
+
+  /** Reset the interactive view to the home (whole-world, Korea-centered) view
+   * and clear the selection. Wired to the "🌏 전체 보기" button. */
+  home(): void {
+    this.iCenterLon = 127.5
+    this.iCenterLat = 37.5
+    this.iSpan = 1
+    this.applyInteractiveView()
+    this.emitView()
+    this.onSelectChange?.(null)
+  }
+
+  /** Screen (client) pixel → world coords in the renderer's [0,1] frame, using
+   * the current eased camera rect. Uses the canvas's own rect (the letterboxed
+   * 2:1 area), not the parent. Returns world x (= u) / world y (= 1 - v). */
+  private screenToWorld(clientX: number, clientY: number) {
+    const r = this.canvas.getBoundingClientRect()
+    const W = r.width || 1
+    const H = r.height || 1
+    const { left: L, right: R, top: T, bottom: B } = this.viewRect
+    const worldX = L + ((clientX - r.left) / W) * (R - L)
+    const worldY = T - ((clientY - r.top) / H) * (T - B)
+    return { worldX, worldY, W, H, L, R, T, B }
+  }
+
+  /** Pick the aircraft nearest the click within a pixel threshold (or null). */
+  private selectAt(clientX: number, clientY: number): void {
+    const { worldX, worldY, W, H, L, R, T, B } = this.screenToWorld(clientX, clientY)
+    const spanX = R - L || 1
+    const spanY = T - B || 1
+    let best: string | null = null
+    let bestPx = 14 // pixel threshold (zoom-independent)
+    for (const [id, e] of this.eased) {
+      const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
+      const py = 1 - v
+      let du = u - worldX
+      if (du > 0.5) du -= 1
+      else if (du < -0.5) du += 1
+      const dxPx = (du / spanX) * W
+      const dyPx = ((py - worldY) / spanY) * H
+      const px = Math.hypot(dxPx, dyPx)
+      if (px < bestPx) {
+        bestPx = px
+        best = id
+      }
+    }
+    this.onSelectChange?.(best)
+  }
+
+  /** Attach drag-pan / wheel-zoom / click-select handlers (interactive mode). */
+  private attachInput(): void {
+    const canvas = this.canvas
+    canvas.style.cursor = 'grab'
+    const onDown = (ev: PointerEvent) => {
+      this.dragging = true
+      this.movedDuringDrag = false
+      this.lastPX = ev.clientX
+      this.lastPY = ev.clientY
+      canvas.style.cursor = 'grabbing'
+      canvas.setPointerCapture?.(ev.pointerId)
+    }
+    const onMove = (ev: PointerEvent) => {
+      if (!this.dragging) return
+      const r = canvas.getBoundingClientRect()
+      const W = r.width || 1
+      const H = r.height || 1
+      const spanX = this.viewRect.right - this.viewRect.left
+      const spanY = this.viewRect.top - this.viewRect.bottom
+      const dx = ev.clientX - this.lastPX
+      const dy = ev.clientY - this.lastPY
+      if (Math.abs(dx) + Math.abs(dy) > 3) this.movedDuringDrag = true
+      // Horizontal: keep the grabbed point under the cursor → centerLon shifts opposite.
+      const du = (dx / W) * spanX
+      this.iCenterLon = wrapLon(this.iCenterLon - 360 * du)
+      // Vertical: dragging content down reveals the north → center latitude rises.
+      const dv = (dy / H) * spanY
+      this.iCenterLat += dv * 180
+      this.lastPX = ev.clientX
+      this.lastPY = ev.clientY
+      this.applyInteractiveView()
+      this.emitView()
+    }
+    const onUp = (ev: PointerEvent) => {
+      if (this.dragging && !this.movedDuringDrag) this.selectAt(ev.clientX, ev.clientY)
+      this.dragging = false
+      canvas.style.cursor = 'grab'
+      canvas.releasePointerCapture?.(ev.pointerId)
+      this.emitView()
+    }
+    const onWheel = (ev: WheelEvent) => {
+      ev.preventDefault()
+      this.iSpan = Math.max(0.05, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
+      this.applyInteractiveView()
+      this.emitView()
+    }
+    canvas.addEventListener('pointerdown', onDown)
+    canvas.addEventListener('pointermove', onMove)
+    canvas.addEventListener('pointerup', onUp)
+    canvas.addEventListener('pointercancel', onUp)
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    this.inputCleanup = () => {
+      canvas.removeEventListener('pointerdown', onDown)
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointercancel', onUp)
+      canvas.removeEventListener('wheel', onWheel)
+    }
+  }
+
+  /** Emit the current interactive view to the hub, throttled (~100ms) with a
+   * trailing flush so a continuous drag/zoom doesn't flood the broadcast. */
+  private emitView(): void {
+    const cb = this.onViewChange
+    if (!cb) return
+    const fire = () =>
+      cb({
+        centerLon: wrapLon(this.iCenterLon),
+        centerLat: this.iCenterLat,
+        span: Math.max(0.02, Math.min(1, this.iSpan))
+      })
+    const now = performance.now()
+    const wait = 100 - (now - this.lastViewEmit)
+    if (wait <= 0) {
+      this.lastViewEmit = now
+      if (this.viewEmitTimer) {
+        clearTimeout(this.viewEmitTimer)
+        this.viewEmitTimer = null
+      }
+      fire()
+    } else if (!this.viewEmitTimer) {
+      this.viewEmitTimer = setTimeout(() => {
+        this.lastViewEmit = performance.now()
+        this.viewEmitTimer = null
+        fire()
+      }, wait)
+    }
   }
 
   setOverlays(overlays: Record<OverlayKey, boolean>): void {
@@ -421,15 +603,19 @@ export class Globe {
     this.originMarker.visible = on
     this.destMarker.visible = on
     // Marker positions are updated each frame (they move with the pan offset).
-    // Center the spin between origin and destination so the whole route is framed.
-    if (this.routePoints) {
-      const o = this.routePoints[0]
-      const d = this.routePoints[this.routePoints.length - 1]
-      this.routeCenterLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
-    } else {
-      this.routeCenterLon = null
+    // On the DISPLAY, center the spin between origin and destination so the whole
+    // route is framed. In interactive (control) mode, leave the operator's camera
+    // alone — they pan/zoom themselves.
+    if (!this.interactive) {
+      if (this.routePoints) {
+        const o = this.routePoints[0]
+        const d = this.routePoints[this.routePoints.length - 1]
+        this.routeCenterLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
+      } else {
+        this.routeCenterLon = null
+      }
+      this.applyViewTarget()
     }
-    this.applyViewTarget()
   }
 
   /** Add fat (Line2) segments for a polyline, split at the actual display seam.
@@ -647,6 +833,12 @@ export class Globe {
 
   dispose(): void {
     this.stop()
+    this.inputCleanup?.()
+    this.inputCleanup = null
+    if (this.viewEmitTimer) {
+      clearTimeout(this.viewEmitTimer)
+      this.viewEmitTimer = null
+    }
     this.renderer.dispose()
   }
 }

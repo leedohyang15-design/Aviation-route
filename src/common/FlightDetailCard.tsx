@@ -86,6 +86,20 @@ function MiniRoute({ detail }: { detail: FlightDetail }): JSX.Element | null {
   if (!route || route.length < 2) return null
   const toXY = (p: GeoPoint) => [((p.lon + 180) / 360) * W, ((90 - p.lat) / 180) * H]
   const idx = Math.min(route.length - 1, Math.max(0, Math.round((detail.progress ?? 0) * (route.length - 1))))
+  const dashed = (pts: GeoPoint[], color: string, width: number) =>
+    splitAtAntimeridian(pts).map((seg, i) =>
+      seg.length < 2 ? null : (
+        <polyline
+          key={`${color}-${i}`}
+          points={seg.map((p) => toXY(p).join(',')).join(' ')}
+          fill="none"
+          stroke={color}
+          strokeWidth={width}
+          strokeDasharray="4 3"
+          strokeLinecap="round"
+        />
+      )
+    )
   const [ox, oy] = toXY(route[0])
   const [dx, dy] = toXY(route[route.length - 1])
   const [nx, ny] = toXY(route[idx])
@@ -96,19 +110,9 @@ function MiniRoute({ detail }: { detail: FlightDetail }): JSX.Element | null {
       </clipPath>
       <g clipPath="url(#bp-clip)">
         <image href="world_flat.svg" x={0} y={0} width={W} height={H} preserveAspectRatio="none" />
-        {splitAtAntimeridian(route).map((seg, i) =>
-          seg.length < 2 ? null : (
-            <polyline
-              key={i}
-              points={seg.map((p) => toXY(p).join(',')).join(' ')}
-              fill="none"
-              stroke="#5b6b7d"
-              strokeWidth={1.6}
-              strokeDasharray="4 3"
-              strokeLinecap="round"
-            />
-          )
-        )}
+        {/* Upcoming route (now→destination) in yellow so it stands out; flown grey. */}
+        {dashed(route.slice(idx), '#ffcf33', 2)}
+        {dashed(route.slice(0, idx + 1), '#5b6b7d', 1.6)}
         <circle cx={ox} cy={oy} r={4.5} fill="#f59e0b" stroke="#fff" strokeWidth={1.5} />
         <circle cx={dx} cy={dy} r={4.5} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
         <image href={PLANE_DATA_URI} x={nx - 7} y={ny - 7} width={14} height={14} />

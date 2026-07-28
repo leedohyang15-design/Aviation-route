@@ -28,6 +28,9 @@ export function ControlApp(): JSX.Element {
         route={route.points}
         onSelect={(icao24) => send({ type: 'select', icao24 })}
         onView={(view) => send({ type: 'setView', view })}
+        dayNightHour={state.dayNightHour}
+        originCity={d?.origin?.city ?? null}
+        destCity={d?.destination?.city ?? null}
       />
 
       <aside className="panel">
