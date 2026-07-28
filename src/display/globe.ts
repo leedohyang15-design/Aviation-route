@@ -543,22 +543,21 @@ export class Globe {
           this.originMarker.visible = true
           this.destMarker.visible = true
           // Place-name labels sit just above each marker (constant screen size).
-          const lblH = 0.03 * ps
+          const lblH = 0.018 * ps
           const placeLabel = (lbl: THREE.Mesh, u: number, v: number) => {
             const asp = (lbl.userData.aspect as number) || 4
             lbl.scale.set(lblH * asp, lblH, 1)
-            lbl.position.set(u, 1 - v + 0.035 * ps, 0.68)
+            lbl.position.set(u, 1 - v + 0.025 * ps, 0.68)
           }
           placeLabel(this.originLabel, op.u, op.v)
           placeLabel(this.destLabel, dp.u, dp.v)
           // Split the route at the plane's position; rebuild also when the pan
           // offset changed (great-circle re-projects under wrap).
-          // Rebuild only when the split point moved or the pan offset changed
-          // meaningfully (>~0.25°) — not every frame while easing, which would
-          // thrash Line2 geometries.
+          // Rebuild whenever the split point or pan offset changed at all, so the
+          // route tracks the earth exactly (no lag/jitter while panning). The old
+          // geometries are disposed each rebuild, so this stays a small alloc.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
-          const offsetMoved = !(Math.abs(this.lonOffset - this.lastRouteOffset) < 0.25)
-          if (idx !== this.lastRouteIdx || offsetMoved) {
+          if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
             this.buildRoute(idx)
             this.lastRouteIdx = idx
             this.lastRouteOffset = this.lonOffset

@@ -19,7 +19,7 @@ function mapToView(map: maplibregl.Map): ViewState {
 const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
 
 /** Zoom level used when focusing/following a selected aircraft. */
-const FOLLOW_ZOOM = 4
+const FOLLOW_ZOOM = 3
 
 /** Default / "전체 보기" world view — centered on Korea. */
 const HOME_CENTER: [number, number] = [127.5, 37.5]
