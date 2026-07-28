@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { Aircraft, GeoPoint } from '@shared/types'
+import { nearestRouteIndex } from '@shared/projection'
+import { planeImageData } from '@shared/plane'
 
 // Free MapLibre demo vector style — no API token required. Needs network; if the
 // exhibit runs offline, swap for a locally hosted style/tiles.
@@ -19,6 +21,26 @@ function toFeatureCollection(aircraft: Aircraft[]): GeoJSON.FeatureCollection {
         heading: a.heading ?? 0
       }
     }))
+  }
+}
+
+/** Route split into flown (origin→now) and remaining (now→dest) for coloring. */
+function toRouteFC(route: GeoPoint[] | null, selPos: GeoPoint | null): GeoJSON.FeatureCollection {
+  if (!route || route.length < 2) return { type: 'FeatureCollection', features: [] }
+  const idx = selPos ? nearestRouteIndex(route, selPos) : route.length - 1
+  const line = (pts: GeoPoint[], kind: string): GeoJSON.Feature | null =>
+    pts.length >= 2
+      ? {
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: pts.map((p) => [p.lon, p.lat]) },
+          properties: { kind }
+        }
+      : null
+  return {
+    type: 'FeatureCollection',
+    features: [line(route.slice(idx), 'remaining'), line(route.slice(0, idx + 1), 'flown')].filter(
+      (f): f is GeoJSON.Feature => f !== null
+    )
   }
 }
 
@@ -49,24 +71,38 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
-    map.on('load', () => {
+    map.on('load', async () => {
+      // Register the airplane icon (used only for the selected aircraft).
+      try {
+        const img = await planeImageData(64)
+        if (!map.hasImage('plane')) map.addImage('plane', img, { pixelRatio: 2 })
+      } catch {
+        /* icon optional */
+      }
+
       map.addSource('aircraft', { type: 'geojson', data: toFeatureCollection([]) })
-      map.addSource('route', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] }
-      })
+      map.addSource('route', { type: 'geojson', data: toRouteFC(null, null) })
+
       map.addLayer({
         id: 'route-line',
         type: 'line',
         source: 'route',
-        paint: { 'line-color': '#ffe08a', 'line-width': 2.5, 'line-opacity': 0.9 }
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': ['match', ['get', 'kind'], 'flown', '#ff3b30', '#ffe08a'],
+          'line-width': ['match', ['get', 'kind'], 'flown', 3, 2],
+          'line-opacity': ['match', ['get', 'kind'], 'flown', 0.95, 0.35]
+        }
       })
+
+      // Unselected aircraft = dots colored by altitude. The selected one is hidden
+      // here and shown as an airplane icon instead.
       map.addLayer({
         id: 'aircraft-dots',
         type: 'circle',
         source: 'aircraft',
         paint: {
-          'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 8, 4],
+          'circle-radius': ['case', ['==', ['get', 'icao24'], selected ?? '__none__'], 0, 4],
           'circle-color': [
             'interpolate',
             ['linear'],
@@ -78,13 +114,22 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
             12000,
             '#5ad2ff'
           ],
-          'circle-stroke-width': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false],
-            3,
-            0.5
-          ],
+          'circle-stroke-width': 0.5,
           'circle-stroke-color': '#ffffff'
+        }
+      })
+
+      map.addLayer({
+        id: 'aircraft-selected',
+        type: 'symbol',
+        source: 'aircraft',
+        filter: ['==', ['get', 'icao24'], selected ?? '__none__'],
+        layout: {
+          'icon-image': 'plane',
+          'icon-size': 0.5,
+          'icon-rotate': ['get', 'heading'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true
         }
       })
 
@@ -93,7 +138,6 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
         if (f) onSelectRef.current(String(f.properties?.icao24))
       })
       map.on('click', (e) => {
-        // Click on empty map clears selection.
         const hits = map.queryRenderedFeatures(e.point, { layers: ['aircraft-dots'] })
         if (hits.length === 0) onSelectRef.current(null)
       })
@@ -120,41 +164,26 @@ export function MapView({ aircraft, selected, route, onSelect }: Props): JSX.Ele
       ?.setData(toFeatureCollection(aircraft))
   }, [aircraft])
 
-  // Route line.
+  // Route split (recomputed with the selected plane's current position).
   useEffect(() => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
-    const data: GeoJSON.FeatureCollection = route
-      ? {
-          type: 'FeatureCollection',
-          features: [
-            {
-              type: 'Feature',
-              geometry: { type: 'LineString', coordinates: route.map((p) => [p.lon, p.lat]) },
-              properties: {}
-            }
-          ]
-        }
-      : { type: 'FeatureCollection', features: [] }
-    map.getSource<maplibregl.GeoJSONSource>('route')?.setData(data)
-  }, [route])
+    const sel = selected ? aircraft.find((a) => a.icao24 === selected) : null
+    const selPos = sel ? { lon: sel.lon, lat: sel.lat } : null
+    map.getSource<maplibregl.GeoJSONSource>('route')?.setData(toRouteFC(route, selPos))
+  }, [route, selected, aircraft])
 
-  // Highlight selected via a paint expression keyed on the id property.
+  // Selection: hide the selected dot, show the airplane icon on it.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
     map.setPaintProperty('aircraft-dots', 'circle-radius', [
       'case',
       ['==', ['get', 'icao24'], selected ?? '__none__'],
-      9,
+      0,
       4
     ])
-    map.setPaintProperty('aircraft-dots', 'circle-stroke-width', [
-      'case',
-      ['==', ['get', 'icao24'], selected ?? '__none__'],
-      3,
-      0.5
-    ])
+    map.setFilter('aircraft-selected', ['==', ['get', 'icao24'], selected ?? '__none__'])
   }, [selected])
 
   return <div ref={containerRef} className="map" />

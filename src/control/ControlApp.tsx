@@ -89,15 +89,6 @@ export function ControlApp(): JSX.Element {
             </select>
           </label>
           <label className="field">
-            항공사 (편명 접두)
-            <input
-              type="text"
-              placeholder="예: KAL"
-              value={state.filter.airlinePrefix ?? ''}
-              onChange={(e) => patchFilter({ airlinePrefix: e.target.value || undefined })}
-            />
-          </label>
-          <label className="field">
             최소 고도: {(state.filter.minAltitude ?? 0).toLocaleString()} m
             <input
               type="range"
@@ -111,26 +102,9 @@ export function ControlApp(): JSX.Element {
         </section>
 
         <section>
-          <h2>지구본 회전 (경도)</h2>
-          <input
-            type="range"
-            min={-180}
-            max={180}
-            step={1}
-            value={state.lonOffset}
-            onChange={(e) => send({ type: 'setRotation', lonOffset: Number(e.target.value) })}
-          />
-          <div className="rotrow">
-            <span>{state.lonOffset}°</span>
-            <button onClick={() => send({ type: 'setRotation', lonOffset: 0 })}>중앙</button>
-          </div>
-        </section>
-
-        <section>
           <h2>오버레이</h2>
           {(
             [
-              ['dayNight', '낮/밤 경계'],
               ['grid', '위경도 격자'],
               ['stats', '통계 표시']
             ] as [OverlayKey, string][]

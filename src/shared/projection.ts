@@ -91,6 +91,22 @@ export function greatCirclePoints(a: GeoPoint, b: GeoPoint, segments = 128): Geo
   return out
 }
 
+/** Index of the route point nearest a position (squared lon/lat distance). */
+export function nearestRouteIndex(route: GeoPoint[], pos: GeoPoint): number {
+  let best = 0
+  let bestD = Infinity
+  for (let i = 0; i < route.length; i++) {
+    const dx = wrapLon(route[i].lon - pos.lon)
+    const dy = route[i].lat - pos.lat
+    const d = dx * dx + dy * dy
+    if (d < bestD) {
+      bestD = d
+      best = i
+    }
+  }
+  return best
+}
+
 /**
  * Split a polyline into sub-segments wherever it crosses the antimeridian
  * (±180°), so the renderer never draws a line streaking across the whole frame.
