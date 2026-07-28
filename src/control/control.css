@@ -12,17 +12,19 @@ body,
   height: 100%;
   font-family: 'Pretendard', system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: #e7edf6;
-  background: #0b1020;
+  background: #000;
 }
+
+/* Full-screen map; overlays float on top. */
 .control-root {
-  display: grid;
-  grid-template-columns: 1fr 340px;
+  position: relative;
+  width: 100vw;
   height: 100vh;
+  overflow: hidden;
 }
 .map-wrap {
-  position: relative;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
 }
 .map {
   width: 100%;
@@ -32,17 +34,94 @@ body,
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  touch-action: none; /* let the renderer own pinch/drag gestures */
 }
 .map canvas {
   display: block;
 }
-.reset-btn {
+
+/* Info overlay (top-left) — title, live count, connection. */
+.ctrl-info {
   position: absolute;
-  left: 16px;
-  bottom: 16px;
-  margin: 0;
+  top: 24px;
+  left: 28px;
+  pointer-events: none;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+  line-height: 1.35;
+}
+.ctrl-info h1 {
+  font-size: clamp(20px, 2vw, 30px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.ctrl-info .sub {
+  font-size: 12px;
+  opacity: 0.7;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.ctrl-info .count {
+  font-size: clamp(14px, 1.2vw, 20px);
+}
+.ctrl-info .count b {
+  font-size: 1.4em;
+  color: #7fd4ff;
+}
+.ctrl-info .ok {
+  color: #9fe6a0;
+  font-size: 13px;
+}
+.ctrl-info .warn {
+  color: #ffcf6b;
+  font-size: 13px;
+}
+
+/* Compass (bottom-left). */
+.ctrl-compass {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  width: clamp(76px, 6vw, 110px);
+  height: clamp(76px, 6vw, 110px);
+  pointer-events: none;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.6));
+}
+
+/* Zoom +/- and reset (top-right). */
+.ctrl-topright {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+.ctrl-zoom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ctrl-zoom button {
+  width: 54px;
+  height: 54px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 14px;
+  border: 1px solid rgba(127, 212, 255, 0.5);
+  background: rgba(16, 24, 43, 0.92);
+  color: #eaf2ff;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.ctrl-zoom button:hover {
+  background: #24345a;
+}
+.reset-btn {
   padding: 14px 22px;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   border-radius: 12px;
   border: 1px solid rgba(127, 212, 255, 0.5);
@@ -55,118 +134,18 @@ body,
   background: #24345a;
 }
 
-.panel {
-  overflow-y: auto;
-  padding: 18px 18px 40px;
-  background: #10182b;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+/* Bottom sheet: boarding-pass card slides up on selection. */
+.sheet {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  width: min(360px, 92vw);
+  transform: translateY(130%);
+  transition: transform 0.38s cubic-bezier(0.2, 0.85, 0.25, 1);
+  pointer-events: none;
+  will-change: transform;
 }
-.brand h1 {
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-.status {
-  font-size: 12px;
-}
-.status.ok {
-  color: #9fe6a0;
-}
-.status.warn {
-  color: #ffcf6b;
-}
-
-section h2 {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.55;
-  margin-bottom: 10px;
-}
-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding-top: 16px;
-}
-
-.hint {
-  font-size: 13px;
-  opacity: 0.6;
-}
-.selcard {
-  /* Transparent wrapper — the white boarding pass provides its own surface. */
-  display: flex;
-  flex-direction: column;
-}
-.selcard .callsign {
-  font-size: 20px;
-  font-weight: 800;
-  color: #ffe08a;
-  margin-bottom: 10px;
-}
-.selcard .row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  padding: 3px 0;
-}
-.selcard .row span {
-  opacity: 0.6;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  margin-bottom: 12px;
-}
-.field select,
-.field input[type='text'] {
-  padding: 7px 9px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: #0b1020;
-  color: inherit;
-  font-size: 13px;
-}
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  margin-bottom: 8px;
-  cursor: pointer;
-}
-input[type='range'] {
-  width: 100%;
-  accent-color: #7fd4ff;
-}
-.rotrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-  margin-top: 6px;
-}
-button {
-  margin-top: 12px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: #1b2740;
-  color: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  width: 100%;
-}
-button:hover {
-  background: #24345a;
-}
-.selcard button {
-  background: #3a2230;
-  border-color: rgba(255, 120, 120, 0.4);
+.sheet.open {
+  transform: none;
+  pointer-events: auto;
 }

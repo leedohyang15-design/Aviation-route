@@ -17,26 +17,26 @@ interface Airport {
 }
 
 const AIRPORTS: Airport[] = [
-  { code: 'ICN', city: '서울', lon: 126.45, lat: 37.46, country: 'Republic of Korea' },
-  { code: 'HND', city: '도쿄', lon: 139.78, lat: 35.55, country: 'Japan' },
-  { code: 'PEK', city: '베이징', lon: 116.6, lat: 40.08, country: 'China' },
-  { code: 'SIN', city: '싱가포르', lon: 103.99, lat: 1.36, country: 'Singapore' },
-  { code: 'SYD', city: '시드니', lon: 151.18, lat: -33.95, country: 'Australia' },
-  { code: 'DXB', city: '두바이', lon: 55.36, lat: 25.25, country: 'United Arab Emirates' },
-  { code: 'DEL', city: '델리', lon: 77.1, lat: 28.57, country: 'India' },
-  { code: 'FRA', city: '프랑크푸르트', lon: 8.57, lat: 50.03, country: 'Germany' },
-  { code: 'LHR', city: '런던', lon: -0.46, lat: 51.47, country: 'United Kingdom' },
-  { code: 'CDG', city: '파리', lon: 2.55, lat: 49.01, country: 'France' },
-  { code: 'JFK', city: '뉴욕', lon: -73.78, lat: 40.64, country: 'United States' },
-  { code: 'LAX', city: 'LA', lon: -118.41, lat: 33.94, country: 'United States' },
-  { code: 'ORD', city: '시카고', lon: -87.9, lat: 41.98, country: 'United States' },
-  { code: 'GRU', city: '상파울루', lon: -46.47, lat: -23.43, country: 'Brazil' },
-  { code: 'JNB', city: '요하네스버그', lon: 28.24, lat: -26.14, country: 'South Africa' },
-  { code: 'YYZ', city: '토론토', lon: -79.63, lat: 43.68, country: 'Canada' },
-  { code: 'MEX', city: '멕시코시티', lon: -99.07, lat: 19.44, country: 'Mexico' },
-  { code: 'SFO', city: '샌프란시스코', lon: -122.38, lat: 37.62, country: 'United States' },
-  { code: 'HKG', city: '홍콩', lon: 113.91, lat: 22.31, country: 'China' },
-  { code: 'BKK', city: '방콕', lon: 100.75, lat: 13.69, country: 'Thailand' }
+  { code: 'ICN', city: 'Seoul', lon: 126.45, lat: 37.46, country: 'Republic of Korea' },
+  { code: 'HND', city: 'Tokyo', lon: 139.78, lat: 35.55, country: 'Japan' },
+  { code: 'PEK', city: 'Beijing', lon: 116.6, lat: 40.08, country: 'China' },
+  { code: 'SIN', city: 'Singapore', lon: 103.99, lat: 1.36, country: 'Singapore' },
+  { code: 'SYD', city: 'Sydney', lon: 151.18, lat: -33.95, country: 'Australia' },
+  { code: 'DXB', city: 'Dubai', lon: 55.36, lat: 25.25, country: 'United Arab Emirates' },
+  { code: 'DEL', city: 'Delhi', lon: 77.1, lat: 28.57, country: 'India' },
+  { code: 'FRA', city: 'Frankfurt', lon: 8.57, lat: 50.03, country: 'Germany' },
+  { code: 'LHR', city: 'London', lon: -0.46, lat: 51.47, country: 'United Kingdom' },
+  { code: 'CDG', city: 'Paris', lon: 2.55, lat: 49.01, country: 'France' },
+  { code: 'JFK', city: 'New York', lon: -73.78, lat: 40.64, country: 'United States' },
+  { code: 'LAX', city: 'Los Angeles', lon: -118.41, lat: 33.94, country: 'United States' },
+  { code: 'ORD', city: 'Chicago', lon: -87.9, lat: 41.98, country: 'United States' },
+  { code: 'GRU', city: 'Sao Paulo', lon: -46.47, lat: -23.43, country: 'Brazil' },
+  { code: 'JNB', city: 'Johannesburg', lon: 28.24, lat: -26.14, country: 'South Africa' },
+  { code: 'YYZ', city: 'Toronto', lon: -79.63, lat: 43.68, country: 'Canada' },
+  { code: 'MEX', city: 'Mexico City', lon: -99.07, lat: 19.44, country: 'Mexico' },
+  { code: 'SFO', city: 'San Francisco', lon: -122.38, lat: 37.62, country: 'United States' },
+  { code: 'HKG', city: 'Hong Kong', lon: 113.91, lat: 22.31, country: 'China' },
+  { code: 'BKK', city: 'Bangkok', lon: 100.75, lat: 13.69, country: 'Thailand' }
 ]
 
 const AIRLINES: Record<string, string> = {

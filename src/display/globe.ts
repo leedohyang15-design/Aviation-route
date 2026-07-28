@@ -21,6 +21,7 @@ import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 
 const CAPACITY = 16000 // max aircraft instances
+const MIN_SPAN = 0.4 // most the control map may zoom in (≈2.5×) — a gentle range
 
 /** Screen-space heading (radians) for the icon: on equirectangular a great
  * circle is curved, so the on-screen tangent differs from the geographic
@@ -32,16 +33,55 @@ function screenAngle(headingRad: number, latDeg: number): number {
   return Math.atan2(-dx, dy)
 }
 
-/** A CanvasTexture of a single emoji (for origin/destination markers). */
-function emojiTexture(emoji: string): THREE.CanvasTexture {
-  const size = 64
+/** A round dot with a white ring — the origin/departure marker. */
+function dotTexture(color: string): THREE.CanvasTexture {
+  const s = 64
   const c = document.createElement('canvas')
-  c.width = c.height = size
+  c.width = c.height = s
   const ctx = c.getContext('2d')!
-  ctx.font = `${size * 0.8}px serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(emoji, size / 2, size / 2)
+  ctx.beginPath()
+  ctx.arc(s / 2, s / 2, s * 0.3, 0, Math.PI * 2)
+  ctx.fillStyle = color
+  ctx.fill()
+  ctx.lineWidth = s * 0.09
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** A teardrop location pin (tip at bottom-center) — the destination marker. */
+function pinTexture(color: string): THREE.CanvasTexture {
+  const W = 64
+  const H = 96
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  const cx = W / 2
+  const cy = W * 0.46
+  const r = W * 0.34
+  ctx.fillStyle = color
+  // Stalk from the head down to the tip.
+  ctx.beginPath()
+  ctx.moveTo(cx - r * 0.72, cy + r * 0.4)
+  ctx.lineTo(cx + r * 0.72, cy + r * 0.4)
+  ctx.lineTo(cx, H - 3)
+  ctx.closePath()
+  ctx.fill()
+  // Round head.
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.lineWidth = W * 0.06
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+  // White hole in the middle.
+  ctx.beginPath()
+  ctx.arc(cx, cy, r * 0.42, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
@@ -162,12 +202,20 @@ export class Globe {
   // (and keep cycling every 30s) so the exhibit demos itself when unattended.
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private readonly idleMs = 30000
+  // Active pointers (for pinch-zoom) and the pinch anchor.
+  private pointers = new Map<number, { x: number; y: number }>()
+  private pinchStartDist = 0
+  private pinchStartSpan = 1
+  // If set, the canvas renders at this exact pixel size (top-left), rest black —
+  // for a projector that expects the equirect frame in a fixed region.
+  private fixedSize: { w: number; h: number } | null = null
 
   constructor(
     private canvas: HTMLCanvasElement,
-    opts: { interactive?: boolean } = {}
+    opts: { interactive?: boolean; fixedSize?: { w: number; h: number } } = {}
   ) {
     this.interactive = !!opts.interactive
+    this.fixedSize = opts.fixedSize ?? null
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setClearColor(0x000000, 1)
     this.scene.add(this.routeGroup)
@@ -255,11 +303,11 @@ export class Globe {
     this.selectedPlane.frustumCulled = false
     this.scene.add(this.selectedPlane)
 
-    // --- Origin / destination markers on the selected route ---
-    const marker = (emoji: string): THREE.Mesh => {
+    // --- Origin (dot) / destination (pin) markers on the selected route ---
+    const mkMarker = (tex: THREE.Texture, w: number, h: number): THREE.Mesh => {
       const m = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.016, 0.016),
-        new THREE.MeshBasicMaterial({ map: emojiTexture(emoji), transparent: true })
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true })
       )
       m.visible = false
       m.position.z = 0.65
@@ -267,8 +315,8 @@ export class Globe {
       this.scene.add(m)
       return m
     }
-    this.originMarker = marker('🚩')
-    this.destMarker = marker('📍')
+    this.originMarker = mkMarker(dotTexture('#33c1ff'), 0.016, 0.016)
+    this.destMarker = mkMarker(pinTexture('#ff3b30'), 0.02, 0.03)
 
     // Origin / destination place-name labels (created empty; text set on select).
     const label = (): THREE.Mesh => {
@@ -369,7 +417,7 @@ export class Globe {
    * Horizontal via lonOffset (wraps); vertical + zoom via the camera y-rect,
    * clamped so the rect never leaves the [0,1] background plane. */
   private applyInteractiveView(): void {
-    const s = Math.max(0.05, Math.min(1, this.iSpan))
+    const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
     this.targetLonOffset = -this.iCenterLon
     let vCenter = (this.iCenterLat + 90) / 180
     vCenter = Math.max(s / 2, Math.min(1 - s / 2, vCenter))
@@ -411,6 +459,14 @@ export class Globe {
   /** Any operator activity (incl. the reset button) resets the attract countdown. */
   pokeActivity(): void {
     if (this.interactive) this.startAttractTimer()
+  }
+
+  /** Programmatic zoom for the on-screen +/− buttons (factor <1 zooms in). */
+  zoomBy(factor: number): void {
+    this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * factor))
+    this.applyInteractiveView()
+    this.emitView()
+    this.startAttractTimer()
   }
 
   /** Screen (client) pixel → world coords in the renderer's [0,1] frame, using
@@ -456,14 +512,38 @@ export class Globe {
     canvas.style.cursor = 'grab'
     const onDown = (ev: PointerEvent) => {
       this.startAttractTimer() // operator is here — postpone the auto-demo
-      this.dragging = true
-      this.movedDuringDrag = false
-      this.lastPX = ev.clientX
-      this.lastPY = ev.clientY
-      canvas.style.cursor = 'grabbing'
+      this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY })
       canvas.setPointerCapture?.(ev.pointerId)
+      if (this.pointers.size >= 2) {
+        // Two fingers → pinch-zoom; record the initial finger distance + span.
+        const [a, b] = [...this.pointers.values()]
+        this.pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+        this.pinchStartSpan = this.iSpan
+        this.dragging = false
+      } else {
+        this.dragging = true
+        this.movedDuringDrag = false
+        this.lastPX = ev.clientX
+        this.lastPY = ev.clientY
+        canvas.style.cursor = 'grabbing'
+      }
     }
     const onMove = (ev: PointerEvent) => {
+      const p = this.pointers.get(ev.pointerId)
+      if (p) {
+        p.x = ev.clientX
+        p.y = ev.clientY
+      }
+      if (this.pointers.size >= 2) {
+        // Pinch: span scales with the inverse of the finger-distance change.
+        const [a, b] = [...this.pointers.values()]
+        const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+        this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
+        this.movedDuringDrag = true
+        this.applyInteractiveView()
+        this.emitView()
+        return
+      }
       if (!this.dragging) return
       const r = canvas.getBoundingClientRect()
       const W = r.width || 1
@@ -485,16 +565,28 @@ export class Globe {
       this.emitView()
     }
     const onUp = (ev: PointerEvent) => {
-      if (this.dragging && !this.movedDuringDrag) this.selectAt(ev.clientX, ev.clientY)
-      this.dragging = false
-      canvas.style.cursor = 'grab'
+      this.pointers.delete(ev.pointerId)
       canvas.releasePointerCapture?.(ev.pointerId)
-      this.emitView()
+      if (this.pointers.size === 1) {
+        // One finger remains after a pinch → resume single-finger drag from it.
+        const [only] = [...this.pointers.values()]
+        this.lastPX = only.x
+        this.lastPY = only.y
+        this.dragging = true
+        this.movedDuringDrag = true // not a tap
+        return
+      }
+      if (this.pointers.size === 0) {
+        if (this.dragging && !this.movedDuringDrag) this.selectAt(ev.clientX, ev.clientY)
+        this.dragging = false
+        canvas.style.cursor = 'grab'
+        this.emitView()
+      }
     }
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
       this.startAttractTimer() // operator is here — postpone the auto-demo
-      this.iSpan = Math.max(0.05, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
+      this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
       this.emitView()
     }
@@ -509,6 +601,7 @@ export class Globe {
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
       canvas.removeEventListener('wheel', onWheel)
+      this.pointers.clear()
     }
   }
 
@@ -760,7 +853,8 @@ export class Globe {
           const op = projectNorm(o.lon, o.lat, this.lonOffset)
           const dp = projectNorm(de.lon, de.lat, this.lonOffset)
           this.originMarker.position.set(op.u, 1 - op.v, 0.65)
-          this.destMarker.position.set(dp.u, 1 - dp.v, 0.65)
+          // Lift the pin so its bottom tip (not center) sits on the coordinate.
+          this.destMarker.position.set(dp.u, 1 - dp.v + 0.015 * ps, 0.65)
           this.originMarker.scale.set(ps, ps, 1)
           this.destMarker.scale.set(ps, ps, 1)
           this.originMarker.visible = true
@@ -832,14 +926,22 @@ export class Globe {
   resize(): void {
     const parent = this.canvas.parentElement
     if (!parent) return
-    // Keep an exact 2:1 frame, letterboxed inside whatever the window gives us.
-    const w = parent.clientWidth
-    const h = parent.clientHeight
-    let rw = w
-    let rh = w / 2
-    if (rh > h) {
-      rh = h
-      rw = h * 2
+    let rw: number
+    let rh: number
+    if (this.fixedSize) {
+      // Exact projector frame (top-left); the rest of the window stays black.
+      rw = this.fixedSize.w
+      rh = this.fixedSize.h
+    } else {
+      // Keep an exact 2:1 frame, letterboxed inside whatever the window gives us.
+      const w = parent.clientWidth
+      const h = parent.clientHeight
+      rw = w
+      rh = w / 2
+      if (rh > h) {
+        rh = h
+        rw = h * 2
+      }
     }
     const pr = Math.min(window.devicePixelRatio, 3) // higher cap → sharper output
     this.renderer.setPixelRatio(pr)

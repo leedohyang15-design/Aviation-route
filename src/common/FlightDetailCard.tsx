@@ -113,8 +113,15 @@ function MiniRoute({ detail }: { detail: FlightDetail }): JSX.Element | null {
         {/* Upcoming route (now→destination) in yellow so it stands out; flown grey. */}
         {dashed(route.slice(idx), '#ffcf33', 2)}
         {dashed(route.slice(0, idx + 1), '#5b6b7d', 1.6)}
-        <circle cx={ox} cy={oy} r={4.5} fill="#f59e0b" stroke="#fff" strokeWidth={1.5} />
-        <circle cx={dx} cy={dy} r={4.5} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
+        {/* Departure = dot, arrival = teardrop pin (tip on the point). */}
+        <circle cx={ox} cy={oy} r={4.5} fill="#33c1ff" stroke="#fff" strokeWidth={1.5} />
+        <path
+          d={`M ${dx} ${dy} C ${dx - 6} ${dy - 8}, ${dx - 5} ${dy - 17}, ${dx} ${dy - 17} C ${dx + 5} ${dy - 17}, ${dx + 6} ${dy - 8}, ${dx} ${dy} Z`}
+          fill="#ef4444"
+          stroke="#fff"
+          strokeWidth={1.2}
+        />
+        <circle cx={dx} cy={dy - 11.5} r={2.4} fill="#fff" />
         <image href={PLANE_DATA_URI} x={nx - 7} y={ny - 7} width={14} height={14} />
       </g>
     </svg>

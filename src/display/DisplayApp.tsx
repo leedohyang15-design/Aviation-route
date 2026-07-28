@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
-import { CompassRose } from '../common/CompassRose'
 import { Globe } from './globe'
+
+// The projector expects the equirect frame at exactly this pixel size, anchored
+// top-left; the rest of the output stays black.
+const FRAME = { w: 1664, h: 838 }
 
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
-  const { aircraft, state, connected, source, route, detail } = useHub('display')
+  const { aircraft, state, route, detail } = useHub('display')
 
   const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
 
   useEffect(() => {
     if (!canvasRef.current) return
-    const globe = new Globe(canvasRef.current)
+    const globe = new Globe(canvasRef.current, { fixedSize: FRAME })
     globeRef.current = globe
     globe.start()
     const onResize = () => globe.resize()
@@ -36,31 +39,11 @@ export function DisplayApp(): JSX.Element {
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
   }, [detail, state.selected])
 
+  // Clean projector frame: just the map in the fixed top-left region, rest black.
   return (
     <div className="display-root">
       <div className="stage">
         <canvas ref={canvasRef} />
-      </div>
-
-      <header className="hud hud-top">
-        <h1>실시간 항공 경로</h1>
-        <span className="subtitle">Real-time Global Air Traffic</span>
-      </header>
-
-      {/* Always visible: how many are flying + data source/connection. */}
-      <div className="hud hud-stats">
-        <div>
-          <b>{visible.length.toLocaleString()}</b> 대 비행 중
-        </div>
-        <div className={connected ? 'ok' : 'warn'}>
-          {source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} ·{' '}
-          {connected ? '연결됨' : '재연결 중…'}
-        </div>
-      </div>
-
-      {/* Fixed 8-point compass — stays put regardless of pan/zoom. */}
-      <div className="hud hud-compass">
-        <CompassRose />
       </div>
     </div>
   )
