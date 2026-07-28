@@ -83,6 +83,7 @@ export class Globe {
   private routeGroup = new THREE.Group()
   private routePoints: GeoPoint[] | null = null
   private lastRouteIdx = -1
+  private lastRouteOffset = NaN
   private flownMat = new LineMaterial({ color: 0xff3b30, linewidth: 5, transparent: true })
   private remainMat = new LineMaterial({
     color: 0xffe08a,
@@ -99,9 +100,14 @@ export class Globe {
   private dummy = new THREE.Object3D()
   private scratchColor = new THREE.Color()
   // Camera view rect in normalized [0,1] coords: current (eased) + target.
+  // Horizontal pan is done via lonOffset (so it wraps seamlessly); the camera x
+  // stays centered on 0.5. The camera y handles vertical pan + zoom.
   private viewRect = { left: 0, right: 1, top: 1, bottom: 0 }
   private targetRect = { left: 0, right: 1, top: 1, bottom: 0 }
   private targetSpan = 1
+  private lonOffset = 0 // eased longitude offset (= -centerLon)
+  private targetLonOffset = 0
+  private hasEarthTexture = false
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
@@ -216,42 +222,51 @@ export class Globe {
         tex.wrapS = THREE.RepeatWrapping
         this.bgUniforms.uMap.value = tex
         this.bgUniforms.uHasMap.value = 1
+        // Photographic maps carry their own graticule — drop the procedural grid.
+        this.bgUniforms.uShowGrid.value = 0
+        this.hasEarthTexture = true
+        console.log(`[earth] loaded texture "${EARTH_TEXTURE_URL}"`)
       },
       undefined,
       () => {
-        /* no asset — keep procedural ocean + graticule */
+        console.warn(
+          `[earth] no/invalid texture at "${EARTH_TEXTURE_URL}" — using procedural ocean+grid. ` +
+            `Put a 2:1 image at public/${EARTH_TEXTURE_URL}.`
+        )
       }
     )
   }
 
-  /** Set the equirectangular view (center + zoom); the camera eases toward it. */
+  /** Set the equirectangular view (center + zoom); the camera eases toward it.
+   * Horizontal is handled by a longitude offset so panning wraps around the
+   * globe; only vertical + zoom use the camera rect. */
   setView(view: ViewState): void {
     const s = Math.max(0.02, Math.min(1, view.span))
-    const uc = (view.centerLon + 180) / 360
+    this.targetLonOffset = -view.centerLon
     const yc = (view.centerLat + 90) / 180 // worldY center (y-up)
-    const clamp = (c: number): [number, number] => {
-      if (s >= 1) return [0, 1]
-      let lo = c - s / 2
-      let hi = c + s / 2
-      if (lo < 0) {
-        hi -= lo
-        lo = 0
+    let bottom = yc - s / 2
+    let top = yc + s / 2
+    if (s >= 1) {
+      bottom = 0
+      top = 1
+    } else {
+      if (bottom < 0) {
+        top -= bottom
+        bottom = 0
       }
-      if (hi > 1) {
-        lo -= hi - 1
-        hi = 1
+      if (top > 1) {
+        bottom -= top - 1
+        top = 1
       }
-      return [Math.max(0, lo), Math.min(1, hi)]
     }
-    const [left, right] = clamp(uc)
-    const [bottom, top] = clamp(yc)
-    this.targetRect = { left, right, top, bottom }
+    this.targetRect = { left: 0.5 - s / 2, right: 0.5 + s / 2, top: Math.min(1, top), bottom: Math.max(0, bottom) }
     this.targetSpan = s
   }
 
   setOverlays(overlays: Record<OverlayKey, boolean>): void {
-    // Day/night is always on and driven by the real-time sun position.
-    this.bgUniforms.uShowGrid.value = overlays.grid ? 1 : 0
+    // Day/night is always on. Grid only when there's no photographic earth
+    // (a photo carries its own graticule — avoid doubling).
+    this.bgUniforms.uShowGrid.value = !this.hasEarthTexture && overlays.grid ? 1 : 0
   }
 
   setSelected(icao24: string | null): void {
@@ -300,20 +315,12 @@ export class Globe {
   setRoute(points: GeoPoint[] | null): void {
     this.routePoints = points && points.length >= 2 ? points : null
     this.lastRouteIdx = -1
+    this.lastRouteOffset = NaN // force rebuild
     this.routeGroup.clear()
-    // Place origin/destination markers at the route ends.
-    const pts = this.routePoints
-    if (pts) {
-      const a = projectNorm(pts[0].lon, pts[0].lat, 0)
-      const b = projectNorm(pts[pts.length - 1].lon, pts[pts.length - 1].lat, 0)
-      this.originMarker.position.set(a.u, 1 - a.v, 0.65)
-      this.destMarker.position.set(b.u, 1 - b.v, 0.65)
-      this.originMarker.visible = true
-      this.destMarker.visible = true
-    } else {
-      this.originMarker.visible = false
-      this.destMarker.visible = false
-    }
+    const on = !!this.routePoints
+    this.originMarker.visible = on
+    this.destMarker.visible = on
+    // Marker positions are updated each frame (they move with the pan offset).
   }
 
   /** Add antimeridian-split fat (Line2) segments for a polyline. */
@@ -322,7 +329,7 @@ export class Globe {
       if (seg.length < 2) continue
       const positions: number[] = []
       for (const p of seg) {
-        const { u, v } = projectNorm(p.lon, p.lat, 0)
+        const { u, v } = projectNorm(p.lon, p.lat, this.lonOffset)
         positions.push(u, 1 - v, 0.2)
       }
       const geo = new LineGeometry()
@@ -371,6 +378,10 @@ export class Globe {
     // Keep dot/icon on-screen size roughly constant across zoom levels.
     this.planeBaseScale += (this.targetSpan - this.planeBaseScale) * 0.15
 
+    // Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
+    this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.15
+    this.bgUniforms.uLonOffset.value = this.lonOffset
+
     // Dead reckoning: advance each plane along its heading at its ground speed,
     // then gently correct toward the latest snapshot. This keeps motion smooth
     // even when real updates are 15–60s apart (OpenSky credit budget).
@@ -390,7 +401,7 @@ export class Globe {
         (2 * Math.PI) -
         Math.PI) *
         0.1
-      const { u, v } = projectNorm(e.lon, e.lat, 0)
+      const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
       const angle = screenAngle(e.heading, e.lat) // align icon to on-screen motion
       const isSel = id === this.selected
       this.dummy.position.set(u, 1 - v, 0)
@@ -408,14 +419,23 @@ export class Globe {
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
-        this.originMarker.scale.set(ps, ps, 1)
-        this.destMarker.scale.set(ps, ps, 1)
-        // Split the route at the plane's current position: flown red, rest faint.
+        // Reposition origin/destination markers (they move with the pan offset).
         if (this.routePoints) {
+          const o = this.routePoints[0]
+          const de = this.routePoints[this.routePoints.length - 1]
+          const op = projectNorm(o.lon, o.lat, this.lonOffset)
+          const dp = projectNorm(de.lon, de.lat, this.lonOffset)
+          this.originMarker.position.set(op.u, 1 - op.v, 0.65)
+          this.destMarker.position.set(dp.u, 1 - dp.v, 0.65)
+          this.originMarker.scale.set(ps, ps, 1)
+          this.destMarker.scale.set(ps, ps, 1)
+          // Split the route at the plane's position; rebuild also when the pan
+          // offset changed (great-circle re-projects under wrap).
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
-          if (idx !== this.lastRouteIdx) {
+          if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
             this.buildRoute(idx)
             this.lastRouteIdx = idx
+            this.lastRouteOffset = this.lonOffset
           }
         }
       }

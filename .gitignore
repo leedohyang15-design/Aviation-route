@@ -5,5 +5,3 @@ dist/
 *.log
 .env
 .env.local
-# Optional large earth texture (drop your own; not tracked)
-public/earth_equirect.jpg

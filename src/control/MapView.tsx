@@ -70,6 +70,7 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
   onSelectRef.current = onSelect
   const onViewRef = useRef(onView)
   onViewRef.current = onView
+  const followRef = useRef<string | null>(null) // icao24 being followed, or null
 
   // Init once.
   useEffect(() => {
@@ -80,10 +81,12 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
       center: [10, 25],
       zoom: 1.3,
       attributionControl: false,
-      renderWorldCopies: false // single world → pan stays bounded and lng in range
+      renderWorldCopies: true // pan past an edge wraps to the other side of the globe
     })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
+    // Manually dragging the map stops following the selected plane.
+    map.on('dragstart', () => (followRef.current = null))
 
     map.on('load', async () => {
       // Hide the demo style's dashed graticule so it doesn't clash with routes.
@@ -209,11 +212,21 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     ])
     map.setFilter('aircraft-selected', ['==', ['get', 'icao24'], selected ?? '__none__'])
     if (selected && selected !== prevSel.current) {
+      followRef.current = selected // start following the newly selected plane
       const a = aircraft.find((x) => x.icao24 === selected)
       if (a) map.flyTo({ center: [a.lon, a.lat], zoom: Math.max(map.getZoom(), 4), duration: 1500 })
     }
+    if (!selected) followRef.current = null
     prevSel.current = selected
   }, [selected, aircraft])
+
+  // Follow the selected plane: recenter on it each snapshot (until the user drags).
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !loadedRef.current || !followRef.current) return
+    const a = aircraft.find((x) => x.icao24 === followRef.current)
+    if (a) map.easeTo({ center: [a.lon, a.lat], duration: 1200 })
+  }, [aircraft])
 
   const resetView = () => {
     onSelectRef.current(null)
