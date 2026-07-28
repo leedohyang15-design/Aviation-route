@@ -88,8 +88,13 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
-    // Manually dragging the map stops following the selected plane.
-    map.on('dragstart', () => (followRef.current = null))
+    // Any USER interaction (drag pan, wheel/pinch zoom) stops following — but not
+    // our own programmatic easeTo (which has no originalEvent).
+    const stopFollow = (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) followRef.current = null
+    }
+    map.on('movestart', stopFollow)
+    map.on('zoomstart', stopFollow)
 
     map.on('load', async () => {
       // Hide the demo style's dashed graticule so it doesn't clash with routes.
@@ -217,7 +222,7 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     if (selected && selected !== prevSel.current) {
       followRef.current = selected // start following the newly selected plane
       const a = aircraft.find((x) => x.icao24 === selected)
-      if (a) map.flyTo({ center: [a.lon, a.lat], zoom: FOLLOW_ZOOM, duration: 1500 })
+      if (a) map.flyTo({ center: [a.lon, a.lat], zoom: FOLLOW_ZOOM, duration: 700 })
     }
     if (!selected) followRef.current = null
     prevSel.current = selected
@@ -229,7 +234,7 @@ export function MapView({ aircraft, selected, route, onSelect, onView }: Props):
     const map = mapRef.current
     if (!map || !loadedRef.current || !followRef.current) return
     const a = aircraft.find((x) => x.icao24 === followRef.current)
-    if (a) map.easeTo({ center: [a.lon, a.lat], zoom: FOLLOW_ZOOM, duration: 1200 })
+    if (a) map.easeTo({ center: [a.lon, a.lat], zoom: FOLLOW_ZOOM, duration: 700 })
   }, [aircraft])
 
   const resetView = () => {

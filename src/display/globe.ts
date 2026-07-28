@@ -123,8 +123,8 @@ export class Globe {
       uLonOffset: { value: 0 },
       uNight: { value: 0 }, // 0 = full day, 1 = full night (from Korea time)
       uShowGrid: { value: 1 },
-      uBrightness: { value: 1.5 }, // lift the dark satellite photo
-      uSaturation: { value: 1.25 } // boost vividness (was over-desaturated)
+      uBrightness: { value: 1.0 }, // neutral — show the image faithfully
+      uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
     }
     const bgMat = new THREE.ShaderMaterial({
       uniforms: this.bgUniforms,
@@ -398,10 +398,10 @@ export class Globe {
     this.lastFrame = now
 
     // Keep dot/icon on-screen size roughly constant across zoom levels.
-    this.planeBaseScale += (this.targetSpan - this.planeBaseScale) * 0.15
+    this.planeBaseScale += (this.targetSpan - this.planeBaseScale) * 0.28
 
     // Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
-    this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.15
+    this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.28
     this.bgUniforms.uLonOffset.value = this.lonOffset
 
     // Dead reckoning: advance each plane along its heading at its ground speed,
@@ -470,7 +470,7 @@ export class Globe {
 
     // Ease the camera toward the target view (zoom/pan) and keep icon size
     // constant on screen by scaling geometry with the view span.
-    const vk = 0.15
+    const vk = 0.28
     this.viewRect.left += (this.targetRect.left - this.viewRect.left) * vk
     this.viewRect.right += (this.targetRect.right - this.viewRect.right) * vk
     this.viewRect.top += (this.targetRect.top - this.viewRect.top) * vk

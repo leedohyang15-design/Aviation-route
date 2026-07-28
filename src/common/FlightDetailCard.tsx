@@ -114,7 +114,7 @@ export function FlightDetailCard({ aircraft: sel, detail: d }: Props): JSX.Eleme
           </div>
           <div className="fd-ptimes">
             <span>출발 {fmtTime(d.departureTime)}</span>
-            <span>남은 {fmtRemaining(d.etaRemainingSec)}</span>
+            <span>남은 시간 {fmtRemaining(d.etaRemainingSec)}</span>
           </div>
           <MiniRoute detail={d} />
         </div>
