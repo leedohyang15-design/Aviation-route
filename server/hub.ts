@@ -30,7 +30,22 @@ export function selectFeed(): FlightFeed {
 }
 
 export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub {
-  const wss = new WebSocketServer({ port })
+  // Bind explicitly to the IPv4 loopback so it always matches the windows'
+  // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
+  // firewall prompt that a 0.0.0.0 bind would trigger).
+  const wss = new WebSocketServer({ port, host: '127.0.0.1' })
+
+  wss.on('listening', () => console.log('[hub] window can now connect'))
+  wss.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `[hub] port ${port} is already in use — a previous run is still alive. ` +
+          `Close all Electron/node processes and start again.`
+      )
+    } else {
+      console.error('[hub] server error:', err.message)
+    }
+  })
 
   const state: PresentationState = structuredClone(DEFAULT_PRESENTATION_STATE)
   let aircraft: Aircraft[] = []
@@ -66,6 +81,7 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
   )
 
   wss.on('connection', (ws) => {
+    console.log(`[hub] window connected (${wss.clients.size} total)`)
     // Bring the new window fully up to date immediately.
     send(ws, { type: 'state', state })
     send(ws, { type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
