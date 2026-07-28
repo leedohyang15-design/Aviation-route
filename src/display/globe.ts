@@ -239,6 +239,7 @@ export class Globe {
   // otherwise the control map's pan drives it.
   private controlCenterLon = 0
   private routeCenterLon: number | null = null
+  private pendingRecenter = false // center on the route once, on selection only
   private hasEarthTexture = false
   private nightHourOverride: number | null = null // null = live time
 
@@ -720,6 +721,8 @@ export class Globe {
   setSelected(icao24: string | null): void {
     this.selected = icao24
     this.selectedPlane.visible = false
+    // Request a one-shot camera align on the next route (consumed in setRoute).
+    if (icao24) this.pendingRecenter = true
     // On the control, tracking starts here and continues every frame (frame()).
   }
 
@@ -868,35 +871,46 @@ export class Globe {
   }
 
   setRoute(points: GeoPoint[] | null): void {
-    this.routePoints = points && points.length >= 2 ? points : null
+    const next = points && points.length >= 2 ? points : null
+    // The hub re-sends the route every snapshot to keep ETA/progress fresh. Skip
+    // the rebuild + re-center when the endpoints are unchanged — only a new
+    // selection or a re-route actually changes the line. Rebuilding every few
+    // seconds would flicker the line and jitter the camera.
+    const cur = this.routePoints
+    const same =
+      !!next &&
+      !!cur &&
+      next[0].lon === cur[0].lon &&
+      next[0].lat === cur[0].lat &&
+      next[next.length - 1].lon === cur[cur.length - 1].lon &&
+      next[next.length - 1].lat === cur[cur.length - 1].lat
+    if (same) return
+
+    this.routePoints = next
     this.lastRouteIdx = -1
     this.lastRouteOffset = NaN // force rebuild
     this.disposeRouteGroup()
     const on = !!this.routePoints
     this.originMarker.visible = on
     this.destMarker.visible = on
-    // Marker positions are updated each frame (they move with the pan offset).
-    // Center on the route once so origin + destination are both framed — on the
-    // DISPLAY via the spin offset, on the CONTROL by moving its camera to a
-    // full-world view centered on the route midpoint (a one-shot align on select,
-    // NOT continuous tracking — the operator can pan/zoom afterwards).
+
     if (this.routePoints) {
-      const o = this.routePoints[0]
-      const d = this.routePoints[this.routePoints.length - 1]
-      const midLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
-      if (this.interactive) {
-        this.iCenterLon = midLon
+      // One-shot align on SELECTION only (pendingRecenter) so origin + destination
+      // are both framed — never on a route refresh / re-route. The display centers
+      // on the plane itself via frame-follow, so only the control re-centers here.
+      if (this.interactive && this.pendingRecenter) {
+        const o = this.routePoints[0]
+        const d = this.routePoints[this.routePoints.length - 1]
+        this.iCenterLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
         this.iCenterLat = (o.lat + d.lat) / 2
         this.iSpan = 1
         this.applyInteractiveView()
         this.emitView()
-      } else {
-        this.routeCenterLon = midLon
-        this.applyViewTarget()
       }
-    } else if (!this.interactive) {
+      this.pendingRecenter = false
+    } else {
       this.routeCenterLon = null
-      this.applyViewTarget()
+      if (!this.interactive) this.applyViewTarget()
     }
   }
 
