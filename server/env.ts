@@ -5,12 +5,15 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 export function loadEnv(file = '.env'): void {
+  const path = resolve(process.cwd(), file)
   let text: string
   try {
-    text = readFileSync(resolve(process.cwd(), file), 'utf8')
+    text = readFileSync(path, 'utf8')
   } catch {
-    return // no .env — that's fine (mock feed will be used)
+    console.log(`[env] no ${file} found at ${path} — using mock feed`)
+    return
   }
+  let count = 0
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim()
     if (!line || line.startsWith('#')) continue
@@ -22,6 +25,11 @@ export function loadEnv(file = '.env'): void {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1)
     }
-    if (key && process.env[key] === undefined) process.env[key] = val
+    if (key && process.env[key] === undefined) {
+      process.env[key] = val
+      count++
+    }
   }
+  const hasCreds = Boolean(process.env.OPENSKY_CLIENT_ID && process.env.OPENSKY_CLIENT_SECRET)
+  console.log(`[env] loaded ${count} vars from ${file} (OpenSky credentials: ${hasCreds ? 'yes' : 'NO'})`)
 }
