@@ -5,7 +5,7 @@ import { MapView } from './MapView'
 import type { FlightFilter, OverlayKey } from '@shared/types'
 
 export function ControlApp(): JSX.Element {
-  const { bus, aircraft, state, connected, source, route } = useHub('control')
+  const { send, aircraft, state, connected, source, route } = useHub('control')
   const visible = useMemo(() => applyFilter(aircraft, state.filter), [aircraft, state.filter])
   const sel = state.selected ? aircraft.find((a) => a.icao24 === state.selected) : null
 
@@ -16,8 +16,8 @@ export function ControlApp(): JSX.Element {
   }, [aircraft])
 
   const patchFilter = (patch: Partial<FlightFilter>) =>
-    bus.send({ type: 'setFilter', filter: { ...state.filter, ...patch } })
-  const toggleOverlay = (key: OverlayKey) => bus.send({ type: 'toggleOverlay', key })
+    send({ type: 'setFilter', filter: { ...state.filter, ...patch } })
+  const toggleOverlay = (key: OverlayKey) => send({ type: 'toggleOverlay', key })
 
   return (
     <div className="control-root">
@@ -25,7 +25,7 @@ export function ControlApp(): JSX.Element {
         aircraft={visible}
         selected={state.selected}
         route={route.points}
-        onSelect={(icao24) => bus.send({ type: 'select', icao24 })}
+        onSelect={(icao24) => send({ type: 'select', icao24 })}
       />
 
       <aside className="panel">
@@ -57,7 +57,7 @@ export function ControlApp(): JSX.Element {
                 <span>국적</span>
                 <b>{sel.originCountry || '—'}</b>
               </div>
-              <button onClick={() => bus.send({ type: 'select', icao24: null })}>선택 해제</button>
+              <button onClick={() => send({ type: 'select', icao24: null })}>선택 해제</button>
             </div>
           ) : (
             <p className="hint">지도에서 비행기를 클릭하세요.</p>
@@ -118,11 +118,11 @@ export function ControlApp(): JSX.Element {
             max={180}
             step={1}
             value={state.lonOffset}
-            onChange={(e) => bus.send({ type: 'setRotation', lonOffset: Number(e.target.value) })}
+            onChange={(e) => send({ type: 'setRotation', lonOffset: Number(e.target.value) })}
           />
           <div className="rotrow">
             <span>{state.lonOffset}°</span>
-            <button onClick={() => bus.send({ type: 'setRotation', lonOffset: 0 })}>중앙</button>
+            <button onClick={() => send({ type: 'setRotation', lonOffset: 0 })}>중앙</button>
           </div>
         </section>
 

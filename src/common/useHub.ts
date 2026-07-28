@@ -1,18 +1,25 @@
 // React hook shared by both windows: opens the Bus, tracks the live aircraft
 // snapshot, the authoritative PresentationState, connection status, and the
 // route for the selected aircraft.
-import { useEffect, useMemo, useRef, useState } from 'react'
+//
+// The Bus is created INSIDE the effect (not memoized) so React 18 StrictMode's
+// mount→unmount→mount cycle disposes the first socket and builds a fresh one on
+// the final mount — reusing a disposed Bus would leave it permanently closed and
+// no data would ever arrive. Commands go through a stable `send` that targets
+// whichever Bus is currently live.
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bus } from '@shared/bus'
 import { HUB_URL } from '@shared/config'
 import {
   DEFAULT_PRESENTATION_STATE,
   type Aircraft,
+  type ClientMessage,
   type GeoPoint,
   type PresentationState
 } from '@shared/types'
 
 export interface HubView {
-  bus: Bus
+  send: (msg: ClientMessage) => void
   aircraft: Aircraft[]
   state: PresentationState
   connected: boolean
@@ -21,7 +28,6 @@ export interface HubView {
 }
 
 export function useHub(role: 'control' | 'display'): HubView {
-  const bus = useMemo(() => new Bus(HUB_URL, role), [role])
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
   const [state, setState] = useState<PresentationState>(DEFAULT_PRESENTATION_STATE)
   const [connected, setConnected] = useState(false)
@@ -30,12 +36,12 @@ export function useHub(role: 'control' | 'display'): HubView {
     icao24: '',
     points: null
   })
-  // Avoid re-subscribing when only data changes.
-  const busRef = useRef(bus)
-  busRef.current = bus
+  const busRef = useRef<Bus | null>(null)
 
   useEffect(() => {
-    const off = bus.onMessage((msg) => {
+    const bus = new Bus(HUB_URL, role)
+    busRef.current = bus
+    bus.onMessage((msg) => {
       switch (msg.type) {
         case 'aircraft':
           setAircraft(msg.data)
@@ -51,14 +57,15 @@ export function useHub(role: 'control' | 'display'): HubView {
           break
       }
     })
-    const offStatus = bus.onStatus(setConnected)
+    bus.onStatus(setConnected)
     bus.connect()
     return () => {
-      off()
-      offStatus()
       bus.dispose()
+      busRef.current = null
     }
-  }, [bus])
+  }, [role])
 
-  return { bus, aircraft, state, connected, source, route }
+  const send = useCallback((msg: ClientMessage) => busRef.current?.send(msg), [])
+
+  return { send, aircraft, state, connected, source, route }
 }
