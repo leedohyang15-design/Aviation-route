@@ -23,8 +23,14 @@ export interface Hub {
 
 /** Choose the feed: real OpenSky when credentials exist (and FEED!=mock). */
 export function selectFeed(): FlightFeed {
-  if (process.env.FEED === 'mock') return createMockFeed()
-  if (hasOpenSkyCredentials()) return createOpenSkyFeed()
+  if (process.env.FEED === 'mock') {
+    console.log('[hub] FEED=mock is set — forcing mock feed (unset it to use OpenSky)')
+    return createMockFeed()
+  }
+  if (hasOpenSkyCredentials()) {
+    console.log('[hub] OpenSky credentials present — using OpenSky feed')
+    return createOpenSkyFeed()
+  }
   console.warn('[hub] No OPENSKY_CLIENT_ID/SECRET — using mock feed.')
   return createMockFeed()
 }
