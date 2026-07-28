@@ -36,6 +36,7 @@ export interface GeoPoint {
 export interface Airport {
   code: string // IATA/ICAO code shown in the panel, e.g. "ICN"
   city?: string // human city name, e.g. "서울"
+  countryCode?: string // ISO 3166-1 alpha-2 (lowercase), e.g. "kr" — for the flag
   lon: number
   lat: number
 }

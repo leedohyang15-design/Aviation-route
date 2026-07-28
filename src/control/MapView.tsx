@@ -16,6 +16,8 @@ interface Props {
   dayNightHour?: number | null
   originCity?: string | null
   destCity?: string | null
+  originFlag?: string | null
+  destFlag?: string | null
 }
 
 export function MapView({
@@ -26,7 +28,9 @@ export function MapView({
   onView,
   dayNightHour = null,
   originCity = null,
-  destCity = null
+  destCity = null,
+  originFlag = null,
+  destFlag = null
 }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
@@ -62,6 +66,10 @@ export function MapView({
   useEffect(
     () => globeRef.current?.setEndpointLabels(originCity, destCity),
     [originCity, destCity]
+  )
+  useEffect(
+    () => globeRef.current?.setEndpointFlags(originFlag, destFlag),
+    [originFlag, destFlag]
   )
 
   const poke = () => globeRef.current?.pokeActivity()

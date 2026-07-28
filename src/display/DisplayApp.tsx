@@ -58,6 +58,10 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
   useEffect(() => {
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
+    globeRef.current?.setEndpointFlags(
+      d?.origin?.countryCode ?? null,
+      d?.destination?.countryCode ?? null
+    )
   }, [d])
   useEffect(() => globeRef.current?.setInfoLabel(infoLines), [infoLines])
 

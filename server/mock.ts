@@ -54,6 +54,26 @@ const AIRLINES: Record<string, string> = {
   JAL: 'Japan Airlines'
 }
 const AIRLINE_CODES = Object.keys(AIRLINES)
+
+/** Full country name → ISO 3166-1 alpha-2 (for the endpoint flag images). */
+const COUNTRY_ISO: Record<string, string> = {
+  'Republic of Korea': 'kr',
+  Japan: 'jp',
+  China: 'cn',
+  Singapore: 'sg',
+  Australia: 'au',
+  'United Arab Emirates': 'ae',
+  India: 'in',
+  Germany: 'de',
+  'United Kingdom': 'gb',
+  France: 'fr',
+  'United States': 'us',
+  Brazil: 'br',
+  'South Africa': 'za',
+  Canada: 'ca',
+  Mexico: 'mx',
+  Thailand: 'th'
+}
 const TYPES = ['B787-9', 'A350-900', 'B777-300ER', 'A330-300', 'B747-8', 'A380-800', 'B737-800']
 
 interface MockPlane {
@@ -175,8 +195,20 @@ export function createMockFeed(count = 400): FlightFeed {
         icao24,
         airline: AIRLINES[pl.airlineCode] ?? pl.airlineCode,
         flightNo: pl.callsign,
-        origin: { code: pl.from.code, city: pl.from.city, lon: pl.from.lon, lat: pl.from.lat },
-        destination: { code: pl.to.code, city: pl.to.city, lon: pl.to.lon, lat: pl.to.lat },
+        origin: {
+          code: pl.from.code,
+          city: pl.from.city,
+          countryCode: COUNTRY_ISO[pl.from.country],
+          lon: pl.from.lon,
+          lat: pl.from.lat
+        },
+        destination: {
+          code: pl.to.code,
+          city: pl.to.city,
+          countryCode: COUNTRY_ISO[pl.to.country],
+          lon: pl.to.lon,
+          lat: pl.to.lat
+        },
         aircraftType: pl.aircraftType,
         departureTime: now - pl.progress * durationSec * 1000,
         etaRemainingSec: (1 - pl.progress) * durationSec,

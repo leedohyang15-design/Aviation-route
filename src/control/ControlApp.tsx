@@ -24,6 +24,8 @@ export function ControlApp(): JSX.Element {
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
         destCity={d?.destination?.city ?? null}
+        originFlag={d?.origin?.countryCode ?? null}
+        destFlag={d?.destination?.countryCode ?? null}
       />
 
       {/* Info overlay (top-left) — moved off the projected sphere. */}

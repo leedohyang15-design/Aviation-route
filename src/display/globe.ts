@@ -201,6 +201,9 @@ export class Globe {
   private originLabel!: THREE.Mesh
   private destLabel!: THREE.Mesh
   private infoLabel!: THREE.Mesh
+  private originFlag!: THREE.Mesh
+  private destFlag!: THREE.Mesh
+  private flagCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>()
   /** Base on-screen size of the airplane sprite (world units), scaled by zoom. */
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
@@ -389,6 +392,8 @@ export class Globe {
     this.originLabel = label()
     this.destLabel = label()
     this.infoLabel = label() // flight info chip next to the selected plane
+    this.originFlag = label() // country flag above the origin marker
+    this.destFlag = label() // country flag above the destination marker
 
     this.tryLoadEarth()
     this.resize()
@@ -786,6 +791,57 @@ export class Globe {
     apply(this.destLabel, destCity)
   }
 
+  /** Country flags above the origin/destination markers (ISO2 code, or null). */
+  setEndpointFlags(originCode: string | null, destCode: string | null): void {
+    const set = (mesh: THREE.Mesh, code: string | null) => {
+      if (code) {
+        this.loadFlag(code, mesh)
+      } else {
+        ;(mesh.material as THREE.MeshBasicMaterial).map = null
+        mesh.visible = false
+      }
+    }
+    set(this.originFlag, originCode)
+    set(this.destFlag, destCode)
+  }
+
+  /** Load a flag SVG (public/flags/<code>.svg) into a canvas texture (cached). */
+  private loadFlag(code: string, mesh: THREE.Mesh): void {
+    const apply = (tex: THREE.CanvasTexture, aspect: number) => {
+      const mat = mesh.material as THREE.MeshBasicMaterial
+      mat.map = tex
+      mat.needsUpdate = true
+      mesh.userData.aspect = aspect
+    }
+    const cached = this.flagCache.get(code)
+    if (cached) {
+      apply(cached.tex, cached.aspect)
+      return
+    }
+    const img = new Image()
+    img.onload = () => {
+      const w = 128
+      const h = 96
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      const ctx = c.getContext('2d')!
+      ctx.drawImage(img, 0, 0, w, h)
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+      ctx.lineWidth = 5
+      ctx.strokeRect(2.5, 2.5, w - 5, h - 5)
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      const entry = { tex, aspect: w / h }
+      this.flagCache.set(code, entry)
+      apply(tex, entry.aspect)
+    }
+    img.onerror = () => {
+      /* no flag for this country — leave the mesh hidden */
+    }
+    img.src = `flags/${code}.svg`
+  }
+
   /** Compact info chip shown next to the selected plane (null clears it). */
   setInfoLabel(lines: string[] | null): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
@@ -990,6 +1046,20 @@ export class Globe {
           }
           placeLabel(this.originLabel, op.u, op.v)
           placeLabel(this.destLabel, dp.u, dp.v)
+          // Country flags sit ABOVE each marker (origin dot / destination pin).
+          const placeFlag = (flag: THREE.Mesh, u: number, v: number, yOff: number) => {
+            if (!(flag.material as THREE.MeshBasicMaterial).map) {
+              flag.visible = false
+              return
+            }
+            const fh = 0.02 * ps
+            const asp = (flag.userData.aspect as number) || 1.33
+            flag.scale.set(fh * asp, fh, 1)
+            flag.position.set(u, 1 - v + yOff, 0.66)
+            flag.visible = true
+          }
+          placeFlag(this.originFlag, op.u, op.v, 0.03 * ps)
+          placeFlag(this.destFlag, dp.u, dp.v, 0.052 * ps)
           // Split the route at the plane's position; rebuild also when the pan
           // offset changed (great-circle re-projects under wrap).
           // Rebuild whenever the split point or pan offset changed at all, so the
@@ -1016,6 +1086,8 @@ export class Globe {
       this.originLabel.visible = false
       this.destLabel.visible = false
       this.infoLabel.visible = false
+      this.originFlag.visible = false
+      this.destFlag.visible = false
     }
 
     // Ease the camera toward the target view (zoom/pan) and keep icon size

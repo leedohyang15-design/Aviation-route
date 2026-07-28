@@ -190,7 +190,13 @@ async function fetchRoute(callsign: string): Promise<RoutePorts | null> {
     if (!fr) return null
     const port = (p: any) =>
       p && p.longitude != null && p.latitude != null
-        ? { code: p.iata_code || p.icao_code || '', city: p.municipality, lon: p.longitude, lat: p.latitude }
+        ? {
+            code: p.iata_code || p.icao_code || '',
+            city: p.municipality,
+            countryCode: (p.country_iso_name || '').toLowerCase() || undefined,
+            lon: p.longitude,
+            lat: p.latitude
+          }
         : undefined
     return { airline: fr.airline?.name, origin: port(fr.origin), destination: port(fr.destination) }
   } catch {
