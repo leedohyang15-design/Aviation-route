@@ -158,6 +158,10 @@ export class Globe {
   private lastPY = 0
   private movedDuringDrag = false
   private inputCleanup: (() => void) | null = null
+  // Attract mode: after 30s with no operator input, auto-select a random flight
+  // (and keep cycling every 30s) so the exhibit demos itself when unattended.
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly idleMs = 30000
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -286,6 +290,7 @@ export class Globe {
     if (this.interactive) {
       this.attachInput()
       this.applyInteractiveView()
+      this.startAttractTimer()
     }
   }
 
@@ -389,6 +394,25 @@ export class Globe {
     this.onSelectChange?.(null)
   }
 
+  /** (Re)start the 30s attract countdown. Any operator input calls this. */
+  private startAttractTimer(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = setTimeout(() => this.autoPick(), this.idleMs)
+  }
+
+  /** Auto-select a random flight, then keep cycling every 30s until a real
+   * interaction resets the countdown. */
+  private autoPick(): void {
+    const ids = [...this.eased.keys()]
+    if (ids.length) this.onSelectChange?.(ids[Math.floor(Math.random() * ids.length)])
+    this.idleTimer = setTimeout(() => this.autoPick(), this.idleMs)
+  }
+
+  /** Any operator activity (incl. the reset button) resets the attract countdown. */
+  pokeActivity(): void {
+    if (this.interactive) this.startAttractTimer()
+  }
+
   /** Screen (client) pixel → world coords in the renderer's [0,1] frame, using
    * the current eased camera rect. Uses the canvas's own rect (the letterboxed
    * 2:1 area), not the parent. Returns world x (= u) / world y (= 1 - v). */
@@ -431,6 +455,7 @@ export class Globe {
     const canvas = this.canvas
     canvas.style.cursor = 'grab'
     const onDown = (ev: PointerEvent) => {
+      this.startAttractTimer() // operator is here — postpone the auto-demo
       this.dragging = true
       this.movedDuringDrag = false
       this.lastPX = ev.clientX
@@ -468,6 +493,7 @@ export class Globe {
     }
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
+      this.startAttractTimer() // operator is here — postpone the auto-demo
       this.iSpan = Math.max(0.05, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
       this.emitView()
@@ -661,23 +687,17 @@ export class Globe {
   }
 
   private updateNight(): void {
-    let hour: number
     if (this.nightHourOverride != null) {
-      hour = this.nightHourOverride
-    } else {
-      // Whole-screen day/night by Korea time: 0 at noon, 1 at midnight (KST).
-      const kstHour = Number(
-        new Intl.DateTimeFormat('en-US', {
-          timeZone: 'Asia/Seoul',
-          hour: 'numeric',
-          hour12: false
-        }).format(new Date())
-      )
-      const kstMin = new Date().getUTCMinutes() // minutes are timezone-invariant
-      hour = (kstHour % 24) + kstMin / 60
+      // Manual override (hour 0–24): 1 at midnight, 0 at noon.
+      this.bgUniforms.uNight.value = 0.5 + 0.5 * Math.cos((this.nightHourOverride / 24) * 2 * Math.PI)
+      return
     }
-    // 1 at midnight (hour 0), 0 at noon (hour 12).
-    this.bgUniforms.uNight.value = 0.5 + 0.5 * Math.cos((hour / 24) * 2 * Math.PI)
+    // Exhibit auto-cycle: a full day↔night sweep every ~6 minutes (≈3 min day,
+    // ≈3 min night). Both windows read the same wall clock, so they stay in sync
+    // without any hub traffic. phase 0 = day, 0.5 = night.
+    const PERIOD_MS = 6 * 60 * 1000
+    const phase = (Date.now() % PERIOD_MS) / PERIOD_MS
+    this.bgUniforms.uNight.value = 0.5 - 0.5 * Math.cos(phase * 2 * Math.PI)
   }
 
   private frame = (now: number): void => {
@@ -838,6 +858,10 @@ export class Globe {
     if (this.viewEmitTimer) {
       clearTimeout(this.viewEmitTimer)
       this.viewEmitTimer = null
+    }
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
     }
     this.renderer.dispose()
   }

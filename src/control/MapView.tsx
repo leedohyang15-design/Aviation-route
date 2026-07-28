@@ -66,7 +66,13 @@ export function MapView({
       <div className="map">
         <canvas ref={canvasRef} />
       </div>
-      <button className="reset-btn" onClick={() => globeRef.current?.home()}>
+      <button
+        className="reset-btn"
+        onClick={() => {
+          globeRef.current?.pokeActivity()
+          globeRef.current?.home()
+        }}
+      >
         🌏 전체 보기
       </button>
     </div>

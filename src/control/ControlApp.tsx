@@ -89,23 +89,6 @@ export function ControlApp(): JSX.Element {
             />
           </label>
         </section>
-
-        <section>
-          <h2>낮/밤 시간 {state.dayNightHour == null ? '(현재 시각)' : '(미리보기)'}</h2>
-          <label className="field">
-            {String(Math.floor(state.dayNightHour ?? 12)).padStart(2, '0')}:
-            {String(Math.round(((state.dayNightHour ?? 12) % 1) * 60)).padStart(2, '0')} (KST)
-            <input
-              type="range"
-              min={0}
-              max={24}
-              step={0.5}
-              value={state.dayNightHour ?? 12}
-              onChange={(e) => send({ type: 'setDayNight', hour: Number(e.target.value) })}
-            />
-          </label>
-          <button onClick={() => send({ type: 'setDayNight', hour: null })}>현재 시각으로</button>
-        </section>
       </aside>
     </div>
   )
