@@ -463,6 +463,7 @@ export class Globe {
 
   /** Programmatic zoom for the on-screen +/− buttons (factor <1 zooms in). */
   zoomBy(factor: number): void {
+    this.clearTarget() // zooming = exploring → drop the tracked target
     this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * factor))
     this.applyInteractiveView()
     this.emitView()
@@ -540,6 +541,7 @@ export class Globe {
         const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
         this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
         this.movedDuringDrag = true
+        this.clearTarget()
         this.applyInteractiveView()
         this.emitView()
         return
@@ -552,7 +554,10 @@ export class Globe {
       const spanY = this.viewRect.top - this.viewRect.bottom
       const dx = ev.clientX - this.lastPX
       const dy = ev.clientY - this.lastPY
-      if (Math.abs(dx) + Math.abs(dy) > 3) this.movedDuringDrag = true
+      if (Math.abs(dx) + Math.abs(dy) > 3) {
+        this.movedDuringDrag = true
+        this.clearTarget() // a manual pan drops the tracked target
+      }
       // Horizontal: keep the grabbed point under the cursor → centerLon shifts opposite.
       const du = (dx / W) * spanX
       this.iCenterLon = wrapLon(this.iCenterLon - 360 * du)
@@ -586,6 +591,7 @@ export class Globe {
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
       this.startAttractTimer() // operator is here — postpone the auto-demo
+      this.clearTarget() // zooming = exploring → drop the tracked target
       this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
       this.emitView()
@@ -643,6 +649,17 @@ export class Globe {
   setSelected(icao24: string | null): void {
     this.selected = icao24
     this.selectedPlane.visible = false
+    // On the control, tracking starts here and continues every frame (frame()).
+  }
+
+  /** Turn the current target off. Called when the operator pans/zooms — a manual
+   * camera move means "I'm exploring, drop the tracked plane". */
+  private clearTarget(): void {
+    if (this.selected != null) {
+      this.selected = null
+      this.selectedPlane.visible = false
+      this.onSelectChange?.(null)
+    }
   }
 
   /** Update aircraft targets; new ids appear, missing ids fade out (removed). */
@@ -722,17 +739,26 @@ export class Globe {
     this.originMarker.visible = on
     this.destMarker.visible = on
     // Marker positions are updated each frame (they move with the pan offset).
-    // On the DISPLAY, center the spin between origin and destination so the whole
-    // route is framed. In interactive (control) mode, leave the operator's camera
-    // alone — they pan/zoom themselves.
-    if (!this.interactive) {
-      if (this.routePoints) {
-        const o = this.routePoints[0]
-        const d = this.routePoints[this.routePoints.length - 1]
-        this.routeCenterLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
+    // Center on the route once so origin + destination are both framed — on the
+    // DISPLAY via the spin offset, on the CONTROL by moving its camera to a
+    // full-world view centered on the route midpoint (a one-shot align on select,
+    // NOT continuous tracking — the operator can pan/zoom afterwards).
+    if (this.routePoints) {
+      const o = this.routePoints[0]
+      const d = this.routePoints[this.routePoints.length - 1]
+      const midLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
+      if (this.interactive) {
+        this.iCenterLon = midLon
+        this.iCenterLat = (o.lat + d.lat) / 2
+        this.iSpan = 1
+        this.applyInteractiveView()
+        this.emitView()
       } else {
-        this.routeCenterLon = null
+        this.routeCenterLon = midLon
+        this.applyViewTarget()
       }
+    } else if (!this.interactive) {
+      this.routeCenterLon = null
       this.applyViewTarget()
     }
   }
@@ -859,12 +885,12 @@ export class Globe {
           this.destMarker.scale.set(ps, ps, 1)
           this.originMarker.visible = true
           this.destMarker.visible = true
-          // Place-name labels sit just above each marker (constant screen size).
+          // Place-name labels sit BELOW each marker (so the pin/dot isn't covered).
           const lblH = 0.018 * ps
           const placeLabel = (lbl: THREE.Mesh, u: number, v: number) => {
             const asp = (lbl.userData.aspect as number) || 4
             lbl.scale.set(lblH * asp, lblH, 1)
-            lbl.position.set(u, 1 - v + 0.025 * ps, 0.68)
+            lbl.position.set(u, 1 - v - 0.022 * ps, 0.68)
           }
           placeLabel(this.originLabel, op.u, op.v)
           placeLabel(this.destLabel, dp.u, dp.v)

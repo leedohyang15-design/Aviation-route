@@ -12,14 +12,18 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "hub": "tsx server/standalone.ts",
-    "test:projection": "tsx server/../scripts/test-projection.ts"
+    "test:projection": "tsx server/../scripts/test-projection.ts",
+    "pack:win": "npm run build && electron-builder --win --dir",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
-    "maplibre-gl": "^4.7.1",
     "three": "^0.169.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "electron-builder": "^25.1.8",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

@@ -1,0 +1,26 @@
+appId: com.aviationroute.exhibit
+productName: Aviation Route
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+# Bundle the app resources into an asar archive.
+asar: true
+# Windows: an NSIS installer (needs Windows/wine) plus a portable unpacked build
+# (win-unpacked/Aviation Route.exe) that `--dir` produces cross-platform.
+win:
+  target:
+    - nsis
+    - portable
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target: dmg
+  category: public.app-category.education
+linux:
+  target: AppImage
+  category: Education

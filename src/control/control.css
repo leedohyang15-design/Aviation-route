@@ -134,18 +134,26 @@ body,
   background: #24345a;
 }
 
-/* Bottom sheet: boarding-pass card slides up on selection. */
+/* Bottom sheet: boarding-pass card pops up from the bottom on every selection. */
 .sheet {
   position: absolute;
   right: 24px;
   bottom: 24px;
   width: min(360px, 92vw);
-  transform: translateY(130%);
-  transition: transform 0.38s cubic-bezier(0.2, 0.85, 0.25, 1);
   pointer-events: none;
+}
+.sheet-card {
+  pointer-events: auto;
+  animation: sheetUp 0.42s cubic-bezier(0.2, 0.85, 0.25, 1);
   will-change: transform;
 }
-.sheet.open {
-  transform: none;
-  pointer-events: auto;
+@keyframes sheetUp {
+  from {
+    transform: translateY(130%);
+    opacity: 0.3;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

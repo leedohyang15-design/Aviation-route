@@ -36,9 +36,14 @@ export function ControlApp(): JSX.Element {
         </div>
       </div>
 
-      {/* Bottom sheet: the boarding-pass card slides up when a plane is selected. */}
-      <div className={'sheet' + (sel ? ' open' : '')}>
-        {sel && <FlightDetailCard aircraft={sel} detail={d} />}
+      {/* Bottom sheet: the card slides up on selection. Keyed by icao24 so it
+          re-mounts and replays the pop-up animation on every new selection. */}
+      <div className="sheet">
+        {sel && (
+          <div className="sheet-card" key={state.selected ?? ''}>
+            <FlightDetailCard aircraft={sel} detail={d} />
+          </div>
+        )}
       </div>
     </div>
   )
