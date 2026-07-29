@@ -88,57 +88,6 @@ function pinTexture(color: string): THREE.CanvasTexture {
   return tex
 }
 
-/** Category badge on the selected plane, drawn with canvas paths (no emoji font
- * dependency): military = white star on olive, cargo = white box on amber. */
-function badgeTexture(kind: 'military' | 'cargo'): THREE.CanvasTexture {
-  const s = 72
-  const c = document.createElement('canvas')
-  c.width = c.height = s
-  const ctx = c.getContext('2d')!
-  ctx.beginPath()
-  ctx.arc(s / 2, s / 2, s * 0.46, 0, Math.PI * 2)
-  ctx.fillStyle = kind === 'military' ? 'rgba(74,102,48,0.95)' : 'rgba(176,110,32,0.95)'
-  ctx.fill()
-  ctx.lineWidth = 3
-  ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-  ctx.stroke()
-  ctx.fillStyle = '#ffffff'
-  ctx.strokeStyle = '#ffffff'
-  const cx = s / 2
-  const cy = s / 2
-  if (kind === 'military') {
-    const R = s * 0.27
-    const r = R * 0.42
-    ctx.beginPath()
-    for (let i = 0; i < 10; i++) {
-      const ang = -Math.PI / 2 + (i * Math.PI) / 5
-      const rad = i % 2 ? r : R
-      const x = cx + Math.cos(ang) * rad
-      const y = cy + Math.sin(ang) * rad
-      if (i) ctx.lineTo(x, y)
-      else ctx.moveTo(x, y)
-    }
-    ctx.closePath()
-    ctx.fill()
-  } else {
-    const w = s * 0.42
-    const x = cx - w / 2
-    const y = cy - w / 2
-    ctx.lineWidth = 4
-    ctx.lineJoin = 'round'
-    ctx.strokeRect(x, y, w, w)
-    ctx.beginPath()
-    ctx.moveTo(cx, y)
-    ctx.lineTo(cx, y + w)
-    ctx.moveTo(x, cy)
-    ctx.lineTo(x + w, cy)
-    ctx.stroke()
-  }
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
-}
-
 /** A CanvasTexture of a text label (white with dark outline). Returns aspect w/h. */
 function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
   const fontSize = 44
@@ -257,7 +206,6 @@ export class Globe {
   private infoLabel!: THREE.Mesh
   private originFlag!: THREE.Mesh
   private destFlag!: THREE.Mesh
-  private planeBadge!: THREE.Mesh
   private flagCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>()
   /** Base on-screen size of the airplane sprite (world units), scaled by zoom. */
   private planeBaseScale = 1
@@ -450,7 +398,6 @@ export class Globe {
     this.infoLabel = label() // flight info chip next to the selected plane
     this.originFlag = label() // country flag above the origin marker
     this.destFlag = label() // country flag above the destination marker
-    this.planeBadge = label() // military/cargo badge on the selected plane
 
     this.tryLoadEarth()
     this.resize()
@@ -806,9 +753,37 @@ export class Globe {
     }
     this.selected = icao24
     this.selectedPlane.visible = false
-    // Request a one-shot camera align on the next route (consumed in setRoute).
-    if (icao24) this.pendingRecenter = true
-    // On the control, tracking starts here and continues every frame (frame()).
+    if (icao24) {
+      // Request a one-shot camera align on the plane — done in frame() the moment
+      // the selected plane is rendered, so it works with OR without a route and
+      // never misses (route timing / off-route drops no longer matter).
+      this.pendingRecenter = true
+    } else {
+      // Deselected → release the spin back to the control's pan.
+      this.routeCenterLon = null
+      this.pendingRecenter = false
+      if (!this.interactive) this.applyViewTarget()
+    }
+  }
+
+  /** Center the camera once on the selected plane (called from frame() when it is
+   * first rendered). Works for routed and route-less planes alike. */
+  private recenterOnPlane(lon: number, lat: number): void {
+    if (this.interactive) {
+      this.iCenterLon = lon
+      this.iCenterLat = lat
+      // A moderate span (not full zoom-out): at span 1 the vertical center is
+      // pinned to the equator, so a plane away from lat 0 could never actually
+      // be centered — that was the "centering sometimes fails" bug. Zooming in a
+      // little gives room to center the plane vertically as well as horizontally.
+      this.iSpan = Math.min(this.iSpan, 0.6)
+      this.applyInteractiveView()
+      this.emitView()
+    } else {
+      this.routeCenterLon = lon
+      this.applyViewTarget()
+    }
+    this.pendingRecenter = false
   }
 
   /** Turn the current target off. Called when the operator pans/zooms — a manual
@@ -930,19 +905,6 @@ export class Globe {
     img.src = `flags/${code}.svg`
   }
 
-  /** Category badge on the selected plane: 'military' (star) / 'cargo' (box). */
-  setPlaneBadge(kind: 'military' | 'cargo' | null): void {
-    const mat = this.planeBadge.material as THREE.MeshBasicMaterial
-    mat.map?.dispose()
-    if (kind) {
-      mat.map = badgeTexture(kind)
-      mat.needsUpdate = true
-    } else {
-      mat.map = null
-      this.planeBadge.visible = false
-    }
-  }
-
   /** Compact info chip shown next to the selected plane (null clears it). */
   setInfoLabel(lines: string[] | null): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
@@ -991,52 +953,8 @@ export class Globe {
     const on = !!this.routePoints
     this.originMarker.visible = on
     this.destMarker.visible = on
-
-    if (this.routePoints) {
-      // One-shot align on SELECTION only (pendingRecenter) — never on a refresh /
-      // re-route. The control frames origin+destination (route midpoint, full
-      // world); the display centers ONCE on the plane and then holds still (a
-      // continuous chase re-projected the whole scene every frame → jitter).
-      if (this.pendingRecenter) {
-        const o = this.routePoints[0]
-        const d = this.routePoints[this.routePoints.length - 1]
-        const midLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
-        if (this.interactive) {
-          this.iCenterLon = midLon
-          this.iCenterLat = (o.lat + d.lat) / 2
-          this.iSpan = 1
-          this.applyInteractiveView()
-          this.emitView()
-        } else {
-          const e = this.selected ? this.eased.get(this.selected) : null
-          this.routeCenterLon = e ? e.lon : midLon
-          this.applyViewTarget()
-        }
-      }
-      this.pendingRecenter = false
-    } else if (this.pendingRecenter && this.selected) {
-      // No route (adsbdb has none) but a plane IS selected → center on the plane
-      // once, so a route-less pick isn't left off to the side.
-      const e = this.eased.get(this.selected)
-      if (e) {
-        if (this.interactive) {
-          this.iCenterLon = e.lon
-          this.iCenterLat = e.lat
-          this.iSpan = 1
-          this.applyInteractiveView()
-          this.emitView()
-        } else {
-          this.routeCenterLon = e.lon
-          this.applyViewTarget()
-        }
-        this.pendingRecenter = false
-      }
-    } else if (!this.selected) {
-      // Truly deselected → release the spin back to the control's pan.
-      this.routeCenterLon = null
-      if (!this.interactive) this.applyViewTarget()
-    }
-    // else: a refresh of a route-less selection — keep the existing center.
+    // Camera alignment on selection is handled in frame() (recenterOnPlane), so it
+    // works with or without a route and can't miss due to route timing.
   }
 
   /** Add fat (Line2) segments for a polyline, split at the actual display seam.
@@ -1143,19 +1061,13 @@ export class Globe {
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
       if (isSel) {
+        // First frame the selected plane is rendered → center the camera on it.
+        if (this.pendingRecenter) this.recenterOnPlane(e.lon, e.lat)
         this.selectedPlane.position.set(u, 1 - v, 0.7)
         this.selectedPlane.rotation.z = angle
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
-        // Category badge (military/cargo) tucked on the plane's upper-right.
-        const badgeMat = this.planeBadge.material as THREE.MeshBasicMaterial
-        if (badgeMat.map) {
-          const bs = 0.03 * ps
-          this.planeBadge.scale.set(bs, bs, 1)
-          this.planeBadge.position.set(u + 0.02 * ps, 1 - v + 0.02 * ps, 0.78)
-          this.planeBadge.visible = true
-        }
         // Info chip next to the plane (flips to the left near the right edge).
         const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
         if (infoMat.map) {
@@ -1229,7 +1141,6 @@ export class Globe {
       this.infoLabel.visible = false
       this.originFlag.visible = false
       this.destFlag.visible = false
-      this.planeBadge.visible = false
     }
 
     // Ease the camera toward the target view (zoom/pan) and keep icon size

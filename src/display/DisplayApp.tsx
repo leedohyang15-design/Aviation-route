@@ -71,7 +71,6 @@ export function DisplayApp(): JSX.Element {
     )
   }, [d])
   useEffect(() => globeRef.current?.setInfoLabel(infoLines), [infoLines])
-  useEffect(() => globeRef.current?.setPlaneBadge(category), [category])
 
   return (
     <div className="display-root">

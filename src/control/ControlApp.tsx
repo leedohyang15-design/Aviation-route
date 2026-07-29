@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
-import { flightCategory } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { MapView } from './MapView'
 
@@ -35,7 +34,6 @@ export function ControlApp(): JSX.Element {
         destCity={d?.destination?.city ?? null}
         originFlag={d?.origin?.countryCode ?? null}
         destFlag={d?.destination?.countryCode ?? null}
-        planeBadge={sel ? flightCategory(sel.callsign, d?.aircraftType) : null}
       />
 
       {/* Info overlay (top-left) — moved off the projected sphere. */}
