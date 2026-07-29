@@ -14,6 +14,7 @@ interface Props {
   noRouteForSelected?: boolean
   onSelect: (icao24: string | null) => void
   onView: (view: ViewState) => void
+  onAttract?: (active: boolean) => void
   dayNightHour?: number | null
   originCity?: string | null
   destCity?: string | null
@@ -28,6 +29,7 @@ export function MapView({
   noRouteForSelected = false,
   onSelect,
   onView,
+  onAttract,
   dayNightHour = null,
   originCity = null,
   destCity = null,
@@ -40,6 +42,8 @@ export function MapView({
   onViewRef.current = onView
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const onAttractRef = useRef(onAttract)
+  onAttractRef.current = onAttract
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -47,6 +51,7 @@ export function MapView({
     const globe = new Globe(canvas, { interactive: true })
     globe.onViewChange = (v) => onViewRef.current(v)
     globe.onSelectChange = (s) => onSelectRef.current(s)
+    globe.onAttractChange = (a) => onAttractRef.current?.(a)
     globeRef.current = globe
     globe.start()
     // Refit/recenter whenever the map area changes size (also fixes the initial

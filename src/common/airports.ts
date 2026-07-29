@@ -273,7 +273,14 @@ export const AIRPORT_CITY_KO: Record<string, string> = {
   ISA: '마운트아이자', GLT: '글래드스톤', BDB: '번더버그', HVB: '허비베이',
   NPE: '네이피어', NPL: '뉴플리머스', PMR: '파머스턴노스', NSN: '넬슨', BHE: '블레넘',
   TRG: '타우랑가', ROT: '로토루아', GIS: '기즈번', HLZ: '해밀턴', IVC: '인버카길',
-  FUN: '푸나푸티', TBU: '통가타푸', APW: '아피아', RAR: '라로통가', GEA: '누메아'
+  FUN: '푸나푸티', TBU: '통가타푸', APW: '아피아', RAR: '라로통가', GEA: '누메아',
+  // Misc additions
+  CHQ: '하니아', AFW: '포트워스', JMK: '미코노스', JTR: '산토리니', KGS: '코스',
+  ZTH: '자킨토스', EFL: '케팔로니아', PVK: '프레베자', GPA: '파트라', KLX: '칼라마타',
+  AOK: '카르파토스', SMI: '사모스', MJT: '미틸리니', JSI: '스키아토스',
+  BGY: '베르가모', VBS: '브레시아', RMI: '리미니', AOI: '안코나', PEG: '페루자',
+  CIY: '코미소', REG: '레조칼라브리아', SUF: '람베치아', BDS: '브린디시',
+  FSC: '피가리', CMF: '샹베리', GNB: '그르노블', GOU: '가루아'
 }
 
 /** Korean city name for an airport code, or null if we don't have it. */

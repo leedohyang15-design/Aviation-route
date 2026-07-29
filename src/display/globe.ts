@@ -105,6 +105,8 @@ export class Globe {
   private interactive = false
   onViewChange: ((v: ViewState) => void) | null = null
   onSelectChange: ((icao24: string | null) => void) | null = null
+  // Fired true when the exhibit is auto-cycling (attract), false on operator input.
+  onAttractChange: ((active: boolean) => void) | null = null
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -384,11 +386,18 @@ export class Globe {
       this.noRouteTimer = null
     }
     this.startAttractTimer()
+    this.onAttractChange?.(true) // now demoing itself → show the touch invite
+  }
+
+  /** Operator input resets the attract countdown and hides the touch invite. */
+  private resetAttract(): void {
+    this.onAttractChange?.(false)
+    this.startAttractTimer()
   }
 
   /** Any operator activity (incl. the reset button) resets the attract countdown. */
   pokeActivity(): void {
-    if (this.interactive) this.startAttractTimer()
+    if (this.interactive) this.resetAttract()
   }
 
   /** When the selected flight has no route to show, auto-advance to another
@@ -410,7 +419,7 @@ export class Globe {
     this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * factor))
     this.applyInteractiveView()
     this.emitView()
-    this.startAttractTimer()
+    this.resetAttract()
   }
 
   /** Screen (client) pixel → world coords in the renderer's [0,1] frame, using
@@ -458,7 +467,7 @@ export class Globe {
     const canvas = this.canvas
     canvas.style.cursor = 'grab'
     const onDown = (ev: PointerEvent) => {
-      this.startAttractTimer() // operator is here — postpone the auto-demo
+      this.resetAttract() // operator is here — postpone the auto-demo
       this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY })
       canvas.setPointerCapture?.(ev.pointerId)
       if (this.pointers.size >= 2) {
@@ -536,7 +545,7 @@ export class Globe {
     }
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
-      this.startAttractTimer() // operator is here — postpone the auto-demo
+      this.resetAttract() // operator is here — postpone the auto-demo
       this.clearTarget() // zooming = exploring → drop the tracked target
       this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
@@ -554,7 +563,7 @@ export class Globe {
       const dir = back ? -1 : 1
       const cur = this.selected ? order.indexOf(this.selected) : -1
       const next = order[(((cur + dir) % order.length) + order.length) % order.length]
-      this.startAttractTimer()
+      this.resetAttract()
       this.onSelectChange?.(next)
     }
     canvas.addEventListener('pointerdown', onDown)

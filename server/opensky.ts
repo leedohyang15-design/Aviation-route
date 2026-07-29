@@ -184,6 +184,20 @@ export function createOpenSkyFeed(): FlightFeed {
 // best-effort from public APIs and cache. Failures degrade to partial detail.
 // ---------------------------------------------------------------------------
 
+// Korean city for an airport code, logging codes we don't have a translation for
+// (once each) so the operator can collect them and we can add them in a batch —
+// instead of hunting for them one screenshot at a time.
+const missingCity = new Set<string>()
+function koCity(code: string | undefined, english: string | undefined): string | undefined {
+  const ko = cityKo(code)
+  if (ko) return ko
+  if (code && !missingCity.has(code)) {
+    missingCity.add(code)
+    console.log(`[city] no Korean for ${code}${english ? ` (${english})` : ''} — add to airports.ts`)
+  }
+  return english
+}
+
 interface RoutePorts {
   airline?: string
   origin?: { code: string; city?: string; lon: number; lat: number }
@@ -211,7 +225,7 @@ async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
       p && p.longitude != null && p.latitude != null
         ? {
             code: p.iata_code || p.icao_code || '',
-            city: cityKo(p.iata_code) ?? p.municipality,
+            city: koCity(p.iata_code, p.municipality),
             countryCode: (p.country_iso_name || '').toLowerCase() || undefined,
             lon: p.longitude,
             lat: p.latitude
@@ -243,7 +257,7 @@ async function fetchRouteAdsbLol(
       p && p.lon != null && p.lat != null
         ? {
             code: p.iata || p.icao || '',
-            city: cityKo(p.iata) ?? p.location,
+            city: koCity(p.iata, p.location),
             countryCode: (p.countryiso2 || '').toLowerCase() || undefined,
             lon: p.lon,
             lat: p.lat

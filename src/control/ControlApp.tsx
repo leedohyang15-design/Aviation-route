@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { FlightDetailCard } from '../common/FlightDetailCard'
@@ -17,6 +17,9 @@ export function ControlApp(): JSX.Element {
     () => aircraft.reduce((n, a) => (a.onGround ? n : n + 1), 0),
     [aircraft]
   )
+  // True while the exhibit is auto-cycling (attract) — used to keep the touch
+  // invite visible even though a plane is auto-selected.
+  const [attract, setAttract] = useState(false)
 
   // Category filter (also serves as the color legend). hiddenCategories lists
   // the categories to hide; clicking a chip toggles it.
@@ -43,6 +46,7 @@ export function ControlApp(): JSX.Element {
         noRouteForSelected={!!d && !d.route}
         onSelect={(icao24) => send({ type: 'select', icao24 })}
         onView={(view) => send({ type: 'setView', view })}
+        onAttract={setAttract}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
         destCity={d?.destination?.city ?? null}
@@ -106,7 +110,7 @@ export function ControlApp(): JSX.Element {
 
       {/* Touch hint (bottom-center) — invites visitors to interact; hidden once
           a plane is selected so it doesn't fight the boarding-pass card. */}
-      {!state.selected && (
+      {(!state.selected || attract) && (
         <div className="touch-hint">🖐 지구를 돌리고, 비행기를 눌러보세요!</div>
       )}
     </div>
