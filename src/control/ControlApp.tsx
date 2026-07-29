@@ -55,7 +55,7 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          경로 확인된 <b>{visible.length.toLocaleString()}</b>대 · 실제 운항{' '}
+          <b>{visible.length.toLocaleString()}</b>대 표시 중 · 실제 운항{' '}
           <b>{airborne.toLocaleString()}</b>대
         </div>
         <div className={connected ? 'ok' : 'warn'}>

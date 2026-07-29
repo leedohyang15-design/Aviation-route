@@ -1093,16 +1093,20 @@ export class Globe {
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
-        // Info chip next to the plane (flips to the left near the right edge).
-        const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
-        if (infoMat.map) {
+        // Place the info chip. Centered on the plane, offset either to the side
+        // (no route) or PERPENDICULAR to the route (routed) so it clears the
+        // origin/destination flags & names, which lie ALONG the route axis.
+        const placeInfoChip = (au: number, ay: number, offX: number, offY: number): void => {
+          const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
+          if (!infoMat.map) return
           const lh = 0.06 * ps
           const asp = (this.infoLabel.userData.aspect as number) || 3
           const lw = lh * asp
-          const right = u + 0.018 + lw < 1
-          const cx = right ? u + 0.018 + lw / 2 : u - 0.018 - lw / 2
+          // Clamp the box so it stays fully on the 2:1 frame.
+          const cx = Math.max(lw / 2, Math.min(1 - lw / 2, au + offX * (lw / 2 + 0.006)))
+          const cy = Math.max(lh / 2, Math.min(1 - lh / 2, ay + offY * (lh / 2 + 0.02 * ps)))
           this.infoLabel.scale.set(lw, lh, 1)
-          this.infoLabel.position.set(cx, 1 - v, 0.75)
+          this.infoLabel.position.set(cx, cy, 0.75)
           this.infoLabel.visible = true
         }
         // Reposition origin/destination markers (they move with the pan offset).
@@ -1183,11 +1187,32 @@ export class Globe {
           )
           this.selectedPlane.position.set(sp.u, 1 - sp.v, 0.7)
           this.selectedPlane.rotation.z = screenAngle(bearing, snap.lat)
+          // Info chip offset PERPENDICULAR to the route so it never lands on the
+          // origin/destination flags & names (which run along the route axis).
+          const pa1 = projectNorm(a1.lon, a1.lat, this.lonOffset)
+          const pa2 = projectNorm(a2.lon, a2.lat, this.lonOffset)
+          let tX = pa2.u - pa1.u
+          if (tX > 0.5) tX -= 1
+          else if (tX < -0.5) tX += 1
+          const tY = pa1.v - pa2.v // screen-y tangent (screen y = 1 - v)
+          const tl = Math.hypot(tX, tY) || 1
+          let pX = -tY / tl
+          let pY = tX / tl
+          // Offset toward the vertical center so the chip stays on the frame.
+          if (pY > 0 !== 1 - sp.v < 0.5) {
+            pX = -pX
+            pY = -pY
+          }
+          placeInfoChip(sp.u, 1 - sp.v, pX, pY)
           if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
             this.buildRoute(idx)
             this.lastRouteIdx = idx
             this.lastRouteOffset = this.lonOffset
           }
+        } else {
+          // No route: place the chip to the side of the plane (flip near the edge).
+          const lw = 0.06 * ps * ((this.infoLabel.userData.aspect as number) || 3)
+          placeInfoChip(u, 1 - v, u + lw + 0.02 < 1 ? 1 : -1, 0)
         }
       }
       i++

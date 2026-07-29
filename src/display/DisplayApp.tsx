@@ -25,13 +25,15 @@ export function DisplayApp(): JSX.Element {
     if (!sel) return null
     const flightNo = d?.flightNo ?? sel.callsign?.trim() ?? sel.icao24.toUpperCase()
     const lines = [flightNo]
-    if (d?.origin?.code || d?.destination?.code) {
-      lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
-    } else {
-      // No route line: friendly placeholder on the public sphere (the control
-      // auto-advances to another flight after ~10s). The operator still sees the
-      // specific reason on the control card.
+    if (!d) {
+      // Detail still loading (lookup in flight) — transient placeholder.
       lines.push('여행 중… ✈')
+    } else if (d.origin?.code || d.destination?.code) {
+      lines.push(`${d.origin?.code ?? '—'} → ${d.destination?.code ?? '—'}`)
+    } else {
+      // Detail resolved but no route: show WHY (the control auto-advances after
+      // ~10s). Don't keep saying "여행 중" once the lookup has actually failed.
+      lines.push(d.noRouteReason ?? '경로 미확인')
     }
     const bits: string[] = []
     if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)
