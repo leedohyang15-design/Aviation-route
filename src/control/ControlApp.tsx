@@ -12,6 +12,11 @@ export function ControlApp(): JSX.Element {
   )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
+  // Total aircraft actually airborne worldwide (before the category/known filter).
+  const airborne = useMemo(
+    () => aircraft.reduce((n, a) => (a.onGround ? n : n + 1), 0),
+    [aircraft]
+  )
 
   // Category filter (also serves as the color legend). hiddenCategories lists
   // the categories to hide; clicking a chip toggles it.
@@ -49,11 +54,13 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          <b>{visible.length.toLocaleString()}</b> 대 비행 중
+          <b>{visible.length.toLocaleString()}</b> 대 표시 중 · 실제 운항{' '}
+          <b>{airborne.toLocaleString()}</b> 대
         </div>
         <div className={connected ? 'ok' : 'warn'}>
-          {source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} ·{' '}
-          {connected ? '연결됨' : '재연결 중…'}
+          {connected
+            ? `${source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} · 연결됨`
+            : '여행 중… ✈️'}
         </div>
         <div className="legend">
           <button
