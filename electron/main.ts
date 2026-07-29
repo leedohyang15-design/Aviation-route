@@ -3,10 +3,34 @@
 //  - opens two windows: the operator's control map on the primary display and
 //    the equirectangular frame full-screen on the projector display.
 
-import { app, BrowserWindow, screen } from 'electron'
-import { join } from 'node:path'
+import { app, BrowserWindow, screen, dialog } from 'electron'
+import { join, dirname } from 'node:path'
+import { appendFileSync } from 'node:fs'
 import { loadEnv } from '../server/env'
 import { startHub, type Hub } from '../server/hub'
+
+// Museum kiosk safety net: a packaged .exe has no console, so if the main
+// process throws (bad GPU driver, port already held, missing file, …) the
+// window would just silently fail to appear. Write every fatal error to a log
+// next to the executable and show a dialog, so the operator can see *why*
+// instead of "double-clicked and nothing happened".
+const CRASH_LOG = join(dirname(process.execPath), 'aviation-route-error.log')
+function logCrash(kind: string, err: unknown): void {
+  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err)
+  const line = `[${new Date().toISOString()}] ${kind}: ${msg}\n`
+  try {
+    appendFileSync(CRASH_LOG, line)
+  } catch {
+    /* log dir not writable — nothing more we can do */
+  }
+  try {
+    dialog.showErrorBox('Aviation Route — 오류', `${kind}\n\n${msg}\n\n로그: ${CRASH_LOG}`)
+  } catch {
+    /* too early / no display for a dialog */
+  }
+}
+process.on('uncaughtException', (err) => logCrash('uncaughtException', err))
+process.on('unhandledRejection', (reason) => logCrash('unhandledRejection', reason))
 
 loadEnv() // read OPENSKY_* from .env (project root in dev) before starting the hub
 
@@ -32,7 +56,7 @@ function createWindows(): void {
   // The projector is the first non-primary display, if present.
   const projector = displays.find((d) => d.id !== primary.id) ?? primary
 
-  const preload = join(__dirname, '../preload/index.js')
+  const preload = join(__dirname, '../preload/index.mjs')
 
   // --- Control window (operator, primary display) ---
   controlWin = new BrowserWindow({
@@ -70,6 +94,10 @@ function createWindows(): void {
   // Museum kiosk: if a renderer crashes, reload it rather than dying.
   for (const win of [controlWin, displayWin]) {
     win.webContents.on('render-process-gone', () => win.reload())
+    // Surface a failed page load (wrong asset path, missing file) to the log.
+    win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      logCrash('did-fail-load', `${code} ${desc} — ${url}`)
+    })
   }
 
   controlWin.on('closed', () => (controlWin = null))
