@@ -3,6 +3,8 @@
 // military flag in OpenSky), but covers the common operators. Everything not
 // recognised as cargo or military is treated as a passenger flight.
 
+import { airlineFromCallsign } from './airlines'
+
 // Cargo operator ICAO callsign prefixes.
 const CARGO = new Set([
   'FDX', // FedEx
@@ -95,15 +97,11 @@ export function flightCategory(callsign?: string | null, type?: string | null): 
  * callsigns don't match, so filtering to it drops the planes that would show
  * "route unknown" when selected, without having to pre-query every aircraft. */
 export function isScheduledCallsign(callsign?: string | null): boolean {
-  const cs = (callsign ?? '').toUpperCase().trim()
-  // Must be a 3-letter ICAO operator code + flight number (1–4 digits, optional
-  // letter suffix): KAL902, UAL61, FDX18, BAW23A. This is the shape adsbdb has
-  // routes for.
-  if (!/^[A-Z]{3}\d{1,4}[A-Z]?$/.test(cs)) return false
-  // Military transport shares the airline shape (RCH123, CFC1234…) but almost
-  // never has a public scheduled route, so exclude it from the scheduled set.
-  if (flightCategory(cs) === 'military') return false
-  return true
+  // A flight has a route iff its callsign starts with a known scheduled airline
+  // (KAL, AAR, UAL, FDX…). If we don't recognise the operator code, treat it as
+  // route-unknown — that reliably drops GA, private, military and one-off
+  // callsigns, which are exactly the ones adsbdb can't route.
+  return airlineFromCallsign(callsign) != null
 }
 
 /** A definite category key (unknown callsigns fall back to passenger). Used for
