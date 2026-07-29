@@ -1135,6 +1135,24 @@ export class Globe {
           // Split the route at the plane's nearest point; rebuild when that split
           // or the pan offset changed so the line stays aligned to the earth.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
+          // Snap the selected plane ONTO its route: draw the icon at the nearest
+          // route point (the flown/remaining split) pointing along the line,
+          // instead of at its raw position. Real aircraft deviate from the drawn
+          // great circle (airways, wind), which would otherwise float the plane
+          // off its own line — this pulls it back on, exactly as requested.
+          const snap = this.routePoints[idx]
+          const sp = projectNorm(snap.lon, snap.lat, this.lonOffset)
+          const a2 = this.routePoints[Math.min(idx + 1, this.routePoints.length - 1)]
+          const a1 = this.routePoints[Math.max(idx - 1, 0)]
+          const φ1 = (a1.lat * Math.PI) / 180
+          const φ2 = (a2.lat * Math.PI) / 180
+          const Δλ = ((a2.lon - a1.lon) * Math.PI) / 180
+          const bearing = Math.atan2(
+            Math.sin(Δλ) * Math.cos(φ2),
+            Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+          )
+          this.selectedPlane.position.set(sp.u, 1 - sp.v, 0.7)
+          this.selectedPlane.rotation.z = screenAngle(bearing, snap.lat)
           if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
             this.buildRoute(idx)
             this.lastRouteIdx = idx

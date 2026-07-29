@@ -299,15 +299,14 @@ async function buildDetail(
     const route = greatCirclePoints(o, d, 128)
     const here = ac ? { lon: ac.lon, lat: ac.lat } : null
     const idx = here ? nearestRouteIndex(route, here) : 0
-    // Sanity-check the route against where the plane actually is: the selected
-    // plane MUST sit on its drawn route, or the picture is a lie (a plane
-    // floating far from the line it's supposedly on). A callsign is often
-    // matched to the wrong flight/leg, whose origin/dest are nowhere near the
-    // aircraft. A plane on its real route stays within a few hundred km of the
-    // great circle (airway/wind deviation), so drop anything past 500km as a
-    // mismatch and show it as route-unknown instead.
+    // Sanity-check the route against where the plane actually is. The display
+    // snaps the selected plane onto this line, so we only need to reject clearly
+    // WRONG matches here (a callsign mapped to a different flight/leg on another
+    // continent) — not tolerate them. A plane on its real route stays within a
+    // few hundred km of the great circle; drop anything past 800km as a mismatch
+    // and show it as route-unknown instead of snapping onto a bogus line.
     const offRouteKm = here ? greatCircleDistanceKm(here, route[idx]) : 0
-    if (offRouteKm > 500) {
+    if (offRouteKm > 800) {
       detail.origin = undefined
       detail.destination = undefined
     } else {
