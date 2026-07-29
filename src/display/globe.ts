@@ -1103,23 +1103,38 @@ export class Globe {
           this.destMarker.scale.set(ps, ps, 1)
           this.originMarker.visible = true
           this.destMarker.visible = true
-          // Keep every flag and place-name directly ABOVE/BELOW its own marker
-          // (same longitude as the marker — never pushed sideways, which detaches
-          // the label from its city). To stop the two endpoints' labels/flags
-          // from colliding on short routes (e.g. Tampa↔Ft Lauderdale, almost the
-          // same spot), stagger them vertically: the origin's name sits just
-          // under its marker and its flag just above; the destination's name
-          // drops one row lower and its flag rises one row higher. So the two
-          // stacks interleave instead of overlapping, and each stays on its city.
+          // Lay out each endpoint's name + flag as a stack that extends OUTWARD
+          // along the route, away from the OTHER endpoint. Because the two stacks
+          // point in opposite directions, they can never overlap each other — for
+          // any geometry, including short, near-vertical, or coincident endpoints
+          // (that was the recurring "flag detached / labels piled up" bug). The
+          // marker stays on its true coordinate; the name sits just outside it,
+          // the flag just beyond the name.
+          const oy = 1 - op.v
+          const dy0 = 1 - dp.v
+          let dirX = op.u - dp.u
+          if (dirX > 0.5) dirX -= 1
+          else if (dirX < -0.5) dirX += 1
+          let dirY = oy - dy0
+          let dlen = Math.hypot(dirX, dirY)
+          if (dlen < 1e-4) {
+            dirX = 0
+            dirY = 1
+            dlen = 1
+          }
+          dirX /= dlen
+          dirY /= dlen
+          const gName = 0.034 * ps // name distance out from its marker
+          const gFlag = 0.066 * ps // flag distance out from its marker (beyond name)
           const lblH = 0.018 * ps
-          const placeLabel = (lbl: THREE.Mesh, u: number, v: number, drop: number) => {
+          const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number) => {
             const asp = (lbl.userData.aspect as number) || 4
             lbl.scale.set(lblH * asp, lblH, 1)
-            lbl.position.set(u, 1 - v - drop * ps, 0.68)
+            lbl.position.set(mu + sign * dirX * gName, my + sign * dirY * gName, 0.68)
           }
-          placeLabel(this.originLabel, op.u, op.v, 0.026)
-          placeLabel(this.destLabel, dp.u, dp.v, 0.05)
-          const placeFlag = (flag: THREE.Mesh, u: number, v: number, yOff: number) => {
+          placeLabel(this.originLabel, op.u, oy, 1)
+          placeLabel(this.destLabel, dp.u, dy0, -1)
+          const placeFlag = (flag: THREE.Mesh, mu: number, my: number, sign: number) => {
             if (!(flag.material as THREE.MeshBasicMaterial).map) {
               flag.visible = false
               return
@@ -1127,11 +1142,11 @@ export class Globe {
             const fh = 0.02 * ps
             const asp = (flag.userData.aspect as number) || 1.33
             flag.scale.set(fh * asp, fh, 1)
-            flag.position.set(u, 1 - v + yOff, 0.66)
+            flag.position.set(mu + sign * dirX * gFlag, my + sign * dirY * gFlag, 0.66)
             flag.visible = true
           }
-          placeFlag(this.originFlag, op.u, op.v, 0.045 * ps)
-          placeFlag(this.destFlag, dp.u, dp.v, 0.075 * ps)
+          placeFlag(this.originFlag, op.u, oy, 1)
+          placeFlag(this.destFlag, dp.u, dy0, -1)
           // Split the route at the plane's nearest point; rebuild when that split
           // or the pan offset changed so the line stays aligned to the earth.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
