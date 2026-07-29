@@ -663,17 +663,34 @@ export class Globe {
       this.applyInteractiveView()
       this.emitView()
     }
+    // Tab / Shift+Tab step through the planes (arrows work too). Manual, so it
+    // resets the attract countdown.
+    const onKey = (ev: KeyboardEvent) => {
+      const fwd = ev.key === 'Tab' || ev.key === 'ArrowRight' || ev.key === 'ArrowDown'
+      const back = ev.key === 'ArrowLeft' || ev.key === 'ArrowUp' || (ev.key === 'Tab' && ev.shiftKey)
+      if (!fwd && !back) return
+      ev.preventDefault()
+      const order = this.order
+      if (!order.length) return
+      const dir = back ? -1 : 1
+      const cur = this.selected ? order.indexOf(this.selected) : -1
+      const next = order[(((cur + dir) % order.length) + order.length) % order.length]
+      this.startAttractTimer()
+      this.onSelectChange?.(next)
+    }
     canvas.addEventListener('pointerdown', onDown)
     canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp)
     canvas.addEventListener('pointercancel', onUp)
     canvas.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('keydown', onKey)
     this.inputCleanup = () => {
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
       canvas.removeEventListener('wheel', onWheel)
+      window.removeEventListener('keydown', onKey)
       this.pointers.clear()
     }
   }
@@ -714,6 +731,24 @@ export class Globe {
   }
 
   setSelected(icao24: string | null): void {
+    if (icao24 !== this.selected) {
+      // Selection changed → drop the previous route/markers/labels/flags right
+      // away so nothing from the old plane lingers (or gets drawn through the new
+      // plane) while the new detail is fetched.
+      this.routePoints = null
+      this.lastRouteOffset = NaN
+      this.disposeRouteGroup()
+      for (const m of [
+        this.originMarker,
+        this.destMarker,
+        this.originLabel,
+        this.destLabel,
+        this.originFlag,
+        this.destFlag
+      ]) {
+        m.visible = false
+      }
+    }
     this.selected = icao24
     this.selectedPlane.visible = false
     // Request a one-shot camera align on the next route (consumed in setRoute).
