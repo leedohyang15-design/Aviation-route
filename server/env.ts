@@ -4,15 +4,19 @@
 // executable / resources, so a packaged build finds a .env dropped beside the exe.
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
+import { opsLog } from './log'
 
 export function loadEnv(file = '.env'): void {
-  const candidates = [
-    resolve(process.cwd(), file), // dev / launched-from-here
-    resolve(dirname(process.execPath), file), // next to the .exe (packaged)
-    (process as { resourcesPath?: string }).resourcesPath
-      ? resolve((process as { resourcesPath?: string }).resourcesPath as string, file)
-      : '' // app resources dir
-  ].filter(Boolean)
+  const dirs = [
+    process.cwd(), // dev / launched-from-here
+    dirname(process.execPath), // next to the .exe (packaged)
+    (process as { resourcesPath?: string }).resourcesPath ?? '' // app resources dir
+  ].filter(Boolean) as string[]
+  // Windows Notepad silently saves ".env" as ".env.txt" (hidden extension), so
+  // accept that spelling too — it's the #1 reason a dropped-in .env "does nothing".
+  const names = [file, `${file}.txt`]
+  const candidates: string[] = []
+  for (const d of dirs) for (const n of names) candidates.push(resolve(d, n))
 
   let text: string | null = null
   let path = ''
@@ -26,9 +30,13 @@ export function loadEnv(file = '.env'): void {
     }
   }
   if (text == null) {
-    console.log(`[env] no ${file} found (looked in: ${candidates.join(', ')}) — using mock feed`)
+    opsLog(`[env] no ${file} found (looked in: ${candidates.join(', ')}) — using mock feed`)
     return
   }
+  // Strip a UTF-8 BOM (Notepad "UTF-8" adds one), else the first key becomes
+  // an invisible-prefixed "OPENSKY_CLIENT_ID" and never matches — credentials
+  // would be silently ignored.
+  text = text.replace(/^﻿/, '')
   let count = 0
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim()
@@ -47,5 +55,5 @@ export function loadEnv(file = '.env'): void {
     }
   }
   const hasCreds = Boolean(process.env.OPENSKY_CLIENT_ID && process.env.OPENSKY_CLIENT_SECRET)
-  console.log(`[env] loaded ${count} vars from ${path} (OpenSky credentials: ${hasCreds ? 'yes' : 'NO'})`)
+  opsLog(`[env] loaded ${count} vars from ${path} (OpenSky credentials: ${hasCreds ? 'yes' : 'NO'})`)
 }

@@ -17,6 +17,7 @@ import { createMockFeed } from './mock'
 import { hasOpenSkyCredentials } from './opensky'
 import { createResilientFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
+import { opsLog } from './log'
 
 export interface Hub {
   close(): void
@@ -25,14 +26,14 @@ export interface Hub {
 /** Choose the feed: real OpenSky when credentials exist (and FEED!=mock). */
 export function selectFeed(): FlightFeed {
   if (process.env.FEED === 'mock') {
-    console.log('[hub] FEED=mock is set — forcing mock feed (unset it to use OpenSky)')
+    opsLog('[hub] FEED=mock is set — forcing mock feed (unset it to use OpenSky)')
     return createMockFeed()
   }
   if (hasOpenSkyCredentials()) {
-    console.log('[hub] OpenSky credentials present — using OpenSky feed (mock fallback on stall)')
+    opsLog('[hub] OpenSky credentials present — using OpenSky feed (mock fallback on stall)')
     return createResilientFeed()
   }
-  console.warn('[hub] No OPENSKY_CLIENT_ID/SECRET — using mock feed.')
+  opsLog('[hub] No OPENSKY_CLIENT_ID/SECRET — using mock feed.')
   return createMockFeed()
 }
 

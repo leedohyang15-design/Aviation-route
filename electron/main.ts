@@ -4,27 +4,21 @@
 //    the equirectangular frame full-screen on the projector display.
 
 import { app, BrowserWindow, screen, dialog } from 'electron'
-import { join, dirname } from 'node:path'
-import { appendFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { loadEnv } from '../server/env'
 import { startHub, type Hub } from '../server/hub'
+import { opsLog, LOG_PATH } from '../server/log'
 
 // Museum kiosk safety net: a packaged .exe has no console, so if the main
 // process throws (bad GPU driver, port already held, missing file, …) the
-// window would just silently fail to appear. Write every fatal error to a log
-// next to the executable and show a dialog, so the operator can see *why*
+// window would just silently fail to appear. Log every fatal error to the file
+// beside the executable and show a dialog, so the operator can see *why*
 // instead of "double-clicked and nothing happened".
-const CRASH_LOG = join(dirname(process.execPath), 'aviation-route-error.log')
 function logCrash(kind: string, err: unknown): void {
   const msg = err instanceof Error ? (err.stack ?? err.message) : String(err)
-  const line = `[${new Date().toISOString()}] ${kind}: ${msg}\n`
+  opsLog(`${kind}: ${msg}`)
   try {
-    appendFileSync(CRASH_LOG, line)
-  } catch {
-    /* log dir not writable — nothing more we can do */
-  }
-  try {
-    dialog.showErrorBox('Aviation Route — 오류', `${kind}\n\n${msg}\n\n로그: ${CRASH_LOG}`)
+    dialog.showErrorBox('Aviation Route — 오류', `${kind}\n\n${msg}\n\n로그: ${LOG_PATH}`)
   } catch {
     /* too early / no display for a dialog */
   }

@@ -13,6 +13,7 @@ import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
 import { cityKo } from '../src/common/airports'
+import { opsLog } from './log'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -125,7 +126,7 @@ export function createOpenSkyFeed(): FlightFeed {
         const retry = Number(res.headers.get('X-Rate-Limit-Retry-After-Seconds')) || 300
         const wait = Math.min(retry, 30 * 60) // cap at 30 min
         onStatus(false)
-        console.warn(
+        opsLog(
           `[opensky] rate limited (429). Credits exhausted; server says retry in ${retry}s. ` +
             `Re-checking in ${wait}s; mock fallback is covering the display.`
         )
@@ -149,7 +150,7 @@ export function createOpenSkyFeed(): FlightFeed {
       // transient blip can be told apart from a real network/firewall problem.
       const e = err as Error & { cause?: { message?: string; code?: string } }
       const cause = e.cause?.code || e.cause?.message
-      console.error(
+      opsLog(
         `[opensky] poll error: ${e.message}${cause ? ` — cause: ${cause}` : ''}. ` +
           `Mock fallback covers the screen; retrying in ${OPENSKY_POLL_INTERVAL_MS / 1000}s.`
       )
