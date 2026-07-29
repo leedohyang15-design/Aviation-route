@@ -280,7 +280,9 @@ export const AIRPORT_CITY_KO: Record<string, string> = {
   AOK: '카르파토스', SMI: '사모스', MJT: '미틸리니', JSI: '스키아토스',
   BGY: '베르가모', VBS: '브레시아', RMI: '리미니', AOI: '안코나', PEG: '페루자',
   CIY: '코미소', REG: '레조칼라브리아', SUF: '람베치아', BDS: '브린디시',
-  FSC: '피가리', CMF: '샹베리', GNB: '그르노블', GOU: '가루아'
+  FSC: '피가리', CMF: '샹베리', GNB: '그르노블', GOU: '가루아',
+  YHM: '해밀턴', YIA: '족자카르타', YKF: '키치너', YAM: '솔트스테마리', YTZ: '토론토',
+  MWX: '무안'
 }
 
 /** Korean city name for an airport code, or null if we don't have it. */
