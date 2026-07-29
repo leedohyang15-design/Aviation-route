@@ -142,7 +142,15 @@ export function createOpenSkyFeed(): FlightFeed {
       return OPENSKY_POLL_INTERVAL_MS
     } catch (err) {
       onStatus(false)
-      console.error('[opensky] poll error:', (err as Error).message)
+      // "fetch failed" is undici's generic wrapper; the real reason (DNS,
+      // refused connection, TLS, timeout/abort) is in err.cause. Surface it so a
+      // transient blip can be told apart from a real network/firewall problem.
+      const e = err as Error & { cause?: { message?: string; code?: string } }
+      const cause = e.cause?.code || e.cause?.message
+      console.error(
+        `[opensky] poll error: ${e.message}${cause ? ` — cause: ${cause}` : ''}. ` +
+          `Mock fallback covers the screen; retrying in ${OPENSKY_POLL_INTERVAL_MS / 1000}s.`
+      )
       return OPENSKY_POLL_INTERVAL_MS
     } finally {
       clearTimeout(to)
