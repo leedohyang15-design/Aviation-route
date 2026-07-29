@@ -1,16 +1,32 @@
-// Minimal .env loader (no dependency). Reads KEY=VALUE lines from a .env file in
-// the current working directory and fills process.env for keys not already set.
-// Keeps museum credentials out of the command line and out of git.
+// Minimal .env loader (no dependency). Reads KEY=VALUE lines from a .env file and
+// fills process.env for keys not already set. Keeps museum credentials out of the
+// command line and out of git. Looks in the working directory AND next to the
+// executable / resources, so a packaged build finds a .env dropped beside the exe.
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, dirname } from 'node:path'
 
 export function loadEnv(file = '.env'): void {
-  const path = resolve(process.cwd(), file)
-  let text: string
-  try {
-    text = readFileSync(path, 'utf8')
-  } catch {
-    console.log(`[env] no ${file} found at ${path} — using mock feed`)
+  const candidates = [
+    resolve(process.cwd(), file), // dev / launched-from-here
+    resolve(dirname(process.execPath), file), // next to the .exe (packaged)
+    (process as { resourcesPath?: string }).resourcesPath
+      ? resolve((process as { resourcesPath?: string }).resourcesPath as string, file)
+      : '' // app resources dir
+  ].filter(Boolean)
+
+  let text: string | null = null
+  let path = ''
+  for (const p of candidates) {
+    try {
+      text = readFileSync(p, 'utf8')
+      path = p
+      break
+    } catch {
+      /* try the next location */
+    }
+  }
+  if (text == null) {
+    console.log(`[env] no ${file} found (looked in: ${candidates.join(', ')}) — using mock feed`)
     return
   }
   let count = 0
@@ -31,5 +47,5 @@ export function loadEnv(file = '.env'): void {
     }
   }
   const hasCreds = Boolean(process.env.OPENSKY_CLIENT_ID && process.env.OPENSKY_CLIENT_SECRET)
-  console.log(`[env] loaded ${count} vars from ${file} (OpenSky credentials: ${hasCreds ? 'yes' : 'NO'})`)
+  console.log(`[env] loaded ${count} vars from ${path} (OpenSky credentials: ${hasCreds ? 'yes' : 'NO'})`)
 }
