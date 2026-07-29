@@ -12,6 +12,7 @@ import type { FlightFeed } from './feed'
 import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
+import { cityKo } from '../src/common/airports'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -210,7 +211,7 @@ async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
       p && p.longitude != null && p.latitude != null
         ? {
             code: p.iata_code || p.icao_code || '',
-            city: p.municipality,
+            city: cityKo(p.iata_code) ?? p.municipality,
             countryCode: (p.country_iso_name || '').toLowerCase() || undefined,
             lon: p.longitude,
             lat: p.latitude
@@ -242,7 +243,7 @@ async function fetchRouteAdsbLol(
       p && p.lon != null && p.lat != null
         ? {
             code: p.iata || p.icao || '',
-            city: p.location,
+            city: cityKo(p.iata) ?? p.location,
             countryCode: (p.countryiso2 || '').toLowerCase() || undefined,
             lon: p.lon,
             lat: p.lat
@@ -338,12 +339,12 @@ async function buildDetail(
   if (!detail.route) {
     const cs = ac?.callsign?.trim()
     detail.noRouteReason = !cs
-      ? '콜사인 없음 · 노선 조회 불가'
+      ? '정보가 없는 비행기예요'
       : mismatch
-        ? '현재 위치가 노선과 불일치'
+        ? '경로를 확인하는 중이에요'
         : flightCategory(cs) === 'military'
-          ? '군용기 · 노선 비공개'
-          : '공개 노선 데이터 없음'
+          ? '비밀 비행기예요 🤫'
+          : '경로 정보가 없어요'
   }
   return detail
 }

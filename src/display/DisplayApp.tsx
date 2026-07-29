@@ -29,7 +29,16 @@ export function DisplayApp(): JSX.Element {
       // Detail still loading (lookup in flight) — transient placeholder.
       lines.push('여행 중… ✈')
     } else if (d.origin?.code || d.destination?.code) {
-      lines.push(`${d.origin?.code ?? '—'} → ${d.destination?.code ?? '—'}`)
+      // City names (Korean when known) read better than airport codes for kids.
+      const o = d.origin?.city ?? d.origin?.code ?? '—'
+      const de = d.destination?.city ?? d.destination?.code ?? '—'
+      lines.push(`${o} → ${de}`)
+      // Fun countdown to arrival.
+      if (d.etaRemainingSec != null && d.etaRemainingSec > 0) {
+        const h = Math.floor(d.etaRemainingSec / 3600)
+        const m = Math.round((d.etaRemainingSec % 3600) / 60)
+        lines.push(`🛬 도착까지 ${h > 0 ? `${h}시간 ` : ''}${m}분`)
+      }
     } else {
       // Detail resolved but no route: show WHY (the control auto-advances after
       // ~10s). Don't keep saying "여행 중" once the lookup has actually failed.

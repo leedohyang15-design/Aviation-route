@@ -55,12 +55,10 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          <b>{visible.length.toLocaleString()}</b>대 표시 중 · 실제 운항{' '}
-          <b>{airborne.toLocaleString()}</b>대
+          지금 하늘에 ✈ <b>{airborne.toLocaleString()}</b>대
         </div>
-        <div className={connected ? 'ok' : 'warn'}>
-          {source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} ·{' '}
-          {connected ? '연결됨' : '재연결 중…'}
+        <div className={'src ' + (connected ? 'ok' : 'warn')}>
+          {source === 'mock' ? '시뮬레이션' : 'OpenSky'} · {connected ? '실시간' : '여행 중…'}
         </div>
         <div className="legend">
           <button
@@ -105,6 +103,12 @@ export function ControlApp(): JSX.Element {
           </div>
         )}
       </div>
+
+      {/* Touch hint (bottom-center) — invites visitors to interact; hidden once
+          a plane is selected so it doesn't fight the boarding-pass card. */}
+      {!state.selected && (
+        <div className="touch-hint">🖐 지구를 돌리고, 비행기를 눌러보세요!</div>
+      )}
     </div>
   )
 }

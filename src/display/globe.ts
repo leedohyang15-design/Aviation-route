@@ -375,7 +375,15 @@ export class Globe {
   private autoPick(): void {
     const ids = [...this.eased.keys()]
     if (ids.length) this.onSelectChange?.(ids[Math.floor(Math.random() * ids.length)])
-    this.idleTimer = setTimeout(() => this.autoPick(), this.idleMs)
+    // Reset BOTH timers through the single scheduler so they can't accumulate.
+    // (Directly re-assigning idleTimer here used to orphan the pending timer when
+    // the no-route auto-advance also fired autoPick, stacking timers → the screen
+    // flipped between random planes.)
+    if (this.noRouteTimer) {
+      clearTimeout(this.noRouteTimer)
+      this.noRouteTimer = null
+    }
+    this.startAttractTimer()
   }
 
   /** Any operator activity (incl. the reset button) resets the attract countdown. */
@@ -997,29 +1005,40 @@ export class Globe {
           }
           dirX /= dlen
           dirY /= dlen
-          const gName = 0.034 * ps // name distance out from its marker
-          const gFlag = 0.066 * ps // flag distance out from its marker (beyond name)
           const lblH = 0.018 * ps
-          const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number) => {
+          const fh = 0.02 * ps
+          const margin = 0.01 * ps
+          // Distance a box (w×h) must sit out along the route so its inner edge
+          // just clears the centre — its half-extent PROJECTED on the outward
+          // direction. A wide name (Bangalore) therefore pushes itself further
+          // out, so two names never collide even on a very short route.
+          const halfAlong = (w: number, h: number) =>
+            Math.abs(dirX) * (w / 2) + Math.abs(dirY) * (h / 2)
+          const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number): number => {
             const asp = (lbl.userData.aspect as number) || 4
-            lbl.scale.set(lblH * asp, lblH, 1)
-            lbl.position.set(mu + sign * dirX * gName, my + sign * dirY * gName, 0.68)
+            const w = lblH * asp
+            lbl.scale.set(w, lblH, 1)
+            const half = halfAlong(w, lblH)
+            const g = margin + half
+            lbl.position.set(mu + sign * dirX * g, my + sign * dirY * g, 0.68)
+            return g + half + 0.006 * ps // outer edge (+gap) → where the flag begins
           }
-          placeLabel(this.originLabel, op.u, oy, 1)
-          placeLabel(this.destLabel, dp.u, dy0, -1)
-          const placeFlag = (flag: THREE.Mesh, mu: number, my: number, sign: number) => {
+          const oOuter = placeLabel(this.originLabel, op.u, oy, 1)
+          const dOuter = placeLabel(this.destLabel, dp.u, dy0, -1)
+          const placeFlag = (flag: THREE.Mesh, mu: number, my: number, sign: number, outer: number) => {
             if (!(flag.material as THREE.MeshBasicMaterial).map) {
               flag.visible = false
               return
             }
-            const fh = 0.02 * ps
             const asp = (flag.userData.aspect as number) || 1.33
-            flag.scale.set(fh * asp, fh, 1)
-            flag.position.set(mu + sign * dirX * gFlag, my + sign * dirY * gFlag, 0.66)
+            const w = fh * asp
+            flag.scale.set(w, fh, 1)
+            const g = outer + halfAlong(w, fh)
+            flag.position.set(mu + sign * dirX * g, my + sign * dirY * g, 0.66)
             flag.visible = true
           }
-          placeFlag(this.originFlag, op.u, oy, 1)
-          placeFlag(this.destFlag, dp.u, dy0, -1)
+          placeFlag(this.originFlag, op.u, oy, 1, oOuter)
+          placeFlag(this.destFlag, dp.u, dy0, -1, dOuter)
           // Split the route at the plane's nearest point; rebuild when that split
           // or the pan offset changed so the line stays aligned to the earth.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
