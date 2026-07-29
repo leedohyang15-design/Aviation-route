@@ -7,7 +7,7 @@
 //
 // Only ONE process should ever poll — that is exactly what the hub is for.
 
-import type { Aircraft, FlightDetail } from '../src/shared/types'
+import type { Aircraft, FlightDetail, GeoPoint } from '../src/shared/types'
 import type { FlightFeed } from './feed'
 import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
@@ -164,7 +164,7 @@ export function createOpenSkyFeed(): FlightFeed {
       if (timer) clearTimeout(timer)
     },
     getDetail(icao24: string) {
-      return buildDetail(icao24, latest, detailCache)
+      return buildDetail(icao24, latest, detailCache, fetchToken)
     }
   }
 }
@@ -245,6 +245,31 @@ async function fetchRouteAdsbLol(
   }
 }
 
+/** The aircraft's actual flown track for its current flight (OpenSky /tracks).
+ * Available for essentially any airborne aircraft regardless of whether a
+ * scheduled route exists, so it's the coverage fallback: when no origin→dest can
+ * be resolved we still draw the path the plane has flown. Experimental on
+ * OpenSky's side — returns null if unavailable, leaving the flight route-unknown
+ * exactly as before. */
+async function fetchTrack(icao24: string, bearer: string): Promise<GeoPoint[] | null> {
+  try {
+    const res = await fetch(
+      `https://opensky-network.org/api/tracks/all?icao24=${encodeURIComponent(icao24)}&time=0`,
+      { headers: { Authorization: `Bearer ${bearer}` } }
+    )
+    if (!res.ok) return null
+    const j = (await res.json()) as { path?: [number, number, number, number, number, boolean][] }
+    const path = j?.path
+    if (!Array.isArray(path) || path.length < 2) return null
+    const pts = path
+      .map((p) => ({ lat: p[1], lon: p[2] }))
+      .filter((p) => typeof p.lat === 'number' && typeof p.lon === 'number')
+    return pts.length >= 2 ? pts : null
+  } catch {
+    return null
+  }
+}
+
 async function fetchType(icao24: string): Promise<string | undefined> {
   try {
     const res = await fetch(`https://hexdb.io/api/v1/aircraft/${icao24}`)
@@ -259,7 +284,8 @@ async function fetchType(icao24: string): Promise<string | undefined> {
 async function buildDetail(
   icao24: string,
   latest: Map<string, Aircraft>,
-  cache: Map<string, FlightDetail>
+  cache: Map<string, FlightDetail>,
+  getBearer: () => Promise<string>
 ): Promise<FlightDetail | null> {
   const ac = latest.get(icao24)
   // Key by icao24 + callsign so a new leg (new callsign) re-enriches instead of
@@ -320,6 +346,22 @@ async function buildDetail(
         detail.etaRemainingSec = (1 - progress) * totalSec
         detail.departureTime = Date.now() - progress * totalSec * 1000
       }
+    }
+  }
+
+  // Coverage fallback: no scheduled origin→destination resolved (unknown flight,
+  // or dropped as a mismatch). Draw the aircraft's actual flown track instead, so
+  // a line still appears. It's the path behind the plane, not a schedule, so we
+  // leave origin/destination unset (no airport markers) and flag it as a track.
+  if (!detail.route && ac && !ac.onGround) {
+    try {
+      const track = await fetchTrack(icao24, await getBearer())
+      if (track && track.length >= 2) {
+        detail.route = track
+        detail.routeIsTrack = true
+      }
+    } catch {
+      /* leave route-unknown */
     }
   }
   return detail

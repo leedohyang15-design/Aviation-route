@@ -56,6 +56,10 @@ export interface FlightDetail {
   etaRemainingSec?: number // seconds to arrival
   progress?: number // 0..1 along the route
   route: GeoPoint[] | null // great-circle origin→destination
+  /** True when `route` is the aircraft's actual flown track (OpenSky /tracks),
+   * used as a fallback when no scheduled origin→destination could be resolved —
+   * so a line still shows. It's the path behind the plane, not a schedule. */
+  routeIsTrack?: boolean
 }
 
 /** The equirectangular view the display shows, driven by the control map. */

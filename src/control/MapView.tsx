@@ -11,6 +11,7 @@ interface Props {
   aircraft: Aircraft[]
   selected: string | null
   route: GeoPoint[] | null
+  routeIsTrack?: boolean
   onSelect: (icao24: string | null) => void
   onView: (view: ViewState) => void
   dayNightHour?: number | null
@@ -24,6 +25,7 @@ export function MapView({
   aircraft,
   selected,
   route,
+  routeIsTrack = false,
   onSelect,
   onView,
   dayNightHour = null,
@@ -61,7 +63,7 @@ export function MapView({
 
   useEffect(() => globeRef.current?.setAircraft(aircraft), [aircraft])
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
-  useEffect(() => globeRef.current?.setRoute(route), [route])
+  useEffect(() => globeRef.current?.setRoute(route, routeIsTrack), [route, routeIsTrack])
   useEffect(() => globeRef.current?.setNightHour(dayNightHour), [dayNightHour])
   useEffect(
     () => globeRef.current?.setEndpointLabels(originCity, destCity),

@@ -211,6 +211,7 @@ export class Globe {
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
   private routePoints: GeoPoint[] | null = null
+  private routeIsTrack = false // route is the flown track (no airport endpoints)
   private lastRouteIdx = -1
   private lastRouteOffset = NaN
   private flownMat = new LineMaterial({ color: 0xff3b30, linewidth: 5, transparent: true })
@@ -930,8 +931,9 @@ export class Globe {
     this.routeGroup.clear()
   }
 
-  setRoute(points: GeoPoint[] | null): void {
+  setRoute(points: GeoPoint[] | null, isTrack = false): void {
     const next = points && points.length >= 2 ? points : null
+    this.routeIsTrack = !!next && isTrack
     // The hub re-sends the route every snapshot to keep ETA/progress fresh. Skip
     // the rebuild + re-center when the endpoints are unchanged — only a new
     // selection or a re-route actually changes the line. Rebuilding every few
@@ -1096,57 +1098,73 @@ export class Globe {
           const de = this.routePoints[this.routePoints.length - 1]
           const op = projectNorm(o.lon, o.lat, this.lonOffset)
           const dp = projectNorm(de.lon, de.lat, this.lonOffset)
-          this.originMarker.position.set(op.u, 1 - op.v, 0.65)
-          // Lift the pin so its bottom tip (not center) sits on the coordinate.
-          this.destMarker.position.set(dp.u, 1 - dp.v + 0.015 * ps, 0.65)
-          this.originMarker.scale.set(ps, ps, 1)
-          this.destMarker.scale.set(ps, ps, 1)
-          this.originMarker.visible = true
-          this.destMarker.visible = true
-          // Lay out each endpoint's name + flag as a stack that extends OUTWARD
-          // along the route, away from the OTHER endpoint. Because the two stacks
-          // point in opposite directions, they can never overlap each other — for
-          // any geometry, including short, near-vertical, or coincident endpoints
-          // (that was the recurring "flag detached / labels piled up" bug). The
-          // marker stays on its true coordinate; the name sits just outside it,
-          // the flag just beyond the name.
-          const oy = 1 - op.v
-          const dy0 = 1 - dp.v
-          let dirX = op.u - dp.u
-          if (dirX > 0.5) dirX -= 1
-          else if (dirX < -0.5) dirX += 1
-          let dirY = oy - dy0
-          let dlen = Math.hypot(dirX, dirY)
-          if (dlen < 1e-4) {
-            dirX = 0
-            dirY = 1
-            dlen = 1
-          }
-          dirX /= dlen
-          dirY /= dlen
-          const gName = 0.034 * ps // name distance out from its marker
-          const gFlag = 0.066 * ps // flag distance out from its marker (beyond name)
-          const lblH = 0.018 * ps
-          const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number) => {
-            const asp = (lbl.userData.aspect as number) || 4
-            lbl.scale.set(lblH * asp, lblH, 1)
-            lbl.position.set(mu + sign * dirX * gName, my + sign * dirY * gName, 0.68)
-          }
-          placeLabel(this.originLabel, op.u, oy, 1)
-          placeLabel(this.destLabel, dp.u, dy0, -1)
-          const placeFlag = (flag: THREE.Mesh, mu: number, my: number, sign: number) => {
-            if (!(flag.material as THREE.MeshBasicMaterial).map) {
-              flag.visible = false
-              return
+          // A track route (actual flown path) has no airport endpoints, so hide
+          // the origin/destination markers, names and flags and show just the
+          // trail. A scheduled route draws them at its two airports.
+          if (this.routeIsTrack) {
+            for (const m of [
+              this.originMarker,
+              this.destMarker,
+              this.originLabel,
+              this.destLabel,
+              this.originFlag,
+              this.destFlag
+            ]) {
+              m.visible = false
             }
-            const fh = 0.02 * ps
-            const asp = (flag.userData.aspect as number) || 1.33
-            flag.scale.set(fh * asp, fh, 1)
-            flag.position.set(mu + sign * dirX * gFlag, my + sign * dirY * gFlag, 0.66)
-            flag.visible = true
+          } else {
+            this.originMarker.position.set(op.u, 1 - op.v, 0.65)
+            // Lift the pin so its bottom tip (not center) sits on the coordinate.
+            this.destMarker.position.set(dp.u, 1 - dp.v + 0.015 * ps, 0.65)
+            this.originMarker.scale.set(ps, ps, 1)
+            this.destMarker.scale.set(ps, ps, 1)
+            this.originMarker.visible = true
+            this.destMarker.visible = true
+            // Lay out each endpoint's name + flag as a stack that extends OUTWARD
+            // along the route, away from the OTHER endpoint. Because the two
+            // stacks point in opposite directions, they can never overlap each
+            // other — for any geometry, including short, near-vertical, or
+            // coincident endpoints (that was the recurring "flag detached /
+            // labels piled up" bug). The marker stays on its true coordinate; the
+            // name sits just outside it, the flag just beyond the name.
+            const oy = 1 - op.v
+            const dy0 = 1 - dp.v
+            let dirX = op.u - dp.u
+            if (dirX > 0.5) dirX -= 1
+            else if (dirX < -0.5) dirX += 1
+            let dirY = oy - dy0
+            let dlen = Math.hypot(dirX, dirY)
+            if (dlen < 1e-4) {
+              dirX = 0
+              dirY = 1
+              dlen = 1
+            }
+            dirX /= dlen
+            dirY /= dlen
+            const gName = 0.034 * ps // name distance out from its marker
+            const gFlag = 0.066 * ps // flag distance out from its marker (beyond name)
+            const lblH = 0.018 * ps
+            const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number) => {
+              const asp = (lbl.userData.aspect as number) || 4
+              lbl.scale.set(lblH * asp, lblH, 1)
+              lbl.position.set(mu + sign * dirX * gName, my + sign * dirY * gName, 0.68)
+            }
+            placeLabel(this.originLabel, op.u, oy, 1)
+            placeLabel(this.destLabel, dp.u, dy0, -1)
+            const placeFlag = (flag: THREE.Mesh, mu: number, my: number, sign: number) => {
+              if (!(flag.material as THREE.MeshBasicMaterial).map) {
+                flag.visible = false
+                return
+              }
+              const fh = 0.02 * ps
+              const asp = (flag.userData.aspect as number) || 1.33
+              flag.scale.set(fh * asp, fh, 1)
+              flag.position.set(mu + sign * dirX * gFlag, my + sign * dirY * gFlag, 0.66)
+              flag.visible = true
+            }
+            placeFlag(this.originFlag, op.u, oy, 1)
+            placeFlag(this.destFlag, dp.u, dy0, -1)
           }
-          placeFlag(this.originFlag, op.u, oy, 1)
-          placeFlag(this.destFlag, dp.u, dy0, -1)
           // Split the route at the plane's nearest point; rebuild when that split
           // or the pan offset changed so the line stays aligned to the earth.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
