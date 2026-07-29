@@ -14,6 +14,14 @@ export function ControlApp(): JSX.Element {
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
 
+  // Category filter (also serves as the color legend). hiddenCategories lists
+  // the categories to hide; clicking a chip toggles it.
+  const hidden = state.filter.hiddenCategories ?? []
+  const toggleCat = (cat: string) => {
+    const next = hidden.includes(cat) ? hidden.filter((c) => c !== cat) : [...hidden, cat]
+    send({ type: 'setFilter', filter: { ...state.filter, hiddenCategories: next } })
+  }
+
   return (
     <div className="control-root">
       <MapView
@@ -42,18 +50,27 @@ export function ControlApp(): JSX.Element {
           {connected ? '연결됨' : '재연결 중…'}
         </div>
         <div className="legend">
-          <span>
+          <button
+            className={'leg' + (hidden.includes('passenger') ? ' off' : '')}
+            onClick={() => toggleCat('passenger')}
+          >
             <i style={{ background: '#35c1ff' }} />
             여객기
-          </span>
-          <span>
+          </button>
+          <button
+            className={'leg' + (hidden.includes('cargo') ? ' off' : '')}
+            onClick={() => toggleCat('cargo')}
+          >
             <i style={{ background: '#f5a623' }} />
             화물기
-          </span>
-          <span>
+          </button>
+          <button
+            className={'leg' + (hidden.includes('military') ? ' off' : '')}
+            onClick={() => toggleCat('military')}
+          >
             <i style={{ background: '#74d16a' }} />
             군용기
-          </span>
+          </button>
         </div>
       </div>
 

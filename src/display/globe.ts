@@ -1014,10 +1014,29 @@ export class Globe {
         }
       }
       this.pendingRecenter = false
-    } else {
+    } else if (this.pendingRecenter && this.selected) {
+      // No route (adsbdb has none) but a plane IS selected → center on the plane
+      // once, so a route-less pick isn't left off to the side.
+      const e = this.eased.get(this.selected)
+      if (e) {
+        if (this.interactive) {
+          this.iCenterLon = e.lon
+          this.iCenterLat = e.lat
+          this.iSpan = 1
+          this.applyInteractiveView()
+          this.emitView()
+        } else {
+          this.routeCenterLon = e.lon
+          this.applyViewTarget()
+        }
+        this.pendingRecenter = false
+      }
+    } else if (!this.selected) {
+      // Truly deselected → release the spin back to the control's pan.
       this.routeCenterLon = null
       if (!this.interactive) this.applyViewTarget()
     }
+    // else: a refresh of a route-less selection — keep the existing center.
   }
 
   /** Add fat (Line2) segments for a polyline, split at the actual display seam.

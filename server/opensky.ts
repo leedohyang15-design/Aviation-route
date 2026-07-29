@@ -253,14 +253,24 @@ async function buildDetail(
   const d = detail.destination
   if (o && d) {
     const route = greatCirclePoints(o, d, 128)
-    detail.route = route
-    if (ac) {
-      const idx = nearestRouteIndex(route, { lon: ac.lon, lat: ac.lat })
+    const here = ac ? { lon: ac.lon, lat: ac.lat } : null
+    const idx = here ? nearestRouteIndex(route, here) : 0
+    // Sanity-check adsbdb's scheduled route against where the plane actually is.
+    // A callsign can be matched to a stale/wrong route (the same UALxx flies a
+    // different leg, or another aircraft transmits the same callsign), which
+    // otherwise draws an absurd line across the world to a plane on another
+    // continent. If the plane is far off this route, treat it as route-unknown.
+    const offRouteKm = here ? greatCircleDistanceKm(here, route[idx]) : 0
+    if (offRouteKm > 900) {
+      detail.origin = undefined
+      detail.destination = undefined
+    } else {
+      detail.route = route
       const progress = route.length > 1 ? idx / (route.length - 1) : 0
       detail.progress = progress
-      // Estimate departure time + remaining time from progress and total flight
-      // time (great-circle distance ÷ ground speed). OpenSky gives no schedule.
-      if (ac.velocity && ac.velocity > 20) {
+      // Estimate departure + remaining time from progress and total flight time
+      // (great-circle distance ÷ ground speed). OpenSky gives no schedule.
+      if (ac && ac.velocity && ac.velocity > 20) {
         const totalSec = (greatCircleDistanceKm(o, d) * 1000) / ac.velocity
         detail.etaRemainingSec = (1 - progress) * totalSec
         detail.departureTime = Date.now() - progress * totalSec * 1000

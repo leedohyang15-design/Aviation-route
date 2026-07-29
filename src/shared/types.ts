@@ -77,6 +77,8 @@ export interface FlightFilter {
   maxAltitude?: number
   /** Hide aircraft reporting on-ground. */
   airborneOnly?: boolean
+  /** Categories to hide (empty/absent = show all): 'passenger' | 'cargo' | 'military'. */
+  hiddenCategories?: string[]
 }
 
 /**

@@ -88,11 +88,21 @@ export function flightCategory(callsign?: string | null, type?: string | null): 
   return null
 }
 
-export function categoryLabel(cat: FlightCategory): string {
-  return cat === 'military' ? '군용기' : cat === 'cargo' ? '화물기' : '여객기'
+/** A definite category key (unknown callsigns fall back to passenger). Used for
+ * coloring and the category filter. */
+export type CategoryKey = 'passenger' | 'cargo' | 'military'
+export function categoryKey(callsign?: string | null, type?: string | null): CategoryKey {
+  return flightCategory(callsign, type) ?? 'passenger'
+}
+
+/** Label for the info chip — only asserts a category we're confident about
+ * (cargo/military); unknown returns null so a route-less plane isn't mislabeled
+ * "여객기" when it might be a tactical-callsign military or GA flight. */
+export function categoryLabel(cat: FlightCategory): string | null {
+  return cat === 'military' ? '군용기' : cat === 'cargo' ? '화물기' : null
 }
 
 /** Icon/dot color per category (passenger cyan, cargo amber, military green). */
-export function categoryColorHex(cat: FlightCategory): string {
+export function categoryColorHex(cat: CategoryKey): string {
   return cat === 'military' ? '#74d16a' : cat === 'cargo' ? '#f5a623' : '#35c1ff'
 }
