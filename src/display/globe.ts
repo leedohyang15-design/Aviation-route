@@ -278,10 +278,32 @@ export class Globe {
   }
 
   /** Try to swap in a real photographic earth if the asset is present. */
-  private tryLoadEarth(): void {
+  /** Try each url in turn (first that loads wins); call onFail if none load. */
+  private loadFirstTexture(
+    urls: string[],
+    onOk: (tex: THREE.Texture) => void,
+    onFail: () => void
+  ): void {
     const loader = new THREE.TextureLoader()
-    loader.load(
-      EARTH_TEXTURE_URL,
+    const seen = new Set<string>()
+    const list = urls.filter((u) => u && !seen.has(u) && (seen.add(u), true))
+    const tryAt = (i: number): void => {
+      if (i >= list.length) return onFail()
+      loader.load(list[i], onOk, undefined, () => tryAt(i + 1))
+    }
+    tryAt(0)
+  }
+
+  /** Candidate filenames so a .png / .jpeg / alt name still works, not just the
+   * exact configured .jpg. */
+  private textureCandidates(url: string): string[] {
+    const base = url.replace(/\.(jpe?g|png|webp)$/i, '')
+    return [url, `${base}.jpg`, `${base}.jpeg`, `${base}.png`, `${base}.webp`]
+  }
+
+  private tryLoadEarth(): void {
+    this.loadFirstTexture(
+      this.textureCandidates(EARTH_TEXTURE_URL),
       (tex) => {
         this.tuneTexture(tex)
         this.bgUniforms.uMap.value = tex
@@ -289,26 +311,25 @@ export class Globe {
         // Photographic maps carry their own graticule — drop the procedural grid.
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
-        console.log(`[earth] loaded day texture "${EARTH_TEXTURE_URL}"`)
+        console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
       },
-      undefined,
       () => {
         console.warn(
-          `[earth] no/invalid texture at "${EARTH_TEXTURE_URL}" — using procedural ocean+grid. ` +
-            `Put a 2:1 image at public/${EARTH_TEXTURE_URL}.`
+          `[earth] no/invalid day texture — using procedural ocean+grid. ` +
+            `Put a 2:1 image at public/${EARTH_TEXTURE_URL} (or .png). ` +
+            `Check the file name has no hidden double extension.`
         )
       }
     )
     // Optional night-lights texture (city lights) for the KST night effect.
-    loader.load(
-      EARTH_NIGHT_URL,
+    this.loadFirstTexture(
+      this.textureCandidates(EARTH_NIGHT_URL),
       (tex) => {
         this.tuneTexture(tex)
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
-        console.log(`[earth] loaded night texture "${EARTH_NIGHT_URL}"`)
+        console.log(`[earth] loaded night texture`)
       },
-      undefined,
       () => {
         /* no night texture — night side just dims globally */
       }
