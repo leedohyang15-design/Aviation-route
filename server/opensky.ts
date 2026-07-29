@@ -256,7 +256,7 @@ async function fetchRouteAdsbLol(
 
 async function fetchType(icao24: string): Promise<string | undefined> {
   try {
-    const res = await fetch(`https://hexdb.io/api/v1/aircraft/${icao24}`)
+    const res = await fetch(`https://hexdb.io/api/v1/aircraft/${encodeURIComponent(icao24)}`)
     if (!res.ok) return undefined
     const j = (await res.json()) as any
     return j?.Type || j?.ICAOTypeCode || undefined
