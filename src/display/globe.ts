@@ -791,6 +791,7 @@ export class Globe {
       mat.map = tex
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
+      this.infoLabel.userData.lines = lines.length
     } else {
       mat.map = null
       this.infoLabel.visible = false
@@ -961,7 +962,11 @@ export class Globe {
         const placeInfoChip = (au: number, ay: number, offX: number, offY: number): void => {
           const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
           if (!infoMat.map) return
-          const lh = 0.06 * ps
+          // Height scales with line count so each line keeps a constant on-screen
+          // size — adding the arrival countdown grows the chip instead of shrinking
+          // the text.
+          const nLines = (this.infoLabel.userData.lines as number) || 3
+          const lh = 0.02 * nLines * ps
           const asp = (this.infoLabel.userData.aspect as number) || 3
           const lw = lh * asp
           // Push the chip a full plane-width off the anchor so it never covers the
@@ -1086,7 +1091,9 @@ export class Globe {
           }
         } else {
           // No route: place the chip to the side of the plane (flip near the edge).
-          const lw = 0.06 * ps * ((this.infoLabel.userData.aspect as number) || 3)
+          const lw =
+            0.02 * ((this.infoLabel.userData.lines as number) || 2) * ps *
+            ((this.infoLabel.userData.aspect as number) || 3)
           placeInfoChip(u, 1 - v, u + lw + 0.02 < 1 ? 1 : -1, 0)
         }
       }
