@@ -7,6 +7,7 @@ import type { Aircraft, FlightDetail, GeoPoint } from '../src/shared/types'
 import type { FlightFeed } from './feed'
 import { greatCirclePoints, greatCircleDistanceKm } from '../src/shared/projection'
 import { MOCK_POLL_INTERVAL_MS } from '../src/shared/config'
+import { cityKo } from '../src/common/airports'
 
 interface Airport {
   code: string
@@ -197,14 +198,14 @@ export function createMockFeed(count = 400): FlightFeed {
         flightNo: pl.callsign,
         origin: {
           code: pl.from.code,
-          city: pl.from.city,
+          city: cityKo(pl.from.code) ?? pl.from.city,
           countryCode: COUNTRY_ISO[pl.from.country],
           lon: pl.from.lon,
           lat: pl.from.lat
         },
         destination: {
           code: pl.to.code,
-          city: pl.to.city,
+          city: cityKo(pl.to.code) ?? pl.to.city,
           countryCode: COUNTRY_ISO[pl.to.country],
           lon: pl.to.lon,
           lat: pl.to.lat
