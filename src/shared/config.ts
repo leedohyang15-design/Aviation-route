@@ -20,11 +20,15 @@ export const HUB_URL = readEnv('HUB_URL') ?? `ws://127.0.0.1:${HUB_PORT}`
 
 /**
  * Poll interval (ms) for OpenSky. The free tier is 4000 credits/day and a
- * worldwide /states/all request costs ~4 credits, so ~1000 requests/day. To run
- * all day, keep this fairly high (e.g. 30000–60000); dead-reckoning keeps motion
- * smooth between polls. Default 15s suits demo sessions.
+ * worldwide /states/all request costs 4 credits, so only ~1000 requests/day.
+ *   15s → ~960 credits/hour → budget gone in ~4h (too fast for an exhibit).
+ *   60s → ~240 credits/hour → lasts ~16h, i.e. a full exhibit day.
+ * Positions stay smooth between polls via dead-reckoning (advance each plane
+ * along its heading at its ground speed, then correct on the next snapshot), so
+ * a long interval costs almost nothing visually. Override via env if needed;
+ * for 24/7 operation use ~90000 (90s). Default 60s.
  */
-export const OPENSKY_POLL_INTERVAL_MS = Number(readEnv('OPENSKY_POLL_INTERVAL_MS') ?? 15000)
+export const OPENSKY_POLL_INTERVAL_MS = Number(readEnv('OPENSKY_POLL_INTERVAL_MS') ?? 60000)
 
 /** Poll interval (ms) for the mock feed (no credit limits — can be brisk). */
 export const MOCK_POLL_INTERVAL_MS = Number(readEnv('MOCK_POLL_INTERVAL_MS') ?? 5000)
