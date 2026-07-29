@@ -102,7 +102,9 @@ export interface PresentationState {
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
-  filter: { airborneOnly: true, scheduledOnly: true },
+  // Show everything by default (route-unknown planes included); the operator can
+  // turn on the "정기편만" toggle to hide them and keep the view route-rich.
+  filter: { airborneOnly: true },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },

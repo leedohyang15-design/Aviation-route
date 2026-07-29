@@ -21,6 +21,14 @@ export function ControlApp(): JSX.Element {
     send({ type: 'setFilter', filter: { ...state.filter, hiddenCategories: next } })
   }
 
+  // "Scheduled only" toggle: off by default (everything shows, including
+  // route-unknown planes); on → keep only scheduled airline/cargo callsigns,
+  // which is what actually resolves a route.
+  const scheduledOnly = state.filter.scheduledOnly ?? false
+  const toggleScheduled = () => {
+    send({ type: 'setFilter', filter: { ...state.filter, scheduledOnly: !scheduledOnly } })
+  }
+
   return (
     <div className="control-root">
       <MapView
@@ -68,6 +76,15 @@ export function ControlApp(): JSX.Element {
           >
             <i style={{ background: '#74d16a' }} />
             군용기
+          </button>
+        </div>
+        <div className="legend">
+          <button
+            className={'leg toggle' + (scheduledOnly ? ' on' : '')}
+            onClick={toggleScheduled}
+            title="정기 항공편(경로 확인 가능)만 표시"
+          >
+            {scheduledOnly ? '✓ 정기편만' : '정기편만'}
           </button>
         </div>
       </div>

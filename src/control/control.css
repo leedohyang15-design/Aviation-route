@@ -101,6 +101,12 @@ body,
   opacity: 0.4;
   text-decoration: line-through;
 }
+/* "Scheduled only" toggle — highlighted when active. */
+.ctrl-info .legend .leg.toggle.on {
+  background: rgba(127, 212, 255, 0.9);
+  border-color: rgba(127, 212, 255, 0.9);
+  color: #04121f;
+}
 .ctrl-info .legend .leg i {
   width: 11px;
   height: 11px;
