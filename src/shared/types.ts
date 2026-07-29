@@ -79,6 +79,10 @@ export interface FlightFilter {
   airborneOnly?: boolean
   /** Categories to hide (empty/absent = show all): 'passenger' | 'cargo' | 'military'. */
   hiddenCategories?: string[]
+  /** Only show scheduled airline/cargo flights (airline-style callsign). These
+   * are the flights that resolve a route; the rest (GA, tactical/blank callsigns)
+   * would show "route unknown", so this keeps the display route-rich. */
+  scheduledOnly?: boolean
 }
 
 /**
@@ -98,7 +102,7 @@ export interface PresentationState {
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
-  filter: { airborneOnly: true },
+  filter: { airborneOnly: true, scheduledOnly: true },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },

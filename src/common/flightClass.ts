@@ -88,6 +88,16 @@ export function flightCategory(callsign?: string | null, type?: string | null): 
   return null
 }
 
+/** Whether a callsign looks like a scheduled airline/cargo flight: a 3-letter
+ * ICAO operator code followed by the flight number (1–4 digits, optional letter
+ * suffix) — e.g. KAL902, UAL61, BAW23A. This is exactly the shape adsbdb has
+ * route data for. Registration-style callsigns (N12345, DABCD) and word/tactical
+ * callsigns don't match, so filtering to it drops the planes that would show
+ * "route unknown" when selected, without having to pre-query every aircraft. */
+export function isScheduledCallsign(callsign?: string | null): boolean {
+  return /^[A-Z]{3}\d{1,4}[A-Z]?$/.test((callsign ?? '').toUpperCase().trim())
+}
+
 /** A definite category key (unknown callsigns fall back to passenger). Used for
  * coloring and the category filter. */
 export type CategoryKey = 'passenger' | 'cargo' | 'military'
