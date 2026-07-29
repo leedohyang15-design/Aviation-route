@@ -16,7 +16,7 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
-import { projectNorm, wrapLon, nearestRouteIndex } from '@shared/projection'
+import { projectNorm, wrapLon, greatCirclePoints } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 
@@ -208,8 +208,9 @@ export class Globe {
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
   private routePoints: GeoPoint[] | null = null
-  private lastRouteIdx = -1
   private lastRouteOffset = NaN
+  private lastRoutePlaneLon = NaN
+  private lastRoutePlaneLat = NaN
   private flownMat = new LineMaterial({ color: 0xff3b30, linewidth: 5, transparent: true })
   private remainMat = new LineMaterial({
     color: 0xffe08a,
@@ -567,15 +568,9 @@ export class Globe {
         best = id
       }
     }
-    if (best) {
-      // A deliberate click holds the selection: pause the attract auto-cycle so
-      // it doesn't replace the clicked plane after 30s. Any later pan/zoom/reset
-      // re-arms attract.
-      if (this.idleTimer) {
-        clearTimeout(this.idleTimer)
-        this.idleTimer = null
-      }
-    }
+    // A click shows the plane and resets the 30s attract countdown (pointerdown
+    // already re-armed it), so the clicked plane holds for 30s and then the
+    // auto-cycle resumes with a fresh random pick.
     this.onSelectChange?.(best)
   }
 
@@ -887,8 +882,7 @@ export class Globe {
     if (same) return
 
     this.routePoints = next
-    this.lastRouteIdx = -1
-    this.lastRouteOffset = NaN // force rebuild
+    this.lastRouteOffset = NaN // force a rebuild next frame
     this.disposeRouteGroup()
     const on = !!this.routePoints
     this.originMarker.visible = on
@@ -940,15 +934,21 @@ export class Globe {
     flush()
   }
 
-  /** Rebuild the route split at `idx`: flown (origin→now) red, remaining faint. */
-  private buildRoute(idx: number): void {
+  /** Rebuild the route so it passes THROUGH the plane's real position: origin→
+   * plane (flown, red) and plane→destination (remaining, faint). On real data the
+   * aircraft deviates from a straight origin→dest great circle, so drawing the
+   * line through its actual position keeps the plane on its own route. */
+  private buildRoute(planeLon: number, planeLat: number): void {
     this.disposeRouteGroup()
     const pts = this.routePoints
-    if (!pts) return
-    const remaining = pts.slice(idx)
-    const flown = pts.slice(0, idx + 1)
-    if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat)
+    if (!pts || pts.length < 2) return
+    const o = pts[0]
+    const d = pts[pts.length - 1]
+    const p = { lon: planeLon, lat: planeLat }
+    const flown = greatCirclePoints(o, p, 64)
+    const remaining = greatCirclePoints(p, d, 64)
     if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
+    if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat)
   }
 
   /** Override the day/night clock (KST hour 0–24), or null for live time. */
@@ -1074,16 +1074,17 @@ export class Globe {
           }
           placeFlag(this.originFlag, op.u, op.v, 0.03 * ps)
           placeFlag(this.destFlag, dp.u, dp.v, 0.052 * ps)
-          // Split the route at the plane's position; rebuild also when the pan
-          // offset changed (great-circle re-projects under wrap).
-          // Rebuild whenever the split point or pan offset changed at all, so the
-          // route tracks the earth exactly (no lag/jitter while panning). The old
-          // geometries are disposed each rebuild, so this stays a small alloc.
-          const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
-          if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
-            this.buildRoute(idx)
-            this.lastRouteIdx = idx
+          // Rebuild the route (origin→plane→dest) when the plane moved or the pan
+          // offset changed, so it tracks the earth and the live position exactly.
+          if (
+            this.lonOffset !== this.lastRouteOffset ||
+            Math.abs(e.lon - this.lastRoutePlaneLon) > 0.03 ||
+            Math.abs(e.lat - this.lastRoutePlaneLat) > 0.03
+          ) {
+            this.buildRoute(e.lon, e.lat)
             this.lastRouteOffset = this.lonOffset
+            this.lastRoutePlaneLon = e.lon
+            this.lastRoutePlaneLat = e.lat
           }
         }
       }

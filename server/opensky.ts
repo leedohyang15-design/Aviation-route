@@ -224,24 +224,29 @@ async function buildDetail(
   // Key by icao24 + callsign so a new leg (new callsign) re-enriches instead of
   // reusing the previous leg's origin/destination.
   const key = `${icao24}|${ac?.callsign ?? ''}`
-  const cached = cache.get(key)
-  // Route/type are static per airframe/leg; recompute only progress/ETA below.
-  const enrich =
-    cached ??
-    (await (async () => {
-      const [ports, type] = await Promise.all([fetchRoute(ac?.callsign ?? ''), fetchType(icao24)])
-      return {
-        icao24,
-        airline: ports?.airline,
-        flightNo: ac?.callsign,
-        origin: ports?.origin,
-        destination: ports?.destination,
-        aircraftType: type
-      }
-    })())
-  // Only cache once the route actually resolved — otherwise a transient adsbdb
-  // failure would be cached permanently and never retried.
-  if (!cached && enrich.origin && enrich.destination) cache.set(key, enrich as FlightDetail)
+  const prev = cache.get(key) as (FlightDetail & { _ts?: number }) | undefined
+  // Reuse the cache when the route already resolved, or when a failed lookup is
+  // still recent — otherwise the hub's per-snapshot refresh would re-hit adsbdb
+  // every few seconds for un-routable flights and get everything rate-limited.
+  // Retry a negative result only after 60s so adsbdb can recover.
+  const reuse = prev && (prev.origin != null || Date.now() - (prev._ts ?? 0) < 60_000)
+  let enrich: FlightDetail & { _ts?: number }
+  if (reuse) {
+    enrich = prev as FlightDetail & { _ts?: number }
+  } else {
+    const [ports, type] = await Promise.all([fetchRoute(ac?.callsign ?? ''), fetchType(icao24)])
+    enrich = {
+      icao24,
+      airline: ports?.airline,
+      flightNo: ac?.callsign,
+      origin: ports?.origin,
+      destination: ports?.destination,
+      aircraftType: type,
+      route: null,
+      _ts: Date.now()
+    }
+    cache.set(key, enrich) // cache positive AND negative to stop re-fetch storms
+  }
 
   const detail: FlightDetail = { ...(enrich as FlightDetail), route: null }
   const o = detail.origin
