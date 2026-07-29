@@ -41,6 +41,20 @@ export function ControlApp(): JSX.Element {
           {source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} ·{' '}
           {connected ? '연결됨' : '재연결 중…'}
         </div>
+        <div className="legend">
+          <span>
+            <i style={{ background: '#35c1ff' }} />
+            여객기
+          </span>
+          <span>
+            <i style={{ background: '#f5a623' }} />
+            화물기
+          </span>
+          <span>
+            <i style={{ background: '#74d16a' }} />
+            군용기
+          </span>
+        </div>
       </div>
 
       {/* Bottom sheet: the card slides up on selection. Keyed by icao24 so it

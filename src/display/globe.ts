@@ -19,6 +19,7 @@ import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
 import { projectNorm, wrapLon, nearestRouteIndex } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
+import { flightCategory, type FlightCategory } from '../common/flightClass'
 
 const CAPACITY = 16000 // max aircraft instances
 const MIN_SPAN = 0.4 // most the control map may zoom in (≈2.5×) — a gentle range
@@ -218,12 +219,14 @@ function infoTexture(lines: string[]): { tex: THREE.CanvasTexture; aspect: numbe
   return { tex, aspect: W / H }
 }
 
-function altitudeColor(alt: number | null): THREE.Color {
-  // Low = warm, high = cool. Mirrors typical flight-tracker palettes.
-  const a = Math.max(0, Math.min(1, (alt ?? 0) / 12000))
-  const c = new THREE.Color()
-  c.setHSL(0.08 + a * 0.5, 0.9, 0.55)
-  return c
+// Icon color by flight category: passenger cyan, cargo amber, military green.
+const CAT_COLOR = {
+  passenger: new THREE.Color('#35c1ff'),
+  cargo: new THREE.Color('#f5a623'),
+  military: new THREE.Color('#74d16a')
+} as const
+function categoryColor(cat: FlightCategory): THREE.Color {
+  return cat === 'military' ? CAT_COLOR.military : cat === 'cargo' ? CAT_COLOR.cargo : CAT_COLOR.passenger
 }
 
 interface Eased {
@@ -823,7 +826,7 @@ export class Globe {
     const seen = new Set<string>()
     for (const a of list) {
       seen.add(a.icao24)
-      const color = altitudeColor(a.altitude)
+      const color = categoryColor(flightCategory(a.callsign))
       const h = ((a.heading ?? 0) * Math.PI) / 180
       const speed = a.onGround ? 0 : a.velocity ?? 0
       const cur = this.eased.get(a.icao24)
