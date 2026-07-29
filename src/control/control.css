@@ -149,13 +149,10 @@ body,
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 
-/* Compass (bottom-left). */
+/* Compass — sits in the top-right stack, above the zoom buttons. */
 .ctrl-compass {
-  position: absolute;
-  left: 24px;
-  bottom: 24px;
-  width: clamp(76px, 6vw, 110px);
-  height: clamp(76px, 6vw, 110px);
+  width: clamp(64px, 5vw, 92px);
+  height: clamp(64px, 5vw, 92px);
   pointer-events: none;
   filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.6));
 }

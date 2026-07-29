@@ -51,7 +51,57 @@ export const AIRPORT_CITY_KO: Record<string, string> = {
   SYD: '시드니', MEL: '멜버른', BNE: '브리즈번', PER: '퍼스', AKL: '오클랜드',
   // Africa
   CAI: '카이로', JNB: '요하네스버그', CPT: '케이프타운', NBO: '나이로비',
-  ADD: '아디스아바바', LOS: '라고스', CMN: '카사블랑카', ALG: '알제'
+  ADD: '아디스아바바', LOS: '라고스', CMN: '카사블랑카', ALG: '알제',
+
+  // --- Extended coverage (secondary cities & regional hubs) ---
+  // Japan
+  KOJ: '가고시마', HIJ: '히로시마', KMJ: '구마모토', SDJ: '센다이', KMQ: '고마쓰',
+  TAK: '다카마쓰', MYJ: '마쓰야마', KCZ: '고치', OIT: '오이타', NGS: '나가사키',
+  // China
+  TAO: '칭다오', DLC: '다롄', SHE: '선양', HRB: '하얼빈', CGQ: '창춘',
+  TSN: '톈진', TNA: '지난', HFE: '허페이', NKG: '난징', WUX: '우시',
+  NGB: '닝보', FOC: '푸저우', XMN: '샤먼', KWL: '구이린', NNG: '난닝',
+  HAK: '하이커우', SYX: '싼야', URC: '우루무치', LHW: '란저우', KWE: '구이양',
+  // Taiwan / SE Asia
+  KHH: '가오슝', RMQ: '타이중', CNX: '치앙마이', HKT: '푸껫', KBV: '끄라비',
+  USM: '꼬사무이', SUB: '수라바야', BDO: '반둥', MDC: '마나도', DVO: '다바오',
+  KLO: '칼리보', DAD: '다낭', CXR: '나트랑', PQC: '푸꾸옥', VTE: '비엔티안',
+  REP: '시엠립', BWN: '반다르스리브가완',
+  // India / South Asia
+  GOI: '고아', COK: '코치', TRV: '트리반드룸', AMD: '아메다바드', PNQ: '푸네',
+  JAI: '자이푸르', LKO: '럭나우', PAT: '파트나', GAU: '구와하티', NAG: '나그푸르',
+  IXC: '찬디가르', ISB: '이슬라마바드', KHI: '카라치', LHE: '라호르', MLE: '말레',
+  // Middle East
+  AMM: '암만', BEY: '베이루트', DMM: '담맘', MED: '메디나', SHJ: '샤르자',
+  // Europe (secondary)
+  LTN: '런던/루턴', LCY: '런던시티', EDI: '에든버러', GLA: '글래스고', BHX: '버밍엄',
+  BRS: '브리스틀', NCE: '니스', LYS: '리옹', MRS: '마르세유', TLS: '툴루즈',
+  NTE: '낭트', BOD: '보르도', HAM: '함부르크', STR: '슈투트가르트', CGN: '쾰른',
+  HAJ: '하노버', NUE: '뉘른베르크', TXL: '베를린', PMI: '팔마', AGP: '말라가',
+  VLC: '발렌시아', SVQ: '세비야', BIO: '빌바오', OPO: '포르투', NAP: '나폴리',
+  BLQ: '볼로냐', TRN: '토리노', CTA: '카타니아', PSA: '피사', GOT: '예테보리',
+  BGO: '베르겐', TRD: '트론헤임', GDN: '그단스크', KRK: '크라쿠프', OTP: '부쿠레슈티',
+  SOF: '소피아', BEG: '베오그라드', ZAG: '자그레브', LJU: '류블랴나', TLL: '탈린',
+  RIX: '리가', VNO: '빌뉴스', KEF: '레이캬비크', KBP: '키예프',
+  // North America (secondary)
+  BWI: '볼티모어', PIT: '피츠버그', CLT: '샬럿', RDU: '롤리더럼', BNA: '내슈빌',
+  MEM: '멤피스', MCI: '캔자스시티', STL: '세인트루이스', CVG: '신시내티',
+  IND: '인디애나폴리스', CMH: '콜럼버스', CLE: '클리블랜드', MKE: '밀워키',
+  AUS: '오스틴', SAT: '샌안토니오', MSY: '뉴올리언스', RSW: '포트마이어스',
+  JAX: '잭슨빌', SMF: '새크라멘토', SJC: '새너제이', OAK: '오클랜드', SNA: '오렌지카운티',
+  ONT: '온타리오', BUR: '버뱅크', RNO: '리노', ABQ: '앨버커키', TUS: '투손',
+  BOI: '보이시', ANC: '앵커리지', HNL: '호놀룰루', OGG: '마우이', YOW: '오타와',
+  YEG: '에드먼턴', YWG: '위니펙', YHZ: '핼리팩스',
+  // Latin America
+  GDL: '과달라하라', MTY: '몬테레이', TIJ: '티후아나', PVR: '푸에르토바야르타',
+  SJD: '로스카보스', UIO: '키토', GYE: '과야킬', LPB: '라파스',
+  MVD: '몬테비데오', ASU: '아순시온', CCS: '카라카스', SDQ: '산토도밍고',
+  HAV: '아바나', SJU: '산후안', CNF: '벨루오리존치', POA: '포르투알레그리',
+  REC: '헤시피', SSA: '사우바도르', FOR: '포르탈레자',
+  // Oceania / Africa (secondary)
+  ADL: '애들레이드', CBR: '캔버라', OOL: '골드코스트', CNS: '케언스', CHC: '크라이스트처치',
+  WLG: '웰링턴', NAN: '난디', DUR: '더반', ACC: '아크라', DAR: '다르에스살람',
+  TUN: '튀니스', LAD: '루안다', DKR: '다카르'
 }
 
 /** Korean city name for an airport code, or null if we don't have it. */

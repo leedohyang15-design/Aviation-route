@@ -97,9 +97,10 @@ export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: n
  * selected aircraft: line0 = flight no (amber), line1 = route, line2 = metrics. */
 export function infoTexture(lines: string[]): { tex: THREE.CanvasTexture; aspect: number } {
   const styles = [
-    { size: 46, color: '#ffb020', weight: '800' },
-    { size: 34, color: '#ffffff', weight: '700' },
-    { size: 26, color: '#cfe0f5', weight: '600' }
+    { size: 46, color: '#ffb020', weight: '800' }, // 0: flight no (amber)
+    { size: 32, color: '#ffffff', weight: '700' }, // 1: route (city → city)
+    { size: 34, color: '#8fe3a0', weight: '800' }, // 2: arrival countdown (bright green)
+    { size: 24, color: '#cfe0f5', weight: '600' } // 3: metrics (small)
   ]
   const st = (i: number) => styles[Math.min(i, styles.length - 1)]
   const padX = 22

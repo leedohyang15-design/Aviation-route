@@ -964,9 +964,11 @@ export class Globe {
           const lh = 0.06 * ps
           const asp = (this.infoLabel.userData.aspect as number) || 3
           const lw = lh * asp
-          // Clamp the box so it stays fully on the 2:1 frame.
-          const cx = Math.max(lw / 2, Math.min(1 - lw / 2, au + offX * (lw / 2 + 0.006)))
-          const cy = Math.max(lh / 2, Math.min(1 - lh / 2, ay + offY * (lh / 2 + 0.02 * ps)))
+          // Push the chip a full plane-width off the anchor so it never covers the
+          // aircraft icon, and clamp it to stay on the 2:1 frame.
+          const clr = 0.045 * ps
+          const cx = Math.max(lw / 2, Math.min(1 - lw / 2, au + offX * (lw / 2 + clr)))
+          const cy = Math.max(lh / 2, Math.min(1 - lh / 2, ay + offY * (lh / 2 + clr)))
           this.infoLabel.scale.set(lw, lh, 1)
           this.infoLabel.position.set(cx, cy, 0.75)
           this.infoLabel.visible = true

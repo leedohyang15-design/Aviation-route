@@ -86,11 +86,10 @@ export function MapView({
         <canvas ref={canvasRef} />
       </div>
 
-      <div className="ctrl-compass">
-        <CompassRose />
-      </div>
-
       <div className="ctrl-topright">
+        <div className="ctrl-compass">
+          <CompassRose />
+        </div>
         <div className="ctrl-zoom">
           <button
             aria-label="확대"
