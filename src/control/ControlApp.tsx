@@ -35,7 +35,6 @@ export function ControlApp(): JSX.Element {
         aircraft={visible}
         selected={state.selected}
         route={route.points}
-        routeIsTrack={d?.routeIsTrack}
         onSelect={(icao24) => send({ type: 'select', icao24 })}
         onView={(view) => send({ type: 'setView', view })}
         dayNightHour={state.dayNightHour}

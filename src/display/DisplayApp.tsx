@@ -29,10 +29,6 @@ export function DisplayApp(): JSX.Element {
     const lines = [flightNo]
     if (d?.origin?.code || d?.destination?.code) {
       lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
-    } else if (d?.routeIsTrack) {
-      // No scheduled route, but we're drawing the actual flown track.
-      const parts = [categoryLabel(category), sel.originCountry || null, '실제 항적'].filter(Boolean)
-      lines.push(parts.join(' · '))
     } else {
       // No route from adsbdb (military / cargo / GA / private): mark the category
       // we can guess and the registration country OpenSky always gives us.
@@ -65,7 +61,7 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])
-  useEffect(() => globeRef.current?.setRoute(route.points, d?.routeIsTrack), [route, d])
+  useEffect(() => globeRef.current?.setRoute(route.points), [route])
   useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
   useEffect(() => {
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
