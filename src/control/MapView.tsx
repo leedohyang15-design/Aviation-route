@@ -5,6 +5,7 @@
 import { useEffect, useRef } from 'react'
 import type { Aircraft, GeoPoint, ViewState } from '@shared/types'
 import { CompassRose } from '../common/CompassRose'
+import type { FlightCategory } from '../common/flightClass'
 import { Globe } from '../display/globe'
 
 interface Props {
@@ -18,6 +19,7 @@ interface Props {
   destCity?: string | null
   originFlag?: string | null
   destFlag?: string | null
+  planeBadge?: FlightCategory
 }
 
 export function MapView({
@@ -30,7 +32,8 @@ export function MapView({
   originCity = null,
   destCity = null,
   originFlag = null,
-  destFlag = null
+  destFlag = null,
+  planeBadge = null
 }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
@@ -71,6 +74,7 @@ export function MapView({
     () => globeRef.current?.setEndpointFlags(originFlag, destFlag),
     [originFlag, destFlag]
   )
+  useEffect(() => globeRef.current?.setPlaneBadge(planeBadge), [planeBadge])
 
   const poke = () => globeRef.current?.pokeActivity()
 

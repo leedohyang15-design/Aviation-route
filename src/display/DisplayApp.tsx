@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
+import { flightCategory, categoryLabel } from '../common/flightClass'
 import { Globe } from './globe'
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
@@ -18,9 +19,10 @@ export function DisplayApp(): JSX.Element {
   )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
+  const category = sel ? flightCategory(sel.callsign, d?.aircraftType) : null
 
   // Compact info string shown next to the selected plane (instead of a big card):
-  // flight no / origin→destination / altitude·speed·type.
+  // flight no / origin→destination (or category · route unknown) / altitude·speed·type.
   const infoLines = useMemo(() => {
     if (!sel) return null
     const flightNo = d?.flightNo ?? sel.callsign?.trim() ?? sel.icao24.toUpperCase()
@@ -28,9 +30,10 @@ export function DisplayApp(): JSX.Element {
     if (d?.origin?.code || d?.destination?.code) {
       lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
     } else {
-      // No route from adsbdb (military / cargo / GA / private): say so, and show
-      // the registration country we always know from OpenSky.
-      lines.push(sel.originCountry ? `${sel.originCountry} · 경로 미확인` : '경로 미확인')
+      // No route from adsbdb (military / cargo / GA / private): mark the category
+      // we can guess and the registration country OpenSky always gives us.
+      const parts = [categoryLabel(category), sel.originCountry || null, '경로 미확인'].filter(Boolean)
+      lines.push(parts.join(' · '))
     }
     const bits: string[] = []
     if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)
@@ -38,7 +41,7 @@ export function DisplayApp(): JSX.Element {
     if (d?.aircraftType) bits.push(d.aircraftType)
     if (bits.length) lines.push(bits.join(' · '))
     return lines
-  }, [sel, d])
+  }, [sel, d, category])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -68,6 +71,7 @@ export function DisplayApp(): JSX.Element {
     )
   }, [d])
   useEffect(() => globeRef.current?.setInfoLabel(infoLines), [infoLines])
+  useEffect(() => globeRef.current?.setPlaneBadge(category), [category])
 
   return (
     <div className="display-root">
