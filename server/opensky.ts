@@ -180,8 +180,17 @@ interface RoutePorts {
   destination?: { code: string; city?: string; lon: number; lat: number }
 }
 
-async function fetchRoute(callsign: string): Promise<RoutePorts | null> {
+/** Try adsbdb first, then adsb.lol as a fallback (a different community route
+ * DB, so it fills gaps where adsbdb has no entry for the flight number). */
+async function fetchRoute(
+  callsign: string,
+  pos: { lat: number; lon: number } | null
+): Promise<RoutePorts | null> {
   if (!callsign) return null
+  return (await fetchRouteAdsbdb(callsign)) ?? (await fetchRouteAdsbLol(callsign, pos))
+}
+
+async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
   try {
     const res = await fetch(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`)
     if (!res.ok) return null
@@ -199,6 +208,38 @@ async function fetchRoute(callsign: string): Promise<RoutePorts | null> {
           }
         : undefined
     return { airline: fr.airline?.name, origin: port(fr.origin), destination: port(fr.destination) }
+  } catch {
+    return null
+  }
+}
+
+/** adsb.lol routeset: POST the callsign + current position, get back the
+ * airports (first = origin, last = destination) with coordinates. */
+async function fetchRouteAdsbLol(
+  callsign: string,
+  pos: { lat: number; lon: number } | null
+): Promise<RoutePorts | null> {
+  try {
+    const res = await fetch('https://api.adsb.lol/api/0/routeset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planes: [{ callsign, lat: pos?.lat ?? 0, lng: pos?.lon ?? 0 }] })
+    })
+    if (!res.ok) return null
+    const arr = (await res.json()) as any[]
+    const aps = Array.isArray(arr) ? arr[0]?._airports : null
+    if (!Array.isArray(aps) || aps.length < 2) return null
+    const port = (p: any) =>
+      p && p.lon != null && p.lat != null
+        ? {
+            code: p.iata || p.icao || '',
+            city: p.location,
+            countryCode: (p.countryiso2 || '').toLowerCase() || undefined,
+            lon: p.lon,
+            lat: p.lat
+          }
+        : undefined
+    return { origin: port(aps[0]), destination: port(aps[aps.length - 1]) }
   } catch {
     return null
   }
@@ -234,7 +275,10 @@ async function buildDetail(
   if (reuse) {
     enrich = prev as FlightDetail & { _ts?: number }
   } else {
-    const [ports, type] = await Promise.all([fetchRoute(ac?.callsign ?? ''), fetchType(icao24)])
+    const [ports, type] = await Promise.all([
+      fetchRoute(ac?.callsign ?? '', ac ? { lat: ac.lat, lon: ac.lon } : null),
+      fetchType(icao24)
+    ])
     enrich = {
       icao24,
       airline: ports?.airline,
@@ -255,13 +299,15 @@ async function buildDetail(
     const route = greatCirclePoints(o, d, 128)
     const here = ac ? { lon: ac.lon, lat: ac.lat } : null
     const idx = here ? nearestRouteIndex(route, here) : 0
-    // Sanity-check adsbdb's scheduled route against where the plane actually is.
+    // Sanity-check the scheduled route against where the plane actually is.
     // A callsign can be matched to a stale/wrong route (the same UALxx flies a
     // different leg, or another aircraft transmits the same callsign), which
     // otherwise draws an absurd line across the world to a plane on another
-    // continent. If the plane is far off this route, treat it as route-unknown.
+    // continent. Only drop genuinely absurd matches (>2000km) — airway/wind
+    // deviations and not-yet-departed planes are legitimately off the great
+    // circle by a few hundred km and must keep their route.
     const offRouteKm = here ? greatCircleDistanceKm(here, route[idx]) : 0
-    if (offRouteKm > 900) {
+    if (offRouteKm > 2000) {
       detail.origin = undefined
       detail.destination = undefined
     } else {
