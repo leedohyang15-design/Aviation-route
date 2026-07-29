@@ -27,6 +27,10 @@ export function DisplayApp(): JSX.Element {
     const lines = [flightNo]
     if (d?.origin?.code || d?.destination?.code) {
       lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
+    } else {
+      // No route from adsbdb (military / cargo / GA / private): say so, and show
+      // the registration country we always know from OpenSky.
+      lines.push(sel.originCountry ? `${sel.originCountry} · 경로 미확인` : '경로 미확인')
     }
     const bits: string[] = []
     if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)

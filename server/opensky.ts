@@ -256,9 +256,15 @@ async function buildDetail(
     detail.route = route
     if (ac) {
       const idx = nearestRouteIndex(route, { lon: ac.lon, lat: ac.lat })
-      detail.progress = route.length > 1 ? idx / (route.length - 1) : 0
-      const remainKm = greatCircleDistanceKm({ lon: ac.lon, lat: ac.lat }, d)
-      if (ac.velocity && ac.velocity > 20) detail.etaRemainingSec = (remainKm * 1000) / ac.velocity
+      const progress = route.length > 1 ? idx / (route.length - 1) : 0
+      detail.progress = progress
+      // Estimate departure time + remaining time from progress and total flight
+      // time (great-circle distance ÷ ground speed). OpenSky gives no schedule.
+      if (ac.velocity && ac.velocity > 20) {
+        const totalSec = (greatCircleDistanceKm(o, d) * 1000) / ac.velocity
+        detail.etaRemainingSec = (1 - progress) * totalSec
+        detail.departureTime = Date.now() - progress * totalSec * 1000
+      }
     }
   }
   return detail

@@ -16,7 +16,7 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
-import { projectNorm, wrapLon, greatCirclePoints } from '@shared/projection'
+import { projectNorm, wrapLon, nearestRouteIndex } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 
@@ -208,9 +208,8 @@ export class Globe {
   private planeBaseScale = 1
   private routeGroup = new THREE.Group()
   private routePoints: GeoPoint[] | null = null
+  private lastRouteIdx = -1
   private lastRouteOffset = NaN
-  private lastRoutePlaneLon = NaN
-  private lastRoutePlaneLat = NaN
   private flownMat = new LineMaterial({ color: 0xff3b30, linewidth: 5, transparent: true })
   private remainMat = new LineMaterial({
     color: 0xffe08a,
@@ -917,6 +916,7 @@ export class Globe {
     if (same) return
 
     this.routePoints = next
+    this.lastRouteIdx = -1
     this.lastRouteOffset = NaN // force a rebuild next frame
     this.disposeRouteGroup()
     const on = !!this.routePoints
@@ -924,17 +924,25 @@ export class Globe {
     this.destMarker.visible = on
 
     if (this.routePoints) {
-      // One-shot align on SELECTION only (pendingRecenter) so origin + destination
-      // are both framed — never on a route refresh / re-route. The display centers
-      // on the plane itself via frame-follow, so only the control re-centers here.
-      if (this.interactive && this.pendingRecenter) {
+      // One-shot align on SELECTION only (pendingRecenter) — never on a refresh /
+      // re-route. The control frames origin+destination (route midpoint, full
+      // world); the display centers ONCE on the plane and then holds still (a
+      // continuous chase re-projected the whole scene every frame → jitter).
+      if (this.pendingRecenter) {
         const o = this.routePoints[0]
         const d = this.routePoints[this.routePoints.length - 1]
-        this.iCenterLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
-        this.iCenterLat = (o.lat + d.lat) / 2
-        this.iSpan = 1
-        this.applyInteractiveView()
-        this.emitView()
+        const midLon = wrapLon(o.lon + wrapLon(d.lon - o.lon) / 2)
+        if (this.interactive) {
+          this.iCenterLon = midLon
+          this.iCenterLat = (o.lat + d.lat) / 2
+          this.iSpan = 1
+          this.applyInteractiveView()
+          this.emitView()
+        } else {
+          const e = this.selected ? this.eased.get(this.selected) : null
+          this.routeCenterLon = e ? e.lon : midLon
+          this.applyViewTarget()
+        }
       }
       this.pendingRecenter = false
     } else {
@@ -969,21 +977,15 @@ export class Globe {
     flush()
   }
 
-  /** Rebuild the route so it passes THROUGH the plane's real position: origin→
-   * plane (flown, red) and plane→destination (remaining, faint). On real data the
-   * aircraft deviates from a straight origin→dest great circle, so drawing the
-   * line through its actual position keeps the plane on its own route. */
-  private buildRoute(planeLon: number, planeLat: number): void {
+  /** Rebuild the route split at `idx`: flown (origin→now) red, remaining faint. */
+  private buildRoute(idx: number): void {
     this.disposeRouteGroup()
     const pts = this.routePoints
-    if (!pts || pts.length < 2) return
-    const o = pts[0]
-    const d = pts[pts.length - 1]
-    const p = { lon: planeLon, lat: planeLat }
-    const flown = greatCirclePoints(o, p, 64)
-    const remaining = greatCirclePoints(p, d, 64)
-    if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
+    if (!pts) return
+    const remaining = pts.slice(idx)
+    const flown = pts.slice(0, idx + 1)
     if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat)
+    if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
   }
 
   /** Override the day/night clock (KST hour 0–24), or null for live time. */
@@ -1058,9 +1060,6 @@ export class Globe {
         const ps = this.planeBaseScale
         this.selectedPlane.scale.set(ps, ps, 1)
         this.selectedPlane.visible = true
-        // On the projected display, keep the dome centred on the selected plane
-        // (horizontal spin follows it smoothly). Interactive control is separate.
-        if (!this.interactive) this.targetLonOffset = -e.lon
         // Info chip next to the plane (flips to the left near the right edge).
         const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
         if (infoMat.map) {
@@ -1109,17 +1108,13 @@ export class Globe {
           }
           placeFlag(this.originFlag, op.u, op.v, 0.03 * ps)
           placeFlag(this.destFlag, dp.u, dp.v, 0.052 * ps)
-          // Rebuild the route (origin→plane→dest) when the plane moved or the pan
-          // offset changed, so it tracks the earth and the live position exactly.
-          if (
-            this.lonOffset !== this.lastRouteOffset ||
-            Math.abs(e.lon - this.lastRoutePlaneLon) > 0.03 ||
-            Math.abs(e.lat - this.lastRoutePlaneLat) > 0.03
-          ) {
-            this.buildRoute(e.lon, e.lat)
+          // Split the route at the plane's nearest point; rebuild when that split
+          // or the pan offset changed so the line stays aligned to the earth.
+          const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
+          if (idx !== this.lastRouteIdx || this.lonOffset !== this.lastRouteOffset) {
+            this.buildRoute(idx)
+            this.lastRouteIdx = idx
             this.lastRouteOffset = this.lonOffset
-            this.lastRoutePlaneLon = e.lon
-            this.lastRoutePlaneLat = e.lat
           }
         }
       }
