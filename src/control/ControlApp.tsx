@@ -40,6 +40,7 @@ export function ControlApp(): JSX.Element {
         aircraft={visible}
         selected={state.selected}
         route={route.points}
+        noRouteForSelected={!!d && !d.route}
         onSelect={(icao24) => send({ type: 'select', icao24 })}
         onView={(view) => send({ type: 'setView', view })}
         dayNightHour={state.dayNightHour}
@@ -54,13 +55,12 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          <b>{visible.length.toLocaleString()}</b> 대 표시 중 · 실제 운항{' '}
-          <b>{airborne.toLocaleString()}</b> 대
+          경로 확인된 <b>{visible.length.toLocaleString()}</b>대 · 실제 운항{' '}
+          <b>{airborne.toLocaleString()}</b>대
         </div>
         <div className={connected ? 'ok' : 'warn'}>
-          {connected
-            ? `${source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} · 연결됨`
-            : '여행 중… ✈️'}
+          {source === 'mock' ? '시뮬레이션 데이터' : 'OpenSky Network'} ·{' '}
+          {connected ? '연결됨' : '재연결 중…'}
         </div>
         <div className="legend">
           <button

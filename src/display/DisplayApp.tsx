@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
-import { flightCategory, categoryLabel } from '../common/flightClass'
 import { Globe } from './globe'
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
@@ -19,7 +18,6 @@ export function DisplayApp(): JSX.Element {
   )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
-  const category = sel ? flightCategory(sel.callsign, d?.aircraftType) : null
 
   // Compact info string shown next to the selected plane (instead of a big card):
   // flight no / origin→destination (or category · route unknown) / altitude·speed·type.
@@ -30,11 +28,10 @@ export function DisplayApp(): JSX.Element {
     if (d?.origin?.code || d?.destination?.code) {
       lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
     } else {
-      // No route: show the reason the backend gives (why the line is missing),
-      // falling back to a plain marker if none was provided.
-      lines.push(
-        d?.noRouteReason ?? [categoryLabel(category), '경로 미확인'].filter(Boolean).join(' · ')
-      )
+      // No route line: friendly placeholder on the public sphere (the control
+      // auto-advances to another flight after ~10s). The operator still sees the
+      // specific reason on the control card.
+      lines.push('여행 중… ✈')
     }
     const bits: string[] = []
     if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)
@@ -42,7 +39,7 @@ export function DisplayApp(): JSX.Element {
     if (d?.aircraftType) bits.push(d.aircraftType)
     if (bits.length) lines.push(bits.join(' · '))
     return lines
-  }, [sel, d, category])
+  }, [sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return

@@ -265,6 +265,8 @@ export class Globe {
   // (and keep cycling every 30s) so the exhibit demos itself when unattended.
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private readonly idleMs = 30000
+  // When the selected flight has no route, move on after this long.
+  private noRouteTimer: ReturnType<typeof setTimeout> | null = null
   // Active pointers (for pinch-zoom) and the pinch anchor.
   private pointers = new Map<number, { x: number; y: number }>()
   private pinchStartDist = 0
@@ -525,6 +527,19 @@ export class Globe {
   /** Any operator activity (incl. the reset button) resets the attract countdown. */
   pokeActivity(): void {
     if (this.interactive) this.startAttractTimer()
+  }
+
+  /** When the selected flight has no route to show, auto-advance to another
+   * flight after ~10s so the exhibit never dwells on a route-less plane. Called
+   * from the control with the selected plane's route status. */
+  autoAdvanceOnNoRoute(active: boolean): void {
+    if (this.noRouteTimer) {
+      clearTimeout(this.noRouteTimer)
+      this.noRouteTimer = null
+    }
+    if (active && this.interactive) {
+      this.noRouteTimer = setTimeout(() => this.autoPick(), 10000)
+    }
   }
 
   /** Programmatic zoom for the on-screen +/− buttons (factor <1 zooms in). */
@@ -1261,6 +1276,10 @@ export class Globe {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer)
       this.idleTimer = null
+    }
+    if (this.noRouteTimer) {
+      clearTimeout(this.noRouteTimer)
+      this.noRouteTimer = null
     }
     this.renderer.dispose()
   }
