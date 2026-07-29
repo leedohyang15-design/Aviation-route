@@ -8,11 +8,15 @@
 
 import type { Aircraft } from '../src/shared/types'
 import type { FlightFeed } from './feed'
+import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { createMockFeed } from './mock'
 import { createOpenSkyFeed } from './opensky'
 
-/** How long without real data before the mock fallback takes over (ms). */
-const STALE_MS = 60_000
+/** How long without real data before the mock fallback takes over (ms). Must be
+ * comfortably longer than the poll interval, otherwise the normal gap between
+ * (deliberately slow) OpenSky polls would flap to simulation and back every
+ * cycle. Only a genuine outage — several missed polls — should trigger mock. */
+const STALE_MS = OPENSKY_POLL_INTERVAL_MS * 2 + 60_000
 
 export function createResilientFeed(): FlightFeed {
   const opensky = createOpenSkyFeed()

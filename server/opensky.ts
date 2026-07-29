@@ -11,6 +11,7 @@ import type { Aircraft, FlightDetail } from '../src/shared/types'
 import type { FlightFeed } from './feed'
 import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
+import { airlineFromCallsign } from '../src/common/airlines'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -237,7 +238,10 @@ async function buildDetail(
     const [ports, type] = await Promise.all([fetchRoute(ac?.callsign ?? ''), fetchType(icao24)])
     enrich = {
       icao24,
-      airline: ports?.airline,
+      // Airline from adsbdb if it resolved the route, otherwise straight from the
+      // callsign's operator prefix (KAL → 대한항공) so a route-unknown flight is
+      // still identified.
+      airline: ports?.airline ?? airlineFromCallsign(ac?.callsign) ?? undefined,
       flightNo: ac?.callsign,
       origin: ports?.origin,
       destination: ports?.destination,

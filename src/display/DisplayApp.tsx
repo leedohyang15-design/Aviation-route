@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { flightCategory, categoryLabel } from '../common/flightClass'
+import { airlineFromCallsign } from '../common/airlines'
 import { Globe } from './globe'
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
@@ -30,9 +31,16 @@ export function DisplayApp(): JSX.Element {
     if (d?.origin?.code || d?.destination?.code) {
       lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
     } else {
-      // No route from adsbdb (military / cargo / GA / private): mark the category
-      // we can guess and the registration country OpenSky always gives us.
-      const parts = [categoryLabel(category), sel.originCountry || null, '경로 미확인'].filter(Boolean)
+      // No route from adsbdb: still identify the airline from the callsign
+      // prefix (KAL → 대한항공) when we know it, plus the category we can guess
+      // and the registration country OpenSky always gives us.
+      const airline = d?.airline ?? airlineFromCallsign(sel.callsign)
+      const parts = [
+        airline,
+        categoryLabel(category),
+        !airline ? sel.originCountry || null : null,
+        '경로 미확인'
+      ].filter(Boolean)
       lines.push(parts.join(' · '))
     }
     const bits: string[] = []
