@@ -1027,8 +1027,8 @@ export class Globe {
 
     // Dead reckoning: advance each plane along its heading at its ground speed,
     // then gently correct toward the latest snapshot. This keeps motion smooth
-    // even when real updates are 15–60s apart (OpenSky credit budget).
-    const correct = 0.08
+    // even when real updates are up to 90s apart (OpenSky credit budget).
+    const correct = 0.1
     // Only dim others when the selected plane is actually on screen (else a
     // filtered-out/dropped selection would darken the whole map).
     const selVisible = this.selected != null && this.eased.has(this.selected)
@@ -1039,8 +1039,18 @@ export class Globe {
       if (!e) continue
       if (e.speed > 0 && dt > 0) {
         const cosLat = Math.max(0.05, Math.cos((e.lat * Math.PI) / 180))
-        e.lat += ((e.speed * Math.cos(e.heading)) / M_PER_DEG) * dt
-        e.lon += ((e.speed * Math.sin(e.heading)) / (M_PER_DEG * cosLat)) * dt
+        const dLat = ((e.speed * Math.cos(e.heading)) / M_PER_DEG) * dt
+        const dLon = ((e.speed * Math.sin(e.heading)) / (M_PER_DEG * cosLat)) * dt
+        e.lat += dLat
+        e.lon += dLon
+        // Advance the correction target too, so it tracks the plane's real
+        // motion instead of dragging it back toward a snapshot that may be up to
+        // 90s old. Without this the dead reckoning and the pull-back cancel out,
+        // the plane barely moves between polls, then jumps a whole interval's
+        // worth when the next snapshot lands. The snapshot resets the target to
+        // truth; `correct` only smooths the small residual — no jump.
+        e.tLat += dLat
+        e.tLon += dLon
       }
       e.lon = wrapLon(e.lon + wrapLon(e.tLon - e.lon) * correct)
       e.lat += (e.tLat - e.lat) * correct
@@ -1095,14 +1105,15 @@ export class Globe {
           this.destMarker.visible = true
           // When the two endpoints are close together on screen, their flags,
           // place names and the plane between them overlap and become unreadable.
-          // Spread the annotations apart horizontally to a minimum gap (the
-          // markers themselves stay on their true coordinates); the endpoint on
-          // the left is pushed left, the other right. Flags sit well above the
-          // markers (they may float a bit far — that's fine), names just below.
-          const MIN_SEP = 0.15 * ps
-          const originLeft = dp.u >= op.u
-          const spread = Math.max(0, MIN_SEP - Math.abs(dp.u - op.u)) / 2
-          const oShift = originLeft ? -spread : spread
+          // Spread the annotations apart horizontally (markers stay on their true
+          // coordinates). Only do this when the endpoints are close in BOTH axes:
+          // a tall vertical route (e.g. Moscow↔Antalya, similar longitude) is far
+          // apart on screen and must NOT be spread, or its flag detaches from its
+          // marker. Flags sit above the markers, names just below.
+          const duEnds = dp.u - op.u
+          const near = Math.abs(dp.v - op.v) < 0.05 * ps && Math.abs(duEnds) < 0.16 * ps
+          const spread = near ? (0.16 * ps - Math.abs(duEnds)) / 2 : 0
+          const oShift = duEnds >= 0 ? -spread : spread
           const dShift = -oShift
           const lblH = 0.018 * ps
           const placeLabel = (lbl: THREE.Mesh, u: number, v: number, dx: number) => {
