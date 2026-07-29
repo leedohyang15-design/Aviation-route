@@ -56,6 +56,9 @@ export interface FlightDetail {
   etaRemainingSec?: number // seconds to arrival
   progress?: number // 0..1 along the route
   route: GeoPoint[] | null // great-circle origin→destination
+  /** When `route` is null, a short human reason why (shown on both screens):
+   * e.g. "공개 노선 데이터 없음", "군용기 · 노선 비공개", "위치가 노선과 불일치". */
+  noRouteReason?: string
 }
 
 /** The equirectangular view the display shows, driven by the control map. */
@@ -79,9 +82,9 @@ export interface FlightFilter {
   airborneOnly?: boolean
   /** Categories to hide (empty/absent = show all): 'passenger' | 'cargo' | 'military'. */
   hiddenCategories?: string[]
-  /** Only show scheduled airline/cargo flights (airline-style callsign). These
-   * are the flights that resolve a route; the rest (GA, tactical/blank callsigns)
-   * would show "route unknown", so this keeps the display route-rich. */
+  /** Show only identifiable aircraft — passenger / cargo / military (a known
+   * operator callsign) — and hide the GA/private/unknown long tail. On by
+   * default; the operator can turn it off to reveal everything. */
   scheduledOnly?: boolean
 }
 
@@ -102,9 +105,9 @@ export interface PresentationState {
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
-  // Show everything by default (route-unknown planes included); the operator can
-  // turn on the "정기편만" toggle to hide them and keep the view route-rich.
-  filter: { airborneOnly: true },
+  // Start with only identifiable aircraft (passenger/cargo/military) shown; the
+  // operator can turn the toggle off to reveal the unknown long tail.
+  filter: { airborneOnly: true, scheduledOnly: true },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },

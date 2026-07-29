@@ -11,6 +11,7 @@ import type { Aircraft, FlightDetail } from '../src/shared/types'
 import type { FlightFeed } from './feed'
 import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
+import { flightCategory } from '../src/common/flightClass'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -303,6 +304,7 @@ async function buildDetail(
   const detail: FlightDetail = { ...(enrich as FlightDetail), route: null }
   const o = detail.origin
   const d = detail.destination
+  let mismatch = false
   if (o && d) {
     const route = greatCirclePoints(o, d, 128)
     const here = ac ? { lon: ac.lon, lat: ac.lat } : null
@@ -317,6 +319,7 @@ async function buildDetail(
     if (offRouteKm > 800) {
       detail.origin = undefined
       detail.destination = undefined
+      mismatch = true
     } else {
       detail.route = route
       const progress = route.length > 1 ? idx / (route.length - 1) : 0
@@ -329,6 +332,18 @@ async function buildDetail(
         detail.departureTime = Date.now() - progress * totalSec * 1000
       }
     }
+  }
+
+  // No route line? Explain why on both screens.
+  if (!detail.route) {
+    const cs = ac?.callsign?.trim()
+    detail.noRouteReason = !cs
+      ? '콜사인 없음 · 노선 조회 불가'
+      : mismatch
+        ? '현재 위치가 노선과 불일치'
+        : flightCategory(cs) === 'military'
+          ? '군용기 · 노선 비공개'
+          : '공개 노선 데이터 없음'
   }
   return detail
 }

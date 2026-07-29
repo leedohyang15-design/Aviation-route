@@ -179,6 +179,8 @@ export function FlightDetailCard({ aircraft: sel, detail: d }: Props): JSX.Eleme
         </div>
       </div>
 
+      {d?.noRouteReason && <div className="bp-noroute">경로 미표시 · {d.noRouteReason}</div>}
+
       <div className="bp-tear">
         <span className="bp-notch left" />
         <span className="bp-dots" />

@@ -1,7 +1,7 @@
 // Apply the operator's FlightFilter to the aircraft snapshot. Used by both the
 // control map and the display so the two screens always show the same set.
 import type { Aircraft, FlightFilter } from '@shared/types'
-import { categoryKey, isScheduledCallsign } from './flightClass'
+import { categoryKey, isKnownFlight } from './flightClass'
 
 export function applyFilter(aircraft: Aircraft[], f: FlightFilter, keepId?: string | null): Aircraft[] {
   const hidden = f.hiddenCategories
@@ -10,8 +10,9 @@ export function applyFilter(aircraft: Aircraft[], f: FlightFilter, keepId?: stri
     // on-ground near its endpoints — otherwise dropping it mid-flight would
     // vanish the selection and freeze the dome that follows it.
     if (keepId && a.icao24 === keepId) return true
-    // Keep only scheduled airline/cargo flights — the ones adsbdb can route.
-    if (f.scheduledOnly && !isScheduledCallsign(a.callsign)) return false
+    // Show only identifiable aircraft (passenger / cargo / military); hide the
+    // GA/private/unknown long tail.
+    if (f.scheduledOnly && !isKnownFlight(a.callsign)) return false
     if (hidden && hidden.length && hidden.includes(categoryKey(a.callsign))) return false
     if (f.airborneOnly && a.onGround) return false
     if (f.originCountry && a.originCountry !== f.originCountry) return false

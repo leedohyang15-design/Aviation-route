@@ -198,3 +198,16 @@
   letter-spacing: 0.18em;
   color: #8a97a6;
 }
+
+/* Why no route line could be drawn (shown in place of the schedule). */
+.bp-noroute {
+  margin: 4px 0 2px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #fff4e5;
+  border: 1px solid #f2d2a0;
+  color: #8a5a12;
+  font-size: 0.82em;
+  font-weight: 600;
+  text-align: center;
+}

@@ -90,18 +90,14 @@ export function flightCategory(callsign?: string | null, type?: string | null): 
   return null
 }
 
-/** Whether a callsign looks like a scheduled airline/cargo flight: a 3-letter
- * ICAO operator code followed by the flight number (1–4 digits, optional letter
- * suffix) — e.g. KAL902, UAL61, BAW23A. This is exactly the shape adsbdb has
- * route data for. Registration-style callsigns (N12345, DABCD) and word/tactical
- * callsigns don't match, so filtering to it drops the planes that would show
- * "route unknown" when selected, without having to pre-query every aircraft. */
-export function isScheduledCallsign(callsign?: string | null): boolean {
-  // A flight has a route iff its callsign starts with a known scheduled airline
-  // (KAL, AAR, UAL, FDX…). If we don't recognise the operator code, treat it as
-  // route-unknown — that reliably drops GA, private, military and one-off
-  // callsigns, which are exactly the ones adsbdb can't route.
-  return airlineFromCallsign(callsign) != null
+/** Whether we can identify the aircraft as a real passenger, cargo, or military
+ * flight — i.e. its callsign starts with a known airline (KAL, UAL, FDX…) or a
+ * known cargo/military operator (RCH, GAF…). This is the "main aircraft" set the
+ * exhibit shows by default; everything else (GA, private, blank/registration
+ * callsigns) is the unidentifiable long tail that's hidden until the operator
+ * turns the filter off. */
+export function isKnownFlight(callsign?: string | null): boolean {
+  return airlineFromCallsign(callsign) != null || flightCategory(callsign) != null
 }
 
 /** A definite category key (unknown callsigns fall back to passenger). Used for

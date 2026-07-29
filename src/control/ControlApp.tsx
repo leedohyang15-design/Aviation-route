@@ -82,9 +82,9 @@ export function ControlApp(): JSX.Element {
           <button
             className={'leg toggle' + (scheduledOnly ? ' on' : '')}
             onClick={toggleScheduled}
-            title="정기 항공편(경로 확인 가능)만 표시"
+            title="식별되는 항공기(여객·화물·군용)만 표시 / 끄면 전체"
           >
-            {scheduledOnly ? '✓ 정기편만' : '정기편만'}
+            {scheduledOnly ? '✓ 여객·화물·군용만' : '전체 표시'}
           </button>
         </div>
       </div>

@@ -30,10 +30,11 @@ export function DisplayApp(): JSX.Element {
     if (d?.origin?.code || d?.destination?.code) {
       lines.push(`${d?.origin?.code ?? '—'} → ${d?.destination?.code ?? '—'}`)
     } else {
-      // No route from adsbdb (military / cargo / GA / private): mark the category
-      // we can guess and the registration country OpenSky always gives us.
-      const parts = [categoryLabel(category), sel.originCountry || null, '경로 미확인'].filter(Boolean)
-      lines.push(parts.join(' · '))
+      // No route: show the reason the backend gives (why the line is missing),
+      // falling back to a plain marker if none was provided.
+      lines.push(
+        d?.noRouteReason ?? [categoryLabel(category), '경로 미확인'].filter(Boolean).join(' · ')
+      )
     }
     const bits: string[] = []
     if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)
