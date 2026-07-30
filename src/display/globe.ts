@@ -396,8 +396,8 @@ export class Globe {
   /** Auto-select a random flight, then keep cycling every 30s until a real
    * interaction resets the countdown. */
   private autoPick(): void {
-    const ids = [...this.eased.keys()]
-    if (ids.length) this.onSelectChange?.(ids[Math.floor(Math.random() * ids.length)])
+    const next = this.randomPick()
+    if (next) this.onSelectChange?.(next)
     // Reset BOTH timers through the single scheduler so they can't accumulate.
     // (Directly re-assigning idleTimer here used to orphan the pending timer when
     // the no-route auto-advance also fired autoPick, stacking timers → the screen
@@ -481,6 +481,17 @@ export class Globe {
     // already re-armed it), so the clicked plane holds for 30s and then the
     // auto-cycle resumes with a fresh random pick.
     this.onSelectChange?.(best)
+  }
+
+  /** A random aircraft, never the one already selected (so every pick visibly
+   * changes something). Shared by the attract cycle and Tab. */
+  private randomPick(): string | null {
+    const ids = [...this.eased.keys()]
+    if (!ids.length) return null
+    if (ids.length === 1) return ids[0]
+    let id = ids[Math.floor(Math.random() * ids.length)]
+    while (id === this.selected) id = ids[Math.floor(Math.random() * ids.length)]
+    return id
   }
 
   /** Attach drag-pan / wheel-zoom / click-select handlers (interactive mode). */
@@ -593,11 +604,10 @@ export class Globe {
       }
       if (ev.key !== 'Tab') return
       ev.preventDefault()
-      const order = this.order
-      if (!order.length) return
-      const dir = ev.shiftKey ? -1 : 1
-      const cur = this.selected ? order.indexOf(this.selected) : -1
-      const next = order[(((cur + dir) % order.length) + order.length) % order.length]
+      // Jump to a random flight. Stepping in feed order was effectively a fixed
+      // sequence — it ignored the view and replayed the same run every time.
+      const next = this.randomPick()
+      if (!next) return
       this.resetAttract()
       this.onSelectChange?.(next)
     }
