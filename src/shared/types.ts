@@ -134,7 +134,16 @@ export type ServerMessage =
   | { type: 'state'; state: PresentationState }
   | { type: 'route'; icao24: string; points: GeoPoint[] | null }
   | { type: 'detail'; detail: FlightDetail | null }
-  | { type: 'status'; source: 'opensky' | 'mock'; connected: boolean; count: number }
+  | {
+      type: 'status'
+      /** Which feed is actually painting the screen right now. */
+      source: 'opensky' | 'mock'
+      connected: boolean
+      count: number
+      /** Whether live data is possible at all (OpenSky credentials present).
+       * Lets the UI say "connecting" instead of implying a config problem. */
+      credentials: boolean
+    }
 
 /** Commands clients send to the hub. The hub applies them to PresentationState. */
 export type ClientMessage =

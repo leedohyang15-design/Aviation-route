@@ -25,6 +25,8 @@ export interface HubView {
   state: PresentationState
   connected: boolean
   source: 'opensky' | 'mock' | null
+  /** Whether OpenSky credentials are configured (live data is possible). */
+  credentials: boolean
   route: { icao24: string; points: GeoPoint[] | null }
   detail: FlightDetail | null
 }
@@ -34,6 +36,7 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [state, setState] = useState<PresentationState>(DEFAULT_PRESENTATION_STATE)
   const [connected, setConnected] = useState(false)
   const [source, setSource] = useState<'opensky' | 'mock' | null>(null)
+  const [credentials, setCredentials] = useState(false)
   const [route, setRoute] = useState<{ icao24: string; points: GeoPoint[] | null }>({
     icao24: '',
     points: null
@@ -54,6 +57,7 @@ export function useHub(role: 'control' | 'display'): HubView {
           break
         case 'status':
           setSource(msg.source)
+          setCredentials(msg.credentials)
           break
         case 'route':
           setRoute({ icao24: msg.icao24, points: msg.points })
@@ -73,5 +77,5 @@ export function useHub(role: 'control' | 'display'): HubView {
 
   const send = useCallback((msg: ClientMessage) => busRef.current?.send(msg), [])
 
-  return { send, aircraft, state, connected, source, route, detail }
+  return { send, aircraft, state, connected, source, credentials, route, detail }
 }

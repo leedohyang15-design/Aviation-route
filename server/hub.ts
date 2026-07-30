@@ -61,6 +61,9 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   const state: PresentationState = structuredClone(DEFAULT_PRESENTATION_STATE)
   // FEED=mock starts the feed in simulation; keep the broadcast state in step.
   if (process.env.FEED === 'mock') state.feedMode = 'mock'
+  // Whether live data is even possible, so the windows can tell "still
+  // connecting" apart from "no credentials configured".
+  const hasCreds = hasOpenSkyCredentials()
   let aircraft: Aircraft[] = []
   let connected = false
 
@@ -101,7 +104,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     (snapshot) => {
       aircraft = snapshot
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
-      broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length })
+      broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
       // Keep the selected plane's route/progress/ETA live (e.g. after a mock
       // re-route on arrival) so the old route doesn't linger.
       if (state.selected) void sendDetail(null)
@@ -116,7 +119,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     // Bring the new window fully up to date immediately.
     send(ws, { type: 'state', state })
     send(ws, { type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
-    send(ws, { type: 'status', source: feed.source, connected, count: aircraft.length })
+    send(ws, { type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
     void sendDetail(ws)
 
     ws.on('message', (raw) => {
@@ -161,7 +164,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         broadcast({ type: 'state', state })
         // Report the switch immediately so the source label doesn't wait for the
         // next poll (live polls can be 90s apart).
-        broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length })
+        broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
         return
     }
   }

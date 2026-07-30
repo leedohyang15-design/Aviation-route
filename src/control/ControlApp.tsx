@@ -5,7 +5,7 @@ import { FlightDetailCard } from '../common/FlightDetailCard'
 import { MapView } from './MapView'
 
 export function ControlApp(): JSX.Element {
-  const { send, aircraft, state, connected, source, route, detail } = useHub('control')
+  const { send, aircraft, state, connected, source, credentials, route, detail } = useHub('control')
   const visible = useMemo(
     () => applyFilter(aircraft, state.filter, state.selected),
     [aircraft, state.filter, state.selected]
@@ -40,6 +40,18 @@ export function ControlApp(): JSX.Element {
   // Live data vs. forced simulation. Live is the default; simulation is there
   // for demos and for when the daily OpenSky credit budget runs out.
   const feedMode = state.feedMode ?? 'auto'
+  // The tab is the operator's *choice*; `source` is what's actually on screen.
+  // In live mode the simulation still covers the first seconds (and any OpenSky
+  // outage), so say which of those is happening instead of just "simulation".
+  const live = connected && (feedMode === 'mock' || source === 'opensky')
+  const statusText =
+    feedMode === 'mock'
+      ? '시뮬레이션 · 연습 모드'
+      : source === 'opensky'
+        ? 'OpenSky · 실시간'
+        : credentials
+          ? '실시간 준비 중… (지금은 시뮬레이션)'
+          : '실시간 미설정 (.env 없음) · 시뮬레이션'
 
   return (
     <div className="control-root">
@@ -65,9 +77,7 @@ export function ControlApp(): JSX.Element {
         <div className="count">
           지금 하늘에 ✈ <b>{airborne.toLocaleString()}</b>대
         </div>
-        <div className={'src ' + (connected ? 'ok' : 'warn')}>
-          {source === 'mock' ? '시뮬레이션' : 'OpenSky'} · {connected ? '실시간' : '여행 중…'}
-        </div>
+        <div className={'src ' + (live ? 'ok' : 'warn')}>{statusText}</div>
         {/* Data source tabs — live by default, simulation on demand. */}
         <div className="feed-tabs" role="tablist" aria-label="데이터 소스">
           <button
