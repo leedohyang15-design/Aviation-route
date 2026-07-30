@@ -71,6 +71,13 @@ export interface ViewState {
 
 export type OverlayKey = 'dayNight' | 'airports' | 'stats' | 'grid'
 
+/**
+ * Which feed the exhibit shows.
+ *   'auto' — real OpenSky data, falling back to simulation if it stalls.
+ *   'mock' — always the simulation (useful for demos, or when credits run out).
+ */
+export type FeedMode = 'auto' | 'mock'
+
 /** Filters the operator can apply; an empty/undefined field means "no filter". */
 export interface FlightFilter {
   originCountry?: string
@@ -101,6 +108,8 @@ export interface PresentationState {
   overlays: Record<OverlayKey, boolean>
   /** Day/night preview hour 0–24 (KST), or null = live current time. */
   dayNightHour: number | null
+  /** Live data or forced simulation. Defaults to live. */
+  feedMode: FeedMode
 }
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
@@ -111,7 +120,8 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },
-  dayNightHour: null // live time
+  dayNightHour: null, // live time
+  feedMode: 'auto' // real data by default; the operator can force simulation
 }
 
 // ---------------------------------------------------------------------------
@@ -133,4 +143,5 @@ export type ClientMessage =
   | { type: 'setView'; view: ViewState }
   | { type: 'toggleOverlay'; key: OverlayKey; value?: boolean }
   | { type: 'setDayNight'; hour: number | null }
+  | { type: 'setFeedMode'; mode: FeedMode }
   | { type: 'hello'; role: 'control' | 'display' }

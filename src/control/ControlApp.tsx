@@ -37,6 +37,10 @@ export function ControlApp(): JSX.Element {
     send({ type: 'setFilter', filter: { ...state.filter, scheduledOnly: !scheduledOnly } })
   }
 
+  // Live data vs. forced simulation. Live is the default; simulation is there
+  // for demos and for when the daily OpenSky credit budget runs out.
+  const feedMode = state.feedMode ?? 'auto'
+
   return (
     <div className="control-root">
       <MapView
@@ -63,6 +67,27 @@ export function ControlApp(): JSX.Element {
         </div>
         <div className={'src ' + (connected ? 'ok' : 'warn')}>
           {source === 'mock' ? '시뮬레이션' : 'OpenSky'} · {connected ? '실시간' : '여행 중…'}
+        </div>
+        {/* Data source tabs — live by default, simulation on demand. */}
+        <div className="feed-tabs" role="tablist" aria-label="데이터 소스">
+          <button
+            role="tab"
+            aria-selected={feedMode === 'auto'}
+            className={'feed-tab' + (feedMode === 'auto' ? ' on' : '')}
+            onClick={() => send({ type: 'setFeedMode', mode: 'auto' })}
+            title="OpenSky 실시간 데이터 (끊기면 자동으로 시뮬레이션)"
+          >
+            📡 실시간
+          </button>
+          <button
+            role="tab"
+            aria-selected={feedMode === 'mock'}
+            className={'feed-tab' + (feedMode === 'mock' ? ' on' : '')}
+            onClick={() => send({ type: 'setFeedMode', mode: 'mock' })}
+            title="시뮬레이션 데이터 (인터넷·크레딧 없이도 동작)"
+          >
+            🎮 시뮬레이션
+          </button>
         </div>
         <div className="legend">
           <button

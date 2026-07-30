@@ -142,6 +142,37 @@ body,
   border-color: rgba(127, 212, 255, 0.9);
   color: #04121f;
 }
+/* Data source tabs (실시간 / 시뮬레이션) — a segmented control under the status
+   line. Live is the default; simulation is for demos and credit outages. */
+.ctrl-info .feed-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(16, 24, 43, 0.72);
+  pointer-events: auto; /* clickable even though the rest of the overlay isn't */
+}
+.ctrl-info .feed-tab {
+  margin: 0;
+  width: auto;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #eaf2ff;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.ctrl-info .feed-tab.on {
+  background: rgba(127, 212, 255, 0.9);
+  color: #04121f;
+  opacity: 1;
+}
+
 .ctrl-info .legend .leg i {
   width: 11px;
   height: 11px;

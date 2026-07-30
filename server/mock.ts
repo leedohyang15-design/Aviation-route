@@ -3,9 +3,9 @@
 // Planes fly real great-circle routes between major airports, and carry full
 // detail (airline, route, aircraft type, progress, times) for the panel.
 //
-// Everything visitors can read is Korean: airline names come from the shared
-// ICAO table and city names from the shared IATA table, so the simulation reads
-// the same as the real feed.
+// City names come from the shared IATA table so they read in Korean, and
+// airline names stay English like the real feed's — the simulation should be
+// indistinguishable from live data at a glance.
 
 import type { Aircraft, FlightDetail, GeoPoint } from '../src/shared/types'
 import type { FlightFeed } from './feed'
@@ -16,7 +16,6 @@ import {
 } from '../src/shared/projection'
 import { MOCK_POLL_INTERVAL_MS, MOCK_AIRCRAFT_COUNT } from '../src/shared/config'
 import { cityKo } from '../src/common/airports'
-import { AIRLINES, airlineFromCallsign } from '../src/common/airlines'
 
 interface Airport {
   code: string
@@ -226,8 +225,51 @@ const AIRPORTS: Airport[] = [
   A('NAN', 177.44, -17.75, 'fj', '피지')
 ]
 
-// Operator codes from the shared table, so every mock callsign resolves to a
-// Korean airline name (and passes the "known flight" filter) like real data does.
+// Airline names stay in English to match the real feed, which shows adsbdb's
+// English carrier names. The codes are real ICAO operator codes, so mock
+// callsigns also pass the "known flight" filter like real traffic does.
+const AIRLINES: Record<string, string> = {
+  KAL: 'Korean Air',
+  AAR: 'Asiana Airlines',
+  JJA: 'Jeju Air',
+  TWB: "T'way Air",
+  UAL: 'United Airlines',
+  DAL: 'Delta Air Lines',
+  AAL: 'American Airlines',
+  SWA: 'Southwest Airlines',
+  BAW: 'British Airways',
+  AFR: 'Air France',
+  DLH: 'Lufthansa',
+  KLM: 'KLM',
+  SWR: 'Swiss',
+  IBE: 'Iberia',
+  AZA: 'ITA Airways',
+  THY: 'Turkish Airlines',
+  UAE: 'Emirates',
+  QTR: 'Qatar Airways',
+  ETD: 'Etihad Airways',
+  SIA: 'Singapore Airlines',
+  ANA: 'All Nippon Airways',
+  JAL: 'Japan Airlines',
+  CPA: 'Cathay Pacific',
+  CES: 'China Eastern',
+  CCA: 'Air China',
+  CSN: 'China Southern',
+  EVA: 'EVA Air',
+  CAL: 'China Airlines',
+  THA: 'Thai Airways',
+  MAS: 'Malaysia Airlines',
+  GIA: 'Garuda Indonesia',
+  AIC: 'Air India',
+  QFA: 'Qantas',
+  ANZ: 'Air New Zealand',
+  ACA: 'Air Canada',
+  TAM: 'LATAM',
+  SAA: 'South African Airways',
+  ETH: 'Ethiopian Airlines',
+  UPS: 'UPS',
+  FDX: 'FedEx'
+}
 const AIRLINE_CODES = Object.keys(AIRLINES)
 
 const TYPES = [
@@ -372,7 +414,7 @@ export function createMockFeed(count = MOCK_AIRCRAFT_COUNT): FlightFeed {
       const now = Date.now()
       return {
         icao24,
-        airline: airlineFromCallsign(pl.callsign) ?? pl.callsign.slice(0, 3),
+        airline: AIRLINES[pl.callsign.slice(0, 3)] ?? pl.callsign.slice(0, 3),
         flightNo: pl.callsign,
         origin: endpoint(pl.from),
         destination: endpoint(pl.to),

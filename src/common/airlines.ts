@@ -109,7 +109,7 @@ export const AIRLINES: Record<string, string> = {
   KQA: '케냐항공',
   // Cargo
   FDX: '페덱스',
-  UPS: 'UPS항공',
+  UPS: 'UPS',
   GTI: '아틀라스항공',
   GEC: '루프트한자카고',
   CLX: '카고룩스',

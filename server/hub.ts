@@ -12,10 +12,8 @@ import type {
   ServerMessage
 } from '../src/shared/types'
 import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
-import type { FlightFeed } from './feed'
-import { createMockFeed } from './mock'
 import { hasOpenSkyCredentials } from './opensky'
-import { createResilientFeed } from './resilient'
+import { createResilientFeed, type SwitchableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { opsLog } from './log'
 
@@ -23,21 +21,26 @@ export interface Hub {
   close(): void
 }
 
-/** Choose the feed: real OpenSky when credentials exist (and FEED!=mock). */
-export function selectFeed(): FlightFeed {
-  if (process.env.FEED === 'mock') {
-    opsLog('[hub] FEED=mock is set — forcing mock feed (unset it to use OpenSky)')
-    return createMockFeed()
-  }
+/**
+ * The feed is always the switchable resilient one: it polls OpenSky when
+ * credentials exist, keeps a simulation running underneath as a fallback, and
+ * lets the operator pin simulation from the control window.
+ */
+export function selectFeed(): SwitchableFeed {
+  const feed = createResilientFeed()
   if (hasOpenSkyCredentials()) {
-    opsLog('[hub] OpenSky credentials present — using OpenSky feed (mock fallback on stall)')
-    return createResilientFeed()
+    opsLog('[hub] OpenSky credentials present — using live data (simulation fallback on stall)')
+  } else {
+    opsLog('[hub] No OPENSKY_CLIENT_ID/SECRET — simulation only.')
   }
-  opsLog('[hub] No OPENSKY_CLIENT_ID/SECRET — using mock feed.')
-  return createMockFeed()
+  if (process.env.FEED === 'mock') {
+    opsLog('[hub] FEED=mock is set — starting in simulation mode')
+    feed.setMode('mock')
+  }
+  return feed
 }
 
-export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub {
+export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): Hub {
   // Bind explicitly to the IPv4 loopback so it always matches the windows'
   // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
   // firewall prompt that a 0.0.0.0 bind would trigger).
@@ -56,6 +59,8 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
   })
 
   const state: PresentationState = structuredClone(DEFAULT_PRESENTATION_STATE)
+  // FEED=mock starts the feed in simulation; keep the broadcast state in step.
+  if (process.env.FEED === 'mock') state.feedMode = 'mock'
   let aircraft: Aircraft[] = []
   let connected = false
 
@@ -149,6 +154,14 @@ export function startHub(port = HUB_PORT, feed: FlightFeed = selectFeed()): Hub 
       case 'toggleOverlay':
         state.overlays[msg.key] = msg.value ?? !state.overlays[msg.key]
         broadcast({ type: 'state', state })
+        return
+      case 'setFeedMode':
+        state.feedMode = msg.mode
+        feed.setMode(msg.mode)
+        broadcast({ type: 'state', state })
+        // Report the switch immediately so the source label doesn't wait for the
+        // next poll (live polls can be 90s apart).
+        broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length })
         return
     }
   }

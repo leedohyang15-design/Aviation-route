@@ -572,16 +572,30 @@ export class Globe {
       this.applyInteractiveView()
       this.emitView()
     }
-    // Tab / Shift+Tab step through the planes (arrows work too). Manual, so it
-    // resets the attract countdown.
+    // Arrow keys pan the map (left/right spins the globe, up/down tilts);
+    // Tab / Shift+Tab step through the planes. Both are manual input, so they
+    // reset the attract countdown.
     const onKey = (ev: KeyboardEvent) => {
-      const fwd = ev.key === 'Tab' || ev.key === 'ArrowRight' || ev.key === 'ArrowDown'
-      const back = ev.key === 'ArrowLeft' || ev.key === 'ArrowUp' || (ev.key === 'Tab' && ev.shiftKey)
-      if (!fwd && !back) return
+      const panX = ev.key === 'ArrowLeft' ? -1 : ev.key === 'ArrowRight' ? 1 : 0
+      const panY = ev.key === 'ArrowUp' ? 1 : ev.key === 'ArrowDown' ? -1 : 0
+      if (panX || panY) {
+        ev.preventDefault()
+        this.resetAttract() // operator is here — postpone the auto-demo
+        this.clearTarget() // panning = exploring → drop the tracked plane
+        // Step proportionally to the zoom so one press moves the same fraction
+        // of the screen however far in the operator is.
+        const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
+        if (panX) this.iCenterLon = wrapLon(this.iCenterLon + panX * 20 * s)
+        if (panY) this.iCenterLat += panY * 10 * s
+        this.applyInteractiveView() // clamps latitude to keep the view on the map
+        this.emitView()
+        return
+      }
+      if (ev.key !== 'Tab') return
       ev.preventDefault()
       const order = this.order
       if (!order.length) return
-      const dir = back ? -1 : 1
+      const dir = ev.shiftKey ? -1 : 1
       const cur = this.selected ? order.indexOf(this.selected) : -1
       const next = order[(((cur + dir) % order.length) + order.length) % order.length]
       this.resetAttract()
