@@ -15,8 +15,18 @@ export function loadEnv(file = '.env'): void {
   // Windows Notepad silently saves ".env" as ".env.txt" (hidden extension), so
   // accept that spelling too — it's the #1 reason a dropped-in .env "does nothing".
   const names = [file, `${file}.txt`]
+  const seen = new Set<string>()
   const candidates: string[] = []
-  for (const d of dirs) for (const n of names) candidates.push(resolve(d, n))
+  for (const d of dirs) {
+    for (const n of names) {
+      const p = resolve(d, n)
+      // cwd and the exe's directory are the same when launched in place — don't
+      // list the same path twice in the log.
+      if (seen.has(p)) continue
+      seen.add(p)
+      candidates.push(p)
+    }
+  }
 
   let text: string | null = null
   let path = ''

@@ -46,8 +46,40 @@ OPENSKY_CLIENT_ID=your-id
 OPENSKY_CLIENT_SECRET=your-secret
 ```
 
-- 자격증명 발급: https://opensky-network.org/ (계정 → API client)
+- 자격증명 발급: https://opensky-network.org/ (계정 → **API client**. 로그인 아이디/비번이
+  아니라 client id/secret 을 따로 발급받아야 한다. 잘못 넣으면 로그에 `invalid_client`.)
 - 폴링 간격은 기본 90초. 바꾸려면 `.env` 에 `OPENSKY_POLL_INTERVAL_MS=90000` 추가.
+- 시뮬레이션 비행기 수는 기본 6000대. `.env` 에 `MOCK_AIRCRAFT_COUNT=6000` 으로 조절.
+
+### 문제 진단 로그
+
+exe 옆에 **`aviation-route.log`** 가 자동으로 생긴다. 실데이터가 안 붙을 때 이 파일부터 본다.
+
+| 로그 내용 | 원인 | 해결 |
+|---|---|---|
+| `[env] no .env found` | 위치/이름 문제 | `.env` 를 **exe 와 같은 폴더**에 (`.env.txt` 도 인식) |
+| `credentials: NO` | 키 형식 문제 | `OPENSKY_CLIENT_ID=...` / `OPENSKY_CLIENT_SECRET=...` 두 줄인지 확인 |
+| `invalid_client` | 자격증명 오류 | OpenSky **API client** id/secret 재확인 |
+| `429 ... credits` | 크레딧 소진 | 하루 지나면 자동 복구(그동안 시뮬레이션이 화면을 채움) |
+
+## 3-1. 다른 PC로 옮기기 (배포)
+
+소스 폴더를 통째로 압축해 보내면 안 된다(Node·npm 설치 후 빌드해야 함). **빌드 결과물만**
+보내면 받는 쪽은 아무것도 설치할 필요가 없다.
+
+**방법 A — 폴더 복사(간단):** `dist\win-unpacked\` 폴더를 통째로 zip 해서 전달(약 200~300MB).
+받은 PC에서 압축 풀고 `Aviation Route.exe` 실행. 지구 텍스처·공항 한글표는 exe 안에 포함돼 있다.
+
+**방법 B — 설치 파일:** `npm run dist:win` 으로 만든 `dist\Aviation Route Setup <버전>.exe`
+한 개만 전달.
+
+주의:
+- 실데이터를 쓰려면 **`.env` 를 exe 와 같은 폴더에 함께** 넣어 보낸다. `.env` 에는 OpenSky
+  **비밀키가 들어있으니** 외부에 배포할 때는 제외한다(빼면 시뮬레이션으로 동작).
+- 서명이 없어 첫 실행 시 SmartScreen "알 수 없는 게시자" 경고가 뜬다 →
+  **추가 정보 → 실행** (또는 exe 우클릭 → 속성 → **차단 해제**).
+- **지구 텍스처는 빌드 시점에 exe 안으로 들어간다.** `public/` 에 이미지를 나중에 넣었다면
+  반드시 **다시 빌드**해야 반영된다.
 
 ## 4. 전시 PC 세팅 (무인 운영)
 

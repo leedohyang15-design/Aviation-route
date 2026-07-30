@@ -91,6 +91,26 @@ export function greatCirclePoints(a: GeoPoint, b: GeoPoint, segments = 128): Geo
   return out
 }
 
+/**
+ * A single point at fraction `t` (0..1) along the great circle a→b. Same slerp
+ * as `greatCirclePoints`, but without building the whole path — used by the mock
+ * feed, which advances thousands of planes on every tick and only ever needs
+ * each one's current position.
+ */
+export function greatCirclePointAt(a: GeoPoint, b: GeoPoint, t: number): GeoPoint {
+  const va = toVec(a.lon, a.lat)
+  const vb = toVec(b.lon, b.lat)
+  let dot = va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2]
+  dot = Math.max(-1, Math.min(1, dot))
+  const omega = Math.acos(dot)
+  if (!isFinite(omega) || omega < 1e-6) return a
+
+  const sinOmega = Math.sin(omega)
+  const s0 = Math.sin((1 - t) * omega) / sinOmega
+  const s1 = Math.sin(t * omega) / sinOmega
+  return toGeo([s0 * va[0] + s1 * vb[0], s0 * va[1] + s1 * vb[1], s0 * va[2] + s1 * vb[2]])
+}
+
 /** Great-circle distance between two points in kilometres. */
 export function greatCircleDistanceKm(a: GeoPoint, b: GeoPoint): number {
   const R = 6371

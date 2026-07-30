@@ -32,6 +32,13 @@ export const OPENSKY_POLL_INTERVAL_MS = Number(readEnv('OPENSKY_POLL_INTERVAL_MS
 /** Poll interval (ms) for the mock feed (no credit limits — can be brisk). */
 export const MOCK_POLL_INTERVAL_MS = Number(readEnv('MOCK_POLL_INTERVAL_MS') ?? 5000)
 
+/**
+ * How many aircraft the simulation flies. Roughly matches what OpenSky reports
+ * airborne worldwide at a given moment, so the simulated sky looks as busy as
+ * the real one. Stays under the renderer's instance CAPACITY (16000).
+ */
+export const MOCK_AIRCRAFT_COUNT = Number(readEnv('MOCK_AIRCRAFT_COUNT') ?? 6000)
+
 /** Equirectangular render target. Must stay exactly 2:1 for sphere projection. */
 export const EQUIRECT_WIDTH = Number(readEnv('EQUIRECT_WIDTH') ?? 4096)
 export const EQUIRECT_HEIGHT = EQUIRECT_WIDTH / 2
