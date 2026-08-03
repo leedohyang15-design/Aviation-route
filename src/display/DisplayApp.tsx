@@ -86,7 +86,10 @@ export function DisplayApp(): JSX.Element {
     }
   }, [])
 
-  useEffect(() => globeRef.current?.clearObjects(), [isSat])
+  useEffect(() => {
+    globeRef.current?.setObjectKind(isSat ? 'satellite' : 'aircraft')
+    globeRef.current?.clearObjects()
+  }, [isSat])
   useEffect(() => {
     if (!isSat) globeRef.current?.setAircraft(visible)
   }, [isSat, visible])
@@ -99,12 +102,19 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setRoute(route.points), [route])
   useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
   useEffect(() => {
+    // Satellites have no origin or destination, so never carry the aviation
+    // place names and flags across a mode switch.
+    if (isSat) {
+      globeRef.current?.setEndpointLabels(null, null)
+      globeRef.current?.setEndpointFlags(null, null)
+      return
+    }
     globeRef.current?.setEndpointLabels(d?.origin?.city ?? null, d?.destination?.city ?? null)
     globeRef.current?.setEndpointFlags(
       d?.origin?.countryCode ?? null,
       d?.destination?.countryCode ?? null
     )
-  }, [d])
+  }, [isSat, d])
   useEffect(() => globeRef.current?.setInfoLabel(infoLines), [infoLines])
 
   return (

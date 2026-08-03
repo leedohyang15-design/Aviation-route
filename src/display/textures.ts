@@ -174,3 +174,64 @@ export function orbitColor(orbit: string): THREE.Color {
       return new THREE.Color('#5ce1e6')
   }
 }
+
+/** A plain filled dot — what unselected satellites are drawn as. Sixteen
+ * thousand icons overlap into noise, whereas dots read as a swarm, which is
+ * what a satellite constellation actually looks like. No outline, because at
+ * this size an outline is most of the pixel. */
+export function plainDotTexture(): THREE.CanvasTexture {
+  const s = 64
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.55, 'rgba(255,255,255,0.95)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = grad
+  g.beginPath()
+  g.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2)
+  g.fill()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** The selected satellite: a body with two solar panels, drawn white so the
+ * per-object colour tints it. Unmistakably not an aeroplane, which is the whole
+ * point — only one is ever on screen, so the detail costs nothing. */
+export function satelliteTexture(): THREE.CanvasTexture {
+  const s = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  g.translate(s / 2, s / 2)
+  g.fillStyle = '#ffffff'
+  g.strokeStyle = '#ffffff'
+  g.lineCap = 'round'
+
+  // Body.
+  g.fillRect(-13, -18, 26, 36)
+  // Booms out to each panel.
+  g.lineWidth = 5
+  g.beginPath()
+  g.moveTo(-13, 0)
+  g.lineTo(-24, 0)
+  g.moveTo(13, 0)
+  g.lineTo(24, 0)
+  g.stroke()
+  // Solar panels, with a gap so the cells read at a glance.
+  for (const dir of [-1, 1]) {
+    const x = dir === -1 ? -56 : 24
+    g.fillRect(x, -20, 32, 17)
+    g.fillRect(x, 3, 32, 17)
+  }
+  // Dish on top.
+  g.beginPath()
+  g.arc(0, -24, 8, 0, Math.PI * 2)
+  g.fill()
+
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}

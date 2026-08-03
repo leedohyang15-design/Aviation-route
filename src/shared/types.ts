@@ -173,14 +173,20 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
   // Start with only identifiable aircraft (passenger/cargo/military) shown; the
   // operator can turn the toggle off to reveal the unknown long tail.
-  filter: { airborneOnly: true, scheduledOnly: true, routeOnly: true },
+  // Route-less aircraft stay visible: only ~5% of identifiable callsigns
+  // genuinely lack a route, and hiding them meant waiting on a full lookup pass
+  // before the map settled. Lookups still run, so selecting one is instant.
+  filter: { airborneOnly: true, scheduledOnly: true, routeOnly: false },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },
   dayNightHour: null, // live time
   feedMode: 'auto', // real data by default; the operator can force simulation
   mode: 'flight',
-  hiddenOrbits: []
+  // Starlink is roughly two thirds of the catalogue and swamps everything else,
+  // so it starts hidden; turning the chip on makes the shells appear at once,
+  // which reads as a reveal rather than as noise.
+  hiddenOrbits: ['starlink']
 }
 
 // ---------------------------------------------------------------------------

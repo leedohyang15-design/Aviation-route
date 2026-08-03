@@ -72,7 +72,10 @@ export function MapView({
   }, [])
 
   // Wipe the previous layer's objects so they don't linger under the new one.
-  useEffect(() => globeRef.current?.clearObjects(), [mode])
+  useEffect(() => {
+    globeRef.current?.setObjectKind(mode === 'satellite' ? 'satellite' : 'aircraft')
+    globeRef.current?.clearObjects()
+  }, [mode])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
   }, [mode, aircraft])

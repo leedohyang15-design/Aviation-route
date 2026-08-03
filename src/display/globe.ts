@@ -27,7 +27,9 @@ import {
   textTexture,
   infoTexture,
   categoryColor,
-  orbitColor
+  orbitColor,
+  plainDotTexture,
+  satelliteTexture
 } from './textures'
 
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
@@ -75,9 +77,25 @@ export class Globe {
     transparent: true,
     opacity: 0.4
   })
+  /** Orbits are drawn as one continuous line: a satellite has no departure to
+   * have flown from, so splitting the track into "done" and "to go" would be
+   * inventing a story the object doesn't have. */
+  private orbitMat = new LineMaterial({
+    color: 0x5ce1e6,
+    linewidth: 3,
+    transparent: true,
+    opacity: 0.75
+  })
   private raf = 0
   private lastFrame = 0
 
+  /** Which kind of object is on screen. Satellites are drawn as dots (an icon
+   * per object is unreadable at catalogue scale) and have no origin/destination,
+   * so several pieces of the flight presentation are suppressed for them. */
+  private kind: 'aircraft' | 'satellite' = 'aircraft'
+  private planeTex!: THREE.Texture
+  private dotTex!: THREE.CanvasTexture
+  private satTex!: THREE.CanvasTexture
   private eased = new Map<string, Eased>()
   /** Aircraft with a confirmed route, so auto-pick can favour them. */
   private routed = new Set<string>()
@@ -204,6 +222,9 @@ export class Globe {
     // --- Aircraft: every plane is a small airplane icon, colored by altitude ---
     const planeTex = new THREE.TextureLoader().load(PLANE_DATA_URI)
     planeTex.colorSpace = THREE.SRGBColorSpace
+    this.planeTex = planeTex
+    this.dotTex = plainDotTexture()
+    this.satTex = satelliteTexture()
     const quad = new THREE.PlaneGeometry(0.011, 0.011)
     this.planes = new THREE.InstancedMesh(
       quad,
@@ -803,6 +824,36 @@ export class Globe {
     this.order = this.order.filter((id) => this.eased.has(id))
   }
 
+  /**
+   * Switch what the renderer is drawing. Swaps the instance and selection
+   * textures, and gates the aircraft-only furniture (endpoint markers, place
+   * names, flags, flown/remaining split) that makes no sense for an orbit.
+   */
+  setObjectKind(kind: 'aircraft' | 'satellite'): void {
+    if (kind === this.kind) return
+    this.kind = kind
+    const inst = this.planes.material as THREE.MeshBasicMaterial
+    const selMat = this.selectedPlane.material as THREE.MeshBasicMaterial
+    inst.map = kind === 'satellite' ? this.dotTex : this.planeTex
+    // A dot has no silhouette to clip, and alphaTest would eat its soft edge.
+    inst.alphaTest = kind === 'satellite' ? 0 : 0.35
+    inst.needsUpdate = true
+    selMat.map = kind === 'satellite' ? this.satTex : this.planeTex
+    selMat.needsUpdate = true
+    if (kind === 'satellite') {
+      for (const m of [
+        this.originMarker,
+        this.destMarker,
+        this.originLabel,
+        this.destLabel,
+        this.originFlag,
+        this.destFlag
+      ]) {
+        m.visible = false
+      }
+    }
+  }
+
   /** Drop every tracked object — used when switching layers so the old one
    * doesn't linger while the new one's first snapshot is in flight. */
   clearObjects(): void {
@@ -963,11 +1014,16 @@ export class Globe {
     flush()
   }
 
-  /** Rebuild the route split at `idx`: flown (origin→now) red, remaining faint. */
+  /** Rebuild the route split at `idx`: flown (origin→now) red, remaining faint.
+   * Orbits skip the split and draw as a single line. */
   private buildRoute(idx: number): void {
     this.disposeRouteGroup()
     const pts = this.routePoints
     if (!pts) return
+    if (this.kind === 'satellite') {
+      if (pts.length >= 2) this.addRouteLines(pts, this.orbitMat)
+      return
+    }
     const remaining = pts.slice(idx)
     const flown = pts.slice(0, idx + 1)
     if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat)
@@ -1042,7 +1098,8 @@ export class Globe {
       const angle = screenAngle(e.heading, e.lat) // align icon to on-screen motion
       const isSel = id === this.selected
       this.dummy.position.set(u, 1 - v, 0)
-      this.dummy.rotation.z = angle
+      // A dot has no nose to point, and rotating one only makes it shimmer.
+      this.dummy.rotation.z = this.kind === 'satellite' ? 0 : angle
       this.dummy.scale.set(this.planeBaseScale, this.planeBaseScale, 1)
       this.dummy.updateMatrix()
       this.planes.setMatrixAt(i, this.dummy.matrix)
@@ -1081,7 +1138,20 @@ export class Globe {
           this.infoLabel.visible = true
         }
         // Reposition origin/destination markers (they move with the pan offset).
-        if (this.routePoints) {
+        // Orbits have no endpoints — an orbit is a loop, so a "from" marker and a
+        // place name would both be fiction. Skipped entirely for satellites.
+        if (this.routePoints && this.kind === 'satellite') {
+          for (const m of [
+            this.originMarker,
+            this.destMarker,
+            this.originLabel,
+            this.destLabel,
+            this.originFlag,
+            this.destFlag
+          ]) {
+            m.visible = false
+          }
+        } else if (this.routePoints) {
           const o = this.routePoints[0]
           const de = this.routePoints[this.routePoints.length - 1]
           const op = projectNorm(o.lon, o.lat, this.lonOffset)
@@ -1272,6 +1342,7 @@ export class Globe {
     // Fat lines need the drawing-buffer resolution in pixels.
     this.flownMat.resolution.set(rw * pr, rh * pr)
     this.remainMat.resolution.set(rw * pr, rh * pr)
+    this.orbitMat.resolution.set(rw * pr, rh * pr)
   }
 
   dispose(): void {

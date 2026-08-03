@@ -264,22 +264,163 @@ body,
   display: none;
 }
 
-/* An imminent overhead pass is the one line visitors look for — make it glow
-   instead of reading like the neutral "no route" notice it shares styling with. */
-.bp-noroute.soon {
-  color: #04121f;
-  background: rgba(143, 227, 160, 0.92);
+/* ---------------------------------------------------------------------------
+   Satellite readout — a console, not a boarding pass.
+   Fixed-width labels, instrument tiles and corner brackets, so switching modes
+   feels like switching instruments rather than re-skinning the same card.
+   --------------------------------------------------------------------------- */
+.sat-panel {
+  position: relative;
+  padding: 16px 18px 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(92, 225, 230, 0.4);
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(92, 225, 230, 0.045) 0px,
+      rgba(92, 225, 230, 0.045) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    linear-gradient(160deg, rgba(9, 20, 34, 0.97), rgba(6, 13, 24, 0.97));
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.55),
+    inset 0 0 40px rgba(92, 225, 230, 0.06);
+  color: #dCEcf5;
+  font-variant-numeric: tabular-nums;
+}
+/* Corner brackets — the cheapest way to read as instrumentation. */
+.sat-bracket {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(92, 225, 230, 0.85);
+  pointer-events: none;
+}
+.sat-bracket.tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.sat-bracket.tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+.sat-bracket.bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+.sat-bracket.br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+.sat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(92, 225, 230, 0.22);
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.sat-head-title { color: #5ce1e6; }
+.sat-head-id { color: #6b8299; }
+
+.sat-name {
+  margin-top: 12px;
+  font-size: 19px;
   font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.sat-class {
+  margin-top: 3px;
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #8fb4c9;
 }
 
-/* Plain-language orbit notes under the numbers. */
-.sat-story {
-  margin: 8px 0 0;
-  padding-left: 16px;
+/* The hero: how long until it's overhead. */
+.sat-pass {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(92, 225, 230, 0.28);
+  background: rgba(92, 225, 230, 0.07);
+}
+.sat-pass.soon {
+  border-color: rgba(143, 227, 160, 0.75);
+  background: rgba(143, 227, 160, 0.14);
+  box-shadow: inset 0 0 26px rgba(143, 227, 160, 0.12);
+}
+.sat-pass-label {
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7f9bb0;
+}
+.sat-pass-big {
+  margin-top: 2px;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: #b8f2f5;
+}
+.sat-pass.soon .sat-pass-big {
+  color: #a8f5b8;
+}
+.sat-pass-unit {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+}
+.sat-pass-caption {
+  margin-top: 4px;
   font-size: 12px;
-  line-height: 1.55;
-  color: #b9c8dc;
+  color: #c2d6e4;
+}
+
+/* Instrument tiles. */
+.sat-tiles {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: rgba(92, 225, 230, 0.18);
+  border: 1px solid rgba(92, 225, 230, 0.18);
+}
+.sat-tile {
+  padding: 9px 10px;
+  background: rgba(7, 15, 27, 0.96);
+}
+.sat-tile-label {
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: #6b8299;
+}
+.sat-tile-value {
+  margin-top: 1px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #e6f4fa;
+}
+.sat-tile-unit {
+  margin-left: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #7f9bb0;
+}
+
+/* Plain-language notes — the bit that makes the numbers mean something. */
+.sat-story {
+  margin: 12px 0 0;
+  padding-left: 15px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #a8c0d2;
 }
 .sat-story li {
   margin: 2px 0;
+}
+
+.sat-loading {
+  padding: 18px 0 6px;
+  font-size: 13px;
+  color: #8fb4c9;
 }
