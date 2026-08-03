@@ -16,7 +16,14 @@ import { hasOpenSkyCredentials } from './opensky'
 import { createResilientFeed, type SwitchableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { opsLog } from './log'
-import { hasRoute, resolveRoutes, loadRouteCache, saveRouteCache } from './routes'
+import {
+  hasRoute,
+  resolveRoutes,
+  loadRouteCache,
+  saveRouteCache,
+  startRouteResolver,
+  stopRouteResolver
+} from './routes'
 import { isKnownFlight } from '../src/common/flightClass'
 
 export interface Hub {
@@ -46,6 +53,8 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   // Yesterday's answers are almost all still valid, so start from the saved
   // cache instead of re-asking adsbdb for every callsign.
   loadRouteCache()
+  // Lookups run on their own clock, independent of the OpenSky poll cycle.
+  startRouteResolver()
   // Bind explicitly to the IPv4 loopback so it always matches the windows'
   // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
   // firewall prompt that a 0.0.0.0 bind would trigger).
@@ -118,8 +127,9 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
       if (known === undefined) pending.push({ callsign: a.callsign, lat: a.lat, lon: a.lon })
       return known === undefined ? a : { ...a, hasRoute: known }
     })
-    // Deliberately not awaited: results land in the cache for the next snapshot.
-    if (pending.length) void resolveRoutes(pending)
+    // Queue only; the resolver loop drains it in the background and results
+    // land in the cache for a later snapshot.
+    if (pending.length) resolveRoutes(pending)
     return out
   }
 
@@ -197,6 +207,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   return {
     close() {
       feed.stop()
+      stopRouteResolver()
       saveRouteCache()
       wss.close()
     }

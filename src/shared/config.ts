@@ -42,11 +42,13 @@ export const MOCK_AIRCRAFT_COUNT = Number(readEnv('MOCK_AIRCRAFT_COUNT') ?? 6000
 /**
  * Route lookup (adsbdb). OpenSky's snapshot has no origin/destination, so routes
  * are resolved by callsign and cached; aircraft confirmed to have no route are
- * hidden. adsbdb answers one callsign per request, so this budget is spread
- * evenly across each poll interval (90s / 120 ≈ one request per 750ms) to keep a
- * steady, low load on a free service. Raise it to fill the cache faster.
+ * hidden. adsbdb answers one callsign per request, so a background loop makes one
+ * request every this many milliseconds — a steady, low load on a free service,
+ * deliberately independent of the poll interval. 400ms ≈ 2.5/s clears a typical
+ * ~4,000-callsign backlog in under half an hour, and the disk cache means that
+ * cost is paid roughly once a day. Lower it to converge faster.
  */
-export const ROUTE_LOOKUP_PER_POLL = Number(readEnv('ROUTE_LOOKUP_PER_POLL') ?? 120)
+export const ROUTE_LOOKUP_INTERVAL_MS = Number(readEnv('ROUTE_LOOKUP_INTERVAL_MS') ?? 400)
 /** Cap on cached callsigns; the oldest are dropped when the file is written. */
 export const ROUTE_CACHE_MAX = Number(readEnv('ROUTE_CACHE_MAX') ?? 20000)
 /** How long a resolved route stays cached (routes rarely change mid-day). */

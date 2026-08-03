@@ -8,11 +8,11 @@
 // sees them.
 //
 // Routes come from adsbdb, which answers one callsign per request. There is no
-// batch endpoint, so instead of bursting we spread the requests evenly across
-// the poll interval — a steady trickle rather than a flood on a free service —
-// and cache every answer, including "no route", so each callsign is asked about
-// once rather than once per poll. The cache is also written to disk, so a kiosk
-// restarted the next morning starts warm instead of re-asking for everything.
+// batch endpoint, so a background loop works through a queue at a steady, gentle
+// rate rather than bursting, and every answer — including "no route" — is cached
+// so each callsign is asked about once rather than once per poll. The cache is
+// also written to disk, so a kiosk restarted the next morning starts warm
+// instead of re-asking for everything.
 //
 // (An earlier version used adsb.lol's routeset endpoint, which takes a list of
 // planes per request. It was removed: that endpoint answers every request —
@@ -26,11 +26,10 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { cityKo } from '../src/common/airports'
 import {
-  ROUTE_LOOKUP_PER_POLL,
+  ROUTE_LOOKUP_INTERVAL_MS,
   ROUTE_CACHE_TTL_MS,
   ROUTE_NEGATIVE_TTL_MS,
-  ROUTE_CACHE_MAX,
-  OPENSKY_POLL_INTERVAL_MS
+  ROUTE_CACHE_MAX
 } from '../src/shared/config'
 import { opsLog } from './log'
 
@@ -148,75 +147,102 @@ export async function lookupRoute(callsign: string): Promise<RoutePorts | null> 
   return { airline: fr.airline?.name, origin, destination }
 }
 
-// Only one resolution pass runs at a time; a poll arriving mid-pass is skipped
-// rather than stacking requests on a free API.
-let running = false
-/** Poll cycles to sit out after a 429, decremented once per pass. */
-let cooldown = 0
+// ---------------------------------------------------------------------------
+// Resolver loop
+// ---------------------------------------------------------------------------
+//
+// The queue of callsigns to look up is refreshed from every snapshot, but the
+// looking-up runs on its OWN clock. Pacing a fixed batch across the poll
+// interval — the obvious-looking design — makes a pass last exactly as long as
+// the interval, so the next poll's call always lands mid-pass and is dropped,
+// halving throughput. Keeping the two independent removes that entirely.
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/** Callsigns waiting to be looked up, in arrival order. */
+const queue: string[] = []
+const queued = new Set<string>()
+let timer: ReturnType<typeof setTimeout> | null = null
+let busy = false
+/** While set, the loop idles (adsbdb asked us to slow down, or is unreachable). */
+let pausedUntil = 0
+const RATE_LIMIT_PAUSE_MS = 60_000
+
+// Running totals for a periodic summary; per-lookup logging would flood the file.
+let found = 0
+let none = 0
+let failed = 0
+const LOG_EVERY = 100
 
 /**
- * Resolve routes for any of these planes we haven't asked about yet, pacing the
- * requests evenly across one poll interval. Callsigns adsbdb has no entry for
- * are cached as "no route" so they aren't retried every cycle.
+ * Queue any of these planes we haven't asked about yet. Cheap and synchronous —
+ * the hub calls this on every snapshot and the loop drains it in the background.
  */
-export async function resolveRoutes(planes: { callsign: string }[]): Promise<void> {
-  if (running) return
-  if (cooldown > 0) {
-    cooldown--
-    return
-  }
-  const pending: string[] = []
-  const seen = new Set<string>()
+export function resolveRoutes(planes: { callsign: string }[]): void {
   for (const p of planes) {
     const cs = norm(p.callsign)
-    if (!cs || seen.has(cs) || fresh(cache.get(cs))) continue
-    seen.add(cs)
-    pending.push(cs)
+    if (!cs || queued.has(cs) || fresh(cache.get(cs))) continue
+    queued.add(cs)
+    queue.push(cs)
   }
-  if (!pending.length) return
+}
 
-  running = true
-  const work = pending.slice(0, ROUTE_LOOKUP_PER_POLL)
-  // Spread the budget across the poll interval instead of bursting: a steady
-  // ~1 request/second rather than hundreds at once.
-  const gap = Math.max(0, Math.floor(OPENSKY_POLL_INTERVAL_MS / Math.max(1, ROUTE_LOOKUP_PER_POLL)))
-  let found = 0
-  let none = 0
-  let failed = 0
+function logProgress(): void {
+  const done = found + none
+  const mins = Math.round((queue.length * ROUTE_LOOKUP_INTERVAL_MS) / 60000)
+  opsLog(
+    `[routes] ${done} lookups — route ${found} / none ${none}` +
+      `${failed ? ` / failed ${failed}` : ''}; cache ${cache.size}, ` +
+      `${queue.length} queued${queue.length ? ` (≈${mins}분 남음)` : ''}`
+  )
+}
+
+async function tick(): Promise<void> {
+  if (busy) return
+  if (Date.now() < pausedUntil) return
+  const cs = queue.shift()
+  if (cs === undefined) return
+  queued.delete(cs)
+  busy = true
   try {
-    for (const cs of work) {
-      try {
-        const ports = await lookupRoute(cs)
-        cacheRoute(cs, ports)
-        if (ports) found++
-        else none++
-      } catch (err) {
-        if (err instanceof RateLimited) {
-          cooldown = 2 // sit out a couple of cycles before trying again
-          opsLog(`[routes] adsbdb rate-limited — pausing lookups for ${cooldown} poll cycles`)
-          break
-        }
-        // Transport error: leave this callsign unknown (plane stays visible).
-        if (++failed >= 10) {
-          opsLog(`[routes] adsbdb unreachable (${(err as Error).message}) — retrying next poll`)
-          break
-        }
+    const ports = await lookupRoute(cs)
+    cacheRoute(cs, ports)
+    if (ports) found++
+    else none++
+    failed = 0 // a success means the API is healthy again
+    if ((found + none) % LOG_EVERY === 0) {
+      logProgress()
+      saveIfDue()
+    }
+  } catch (err) {
+    if (err instanceof RateLimited) {
+      pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS
+      opsLog(`[routes] adsbdb rate-limited — pausing lookups for ${RATE_LIMIT_PAUSE_MS / 1000}s`)
+    } else {
+      // Transport error: leave this callsign unknown (its plane stays visible)
+      // and re-queue it at the back so it isn't lost to a passing blip.
+      queue.push(cs)
+      queued.add(cs)
+      if (++failed === 10) {
+        opsLog(`[routes] adsbdb unreachable (${(err as Error).message}) — backing off 60s`)
+        pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS
+        failed = 0
       }
-      if (gap) await sleep(gap)
     }
   } finally {
-    running = false
+    busy = false
   }
-  if (found || none || failed) {
-    const left = pending.length - found - none
-    opsLog(
-      `[routes] adsbdb ${found + none} lookups — route ${found} / none ${none}` +
-        `${failed ? ` / failed ${failed}` : ''}; cache ${cache.size}, ${left} queued`
-    )
-  }
-  saveIfDue()
+}
+
+/** Start the background resolver. Idles when the queue is empty. */
+export function startRouteResolver(): void {
+  if (timer) return
+  timer = setInterval(() => void tick(), ROUTE_LOOKUP_INTERVAL_MS)
+  // Don't hold the process open just for lookups.
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+}
+
+export function stopRouteResolver(): void {
+  if (timer) clearInterval(timer)
+  timer = null
 }
 
 // ---------------------------------------------------------------------------
