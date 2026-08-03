@@ -47,7 +47,7 @@ export function ControlApp(): JSX.Element {
   const perCategory = useMemo(() => {
     const counts: Record<CategoryKey, number> = { passenger: 0, cargo: 0, military: 0, other: 0 }
     for (const a of applyFilter(aircraft, { ...state.filter, hiddenCategories: [] }, state.selected)) {
-      counts[categoryKey(a.callsign)]++
+      counts[categoryKey(a.callsign, null, a.hasRoute)]++
     }
     return counts
   }, [aircraft, state.filter, state.selected])

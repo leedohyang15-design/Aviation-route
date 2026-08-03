@@ -7,12 +7,18 @@ import { Globe } from './globe'
 // top-left; the rest of the output stays black.
 const FRAME = { w: 1664, h: 838 }
 
-/** A duration as a big figure and the words around it. */
-function hhmm(sec: number): { lead: string; unit: string } {
+/** A duration as the figure that goes in the callout's accent slot. */
+function hhmm(sec: number): string {
   const m = Math.max(0, Math.round(sec / 60))
-  if (m < 60) return { lead: String(m), unit: '분' }
-  return { lead: `${Math.floor(m / 60)}시간 ${m % 60}분`, unit: '' }
+  return m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`
 }
+
+interface Callout {
+  prefix: string
+  value: string
+  suffix: string
+}
+const NOTHING: Callout = { prefix: '', value: '', suffix: '' }
 
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -41,21 +47,28 @@ export function DisplayApp(): JSX.Element {
    * single number a visitor actually wants from across a room: how long until it
    * gets there, or until it passes over us.
    */
-  const callout = useMemo<{ lead: string; rest: string }>(() => {
+  const callout = useMemo<Callout>(() => {
     if (isSat) {
-      const sd = state.selected && satDetail?.id === state.selected ? satDetail : null
-      if (!sd) return { lead: '', rest: '' }
-      if (sd.overheadNow) return { lead: '지금', rest: '우리 머리 위!' }
-      if (sd.nextPassSec == null) return { lead: '', rest: '' }
-      const { lead, unit } = hhmm(sd.nextPassSec)
-      return { lead, rest: `${unit} 뒤 머리 위를 지나가요` }
+      if (!state.selected) return NOTHING
+      const sd = satDetail?.id === state.selected ? satDetail : null
+      if (!sd) return { ...NOTHING, prefix: '위성을 찾는 중이에요' }
+      if (sd.overheadNow) return { prefix: '지금', value: '우리 머리 위', suffix: '' }
+      if (sd.nextPassSec == null) return { ...NOTHING, prefix: '우리나라 위로는 지나가지 않아요' }
+      return { prefix: '머리 위까지', value: hhmm(sd.nextPassSec), suffix: '남음' }
     }
-    if (!sel || !d || d.etaRemainingSec == null || d.etaRemainingSec <= 0) {
-      return { lead: '', rest: '' }
-    }
-    const { lead, unit } = hhmm(d.etaRemainingSec)
+    if (!sel) return NOTHING
+    // Once something is selected the frame always says SOMETHING about it. An
+    // empty callout used to be the outcome for two ordinary cases — a flight on
+    // final approach with nothing left to count down, and one whose route we
+    // don't have — and in both the dome just went quiet with a plane
+    // highlighted on it and no explanation.
+    if (!d) return { ...NOTHING, prefix: '정보를 불러오는 중이에요' }
     const where = d.destination?.city ?? d.destination?.code
-    return { lead, rest: `${unit} 뒤 ${where ? `${where}에 ` : ''}도착해요` }
+    if (!d.route) return { ...NOTHING, prefix: d.noRouteReason ?? '경로 정보가 없어요' }
+    if (d.etaRemainingSec == null || d.etaRemainingSec < 60) {
+      return { ...NOTHING, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
+    }
+    return { prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
   }, [isSat, state.selected, satDetail, sel, d])
 
   useEffect(() => {
@@ -103,7 +116,7 @@ export function DisplayApp(): JSX.Element {
       d?.destination?.countryCode ?? null
     )
   }, [isSat, d])
-  useEffect(() => globeRef.current?.setCallout(callout.lead, callout.rest), [callout])
+  useEffect(() => globeRef.current?.setCallout(callout.prefix, callout.value, callout.suffix), [callout])
 
   return (
     <div className="display-root">

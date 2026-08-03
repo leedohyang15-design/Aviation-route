@@ -90,13 +90,33 @@ export function flightCategory(callsign?: string | null, type?: string | null): 
   return null
 }
 
-/** Whether we can identify the aircraft as a real passenger, cargo, or military
- * flight — i.e. its callsign starts with a known airline (KAL, UAL, FDX…) or a
- * known cargo/military operator (RCH, GAF…). This is the "main aircraft" set the
- * exhibit shows by default; everything else (GA, private, blank/registration
- * callsigns) is the unidentifiable long tail that's hidden until the operator
- * turns the filter off. */
-export function isKnownFlight(callsign?: string | null): boolean {
+/**
+ * The shape of an ICAO flight callsign: a three-letter operator code followed
+ * by a flight number — KAL902, NGN4830, QTR65R, QLK562D.
+ *
+ * This is what actually separates a scheduled flight from a private one, and it
+ * does not depend on knowing the operator. Aircraft registrations, which is what
+ * general aviation transmits, do not have this shape: N172SP is one letter then
+ * digits, HL7788 and JA8088 are two, D-ABCD and G-ABCD are all letters. The
+ * three-then-digit pattern is the discriminator.
+ */
+const AIRLINE_CALLSIGN = /^[A-Z]{3}\d/
+
+/**
+ * Whether this is a real commercial or military flight rather than private or
+ * general-aviation traffic.
+ *
+ * This used to require the operator to be in our name table, which holds about a
+ * hundred carriers against several thousand worldwide — so major airlines we
+ * simply hadn't listed were being counted as private aircraft, and (worse) were
+ * excluded from route lookups, which is why they had no route either. Matching
+ * the callsign's shape covers every operator without a table to maintain, and a
+ * route that adsbdb has actually resolved settles it outright.
+ */
+export function isKnownFlight(callsign?: string | null, hasRoute?: boolean): boolean {
+  if (hasRoute === true) return true // adsbdb found a published route: it's a real flight
+  const cs = (callsign ?? '').toUpperCase().trim()
+  if (AIRLINE_CALLSIGN.test(cs)) return true
   return airlineFromCallsign(callsign) != null || flightCategory(callsign) != null
 }
 
@@ -115,10 +135,14 @@ export function isKnownFlight(callsign?: string | null): boolean {
  * their own colour keeps the numbers meaning what they say.
  */
 export type CategoryKey = 'passenger' | 'cargo' | 'military' | 'other'
-export function categoryKey(callsign?: string | null, type?: string | null): CategoryKey {
+export function categoryKey(
+  callsign?: string | null,
+  type?: string | null,
+  hasRoute?: boolean
+): CategoryKey {
   const cat = flightCategory(callsign, type)
   if (cat) return cat
-  return isKnownFlight(callsign) ? 'passenger' : 'other'
+  return isKnownFlight(callsign, hasRoute) ? 'passenger' : 'other'
 }
 
 /** Label for the info chip — only asserts a category we're confident about

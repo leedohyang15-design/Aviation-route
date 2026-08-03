@@ -150,7 +150,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     if (feed.source === 'mock') return snapshot
     const pending: { callsign: string; lat: number; lon: number }[] = []
     const out = snapshot.map((a) => {
-      if (!isKnownFlight(a.callsign)) return a
+      if (!isKnownFlight(a.callsign, a.hasRoute)) return a
       const known = hasRoute(a.callsign)
       if (known === undefined) pending.push({ callsign: a.callsign, lat: a.lat, lon: a.lon })
       return known === undefined ? a : { ...a, hasRoute: known }

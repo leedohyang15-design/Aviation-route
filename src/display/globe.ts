@@ -146,14 +146,29 @@ export class Globe {
     transparent: true,
     opacity: 0.4
   })
-  /** Orbits are drawn as one continuous line: a satellite has no departure to
+  /**
+   * Orbits are drawn as one continuous line: a satellite has no departure to
    * have flown from, so splitting the track into "done" and "to go" would be
-   * inventing a story the object doesn't have. */
+   * inventing a story the object doesn't have.
+   *
+   * Drawn as a bright core over a dark casing, rather than in a colour of its
+   * own. It was cyan, which is exactly the colour of a low-orbit dot — the line
+   * disappeared into the swarm it was drawn through. Every colour that reads
+   * well on the night side washes out over the daylit one and vice versa, so
+   * the casing does the work: white on near-black stands out against anything
+   * underneath it, and belongs to no orbit class.
+   */
+  private orbitCasingMat = new LineMaterial({
+    color: 0x0a1020,
+    linewidth: 8,
+    transparent: true,
+    opacity: 0.55
+  })
   private orbitMat = new LineMaterial({
-    color: 0x5ce1e6,
+    color: 0xffffff,
     linewidth: 3,
     transparent: true,
-    opacity: 0.75
+    opacity: 0.95
   })
   private raf = 0
   private lastFrame = 0
@@ -971,7 +986,7 @@ export class Globe {
       // coordinate becomes a visible phantom, so it checks for itself.
       if (!isPlausibleCoord(a.lon, a.lat)) continue
       seen.add(a.icao24)
-      const color = categoryColor(categoryKey(a.callsign))
+      const color = categoryColor(categoryKey(a.callsign, null, a.hasRoute))
       const h = ((a.heading ?? 0) * Math.PI) / 180
       const speed = a.onGround ? 0 : a.velocity ?? 0
       const cur = this.eased.get(a.icao24)
@@ -1162,11 +1177,11 @@ export class Globe {
 
   /** The single line of text the dome carries — how long until the aircraft
    * lands, or until the satellite passes overhead. Null clears it. */
-  setCallout(lead: string, rest: string): void {
+  setCallout(prefix: string, value: string, suffix: string): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
     mat.map?.dispose()
-    if (rest || lead) {
-      const { tex, aspect, screenH } = calloutTexture(lead, rest)
+    if (prefix || value || suffix) {
+      const { tex, aspect, screenH } = calloutTexture(prefix, value, suffix)
       mat.map = this.tuneSprite(tex)
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
@@ -1218,7 +1233,7 @@ export class Globe {
    * The seam (where projected u wraps 0↔1) depends on the pan offset, NOT on
    * geographic ±180, so we project first and cut where u jumps — otherwise the
    * line breaks mid-screen whenever the map is panned off the prime meridian. */
-  private addRouteLines(points: GeoPoint[], mat: LineMaterial): void {
+  private addRouteLines(points: GeoPoint[], mat: LineMaterial, z = 0.2): void {
     let positions: number[] = []
     let prevU = NaN
     const flush = () => {
@@ -1234,7 +1249,7 @@ export class Globe {
     for (const p of points) {
       const { u, v } = projectNorm(p.lon, p.lat, this.lonOffset)
       if (!Number.isNaN(prevU) && Math.abs(u - prevU) > 0.5) flush() // wrapped the seam
-      positions.push(u, 1 - v, 0.2)
+      positions.push(u, 1 - v, z)
       prevU = u
     }
     flush()
@@ -1247,7 +1262,10 @@ export class Globe {
     const pts = this.routePoints
     if (!pts) return
     if (this.kind === 'satellite') {
-      if (pts.length >= 2) this.addRouteLines(pts, this.orbitMat)
+      if (pts.length >= 2) {
+        this.addRouteLines(pts, this.orbitCasingMat, 0.18)
+        this.addRouteLines(pts, this.orbitMat, 0.22)
+      }
       return
     }
     const remaining = pts.slice(idx)
@@ -1648,6 +1666,7 @@ export class Globe {
     this.flownMat.resolution.set(rw * pr, rh * pr)
     this.remainMat.resolution.set(rw * pr, rh * pr)
     this.orbitMat.resolution.set(rw * pr, rh * pr)
+    this.orbitCasingMat.resolution.set(rw * pr, rh * pr)
   }
 
   dispose(): void {

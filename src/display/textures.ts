@@ -138,31 +138,34 @@ const SANS = `'Pretendard',system-ui,-apple-system,'Segoe UI',sans-serif`
 
 const SS = 3 // supersample: canvas pixels per design unit
 /** Design units spanning the frame height. Smaller number, bigger callout. */
-const CALLOUT_FRAME_H = 560
+const CALLOUT_FRAME_H = 780
 
 const CALLOUT_H = 50
-const CALLOUT_PAD = 20
+const CALLOUT_PAD = 17
 const EDGE_W = 5 // accent bar down the leading edge
 
 type Ctx = CanvasRenderingContext2D
 
 /**
- * A single line of large text on a plate: "도착까지 3시간 21분".
- * `lead` is set in the accent colour ahead of it, for the figure itself.
+ * One line on a plate: "도착까지 [11시간 37분] 남음", with the figure set large
+ * and in the accent colour and the words around it smaller.
  */
 export function calloutTexture(
-  lead: string,
-  rest: string
+  prefix: string,
+  value: string,
+  suffix: string
 ): { tex: THREE.CanvasTexture; aspect: number; screenH: number } {
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
-  const leadFont = `700 ${28 * SS}px ${MONO}`
-  const restFont = `600 ${21 * SS}px ${SANS}`
-  measuring.font = leadFont
-  const leadW = lead ? measuring.measureText(lead).width / SS : 0
-  measuring.font = restFont
-  const restW = measuring.measureText(rest).width / SS
-  const gap = lead && rest ? 9 : 0
-  const W = EDGE_W + CALLOUT_PAD + leadW + gap + restW + CALLOUT_PAD
+  const valueFont = `700 ${27 * SS}px ${MONO}`
+  const wordFont = `600 ${19 * SS}px ${SANS}`
+  measuring.font = wordFont
+  const preW = prefix ? measuring.measureText(prefix).width / SS : 0
+  const sufW = suffix ? measuring.measureText(suffix).width / SS : 0
+  measuring.font = valueFont
+  const valW = value ? measuring.measureText(value).width / SS : 0
+  const gap = 9
+  const gaps = (prefix && value ? gap : 0) + (value && suffix ? gap : 0)
+  const W = EDGE_W + CALLOUT_PAD + preW + valW + sufW + gaps + CALLOUT_PAD
 
   const c = document.createElement('canvas')
   c.width = Math.ceil(W * SS)
@@ -185,17 +188,25 @@ export function calloutTexture(
   g.fillRect(0, 0, EDGE_W * SS, c.height)
   g.restore()
 
-  const baseline = 34 * SS
+  const baseline = 33.5 * SS
   let x = (EDGE_W + CALLOUT_PAD) * SS
-  if (lead) {
-    g.font = leadFont
-    g.fillStyle = ACCENT
-    g.fillText(lead, x, baseline)
-    x += (leadW + gap) * SS
+  if (prefix) {
+    g.font = wordFont
+    g.fillStyle = INK
+    g.fillText(prefix, x, baseline)
+    x += (preW + gap) * SS
   }
-  g.font = restFont
-  g.fillStyle = INK
-  g.fillText(rest, x, baseline)
+  if (value) {
+    g.font = valueFont
+    g.fillStyle = ACCENT
+    g.fillText(value, x, baseline)
+    x += (valW + gap) * SS
+  }
+  if (suffix) {
+    g.font = wordFont
+    g.fillStyle = INK
+    g.fillText(suffix, x, baseline)
+  }
 
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
