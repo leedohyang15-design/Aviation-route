@@ -16,15 +16,6 @@ import { hasOpenSkyCredentials } from './opensky'
 import { createResilientFeed, type SwitchableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { opsLog } from './log'
-import {
-  hasRoute,
-  resolveRoutes,
-  loadRouteCache,
-  saveRouteCache,
-  startRouteResolver,
-  stopRouteResolver
-} from './routes'
-import { isKnownFlight } from '../src/common/flightClass'
 
 export interface Hub {
   close(): void
@@ -50,11 +41,6 @@ export function selectFeed(): SwitchableFeed {
 }
 
 export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): Hub {
-  // Yesterday's answers are almost all still valid, so start from the saved
-  // cache instead of re-asking adsbdb for every callsign.
-  loadRouteCache()
-  // Lookups run on their own clock, independent of the OpenSky poll cycle.
-  startRouteResolver()
   // Bind explicitly to the IPv4 loopback so it always matches the windows'
   // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
   // firewall prompt that a 0.0.0.0 bind would trigger).
@@ -114,28 +100,9 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     }
   }
 
-  // Tag each aircraft with what we know about its route, and queue the ones we
-  // haven't asked about yet. Only real data needs this — the simulation always
-  // knows its own routes — and only identifiable callsigns are worth asking
-  // about, which keeps the lookup volume down.
-  const annotateRoutes = (snapshot: Aircraft[]): Aircraft[] => {
-    if (feed.source === 'mock') return snapshot
-    const pending: { callsign: string; lat: number; lon: number }[] = []
-    const out = snapshot.map((a) => {
-      if (!isKnownFlight(a.callsign)) return a
-      const known = hasRoute(a.callsign)
-      if (known === undefined) pending.push({ callsign: a.callsign, lat: a.lat, lon: a.lon })
-      return known === undefined ? a : { ...a, hasRoute: known }
-    })
-    // Queue only; the resolver loop drains it in the background and results
-    // land in the cache for a later snapshot.
-    if (pending.length) resolveRoutes(pending)
-    return out
-  }
-
   feed.start(
     (snapshot) => {
-      aircraft = annotateRoutes(snapshot)
+      aircraft = snapshot
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
       // Keep the selected plane's route/progress/ETA live (e.g. after a mock
@@ -207,8 +174,6 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   return {
     close() {
       feed.stop()
-      stopRouteResolver()
-      saveRouteCache()
       wss.close()
     }
   }

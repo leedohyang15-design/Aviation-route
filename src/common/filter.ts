@@ -13,9 +13,6 @@ export function applyFilter(aircraft: Aircraft[], f: FlightFilter, keepId?: stri
     // Show only identifiable aircraft (passenger / cargo / military); hide the
     // GA/private/unknown long tail.
     if (f.scheduledOnly && !isKnownFlight(a.callsign)) return false
-    // Only hide aircraft CONFIRMED route-less; undefined means "not looked up
-    // yet", which must stay visible (see Aircraft.hasRoute).
-    if (f.routeOnly && a.hasRoute === false) return false
     if (hidden && hidden.length && hidden.includes(categoryKey(a.callsign))) return false
     if (f.airborneOnly && a.onGround) return false
     if (f.originCountry && a.originCountry !== f.originCountry) return false
