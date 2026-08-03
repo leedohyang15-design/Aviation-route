@@ -29,6 +29,30 @@ interface Entry {
   epoch: string
   /** Revolution number at epoch. */
   revNumber: number
+  /** International designator, e.g. "1998-067A", and the launch year from it. */
+  cosparId: string
+  launchYear: number | null
+  /** Orbit shape, from the semi-major axis and eccentricity. */
+  apogeeKm: number
+  perigeeKm: number
+  eccentricity: number
+}
+
+/** Equatorial radius, km — the datum SGP4's normalized distances are in. */
+const EARTH_R = 6378.137
+
+/**
+ * The international designator, from fixed columns 10–17 of line 1: two digits
+ * of launch year, three of launch number, then the piece. "98067A" is the ISS's
+ * first module. The two-digit year rolls over at 57, per the format's own rule.
+ */
+function parseCospar(line1: string): { id: string; year: number | null } {
+  const raw = line1.slice(9, 17).trim()
+  const m = /^(\d{2})(\d{3})([A-Z]{1,3})$/.exec(raw)
+  if (!m) return { id: raw, year: null }
+  const yy = Number(m[1])
+  const year = yy < 57 ? 2000 + yy : 1900 + yy
+  return { id: `${year}-${m[2]}${m[3]}`, year }
 }
 
 const observer = {
@@ -118,6 +142,7 @@ export async function initSatellites(path?: string): Promise<number> {
   for (const t of tles) {
     try {
       const rec = sat.twoline2satrec(t.line1, t.line2)
+      const cospar = parseCospar(t.line1)
       // `error` is SGP4's own "these elements are unusable" signal.
       if (!rec || rec.error) continue
       if (!Number.isFinite(rec.no) || rec.no <= 0) continue
@@ -130,7 +155,13 @@ export async function initSatellites(path?: string): Promise<number> {
         // Fixed columns, per the TLE format: epoch in line 1, revolution count
         // in line 2. satellite.js keeps neither in a form we can show.
         epoch: t.line1.slice(18, 32).trim(),
-        revNumber: Number(t.line2.slice(63, 68).trim()) || 0
+        revNumber: Number(t.line2.slice(63, 68).trim()) || 0,
+        cosparId: cospar.id,
+        launchYear: cospar.year,
+        // satrec.a is the semi-major axis in Earth radii.
+        apogeeKm: rec.a * (1 + rec.ecco) * EARTH_R - EARTH_R,
+        perigeeKm: rec.a * (1 - rec.ecco) * EARTH_R - EARTH_R,
+        eccentricity: rec.ecco
       })
     } catch {
       /* one unusable satellite shouldn't cost us the catalogue */
@@ -274,6 +305,16 @@ export function nextPass(
   return null // never rises here (e.g. a low-inclination orbit seen from Seoul)
 }
 
+/** Straight-line distance from the exhibit to the satellite right now, km. */
+function rangeNow(rec: sat.SatRec): number | null {
+  const when = new Date()
+  const pv = sat.propagate(rec, when) as { position?: sat.EciVec3<number> | false }
+  if (!pv || !pv.position) return null
+  const ecf = sat.eciToEcf(pv.position as sat.EciVec3<number>, sat.gstime(when))
+  const r = sat.ecfToLookAngles(observer, ecf).rangeSat
+  return Number.isFinite(r) ? r : null
+}
+
 /** Rich detail for the selected satellite (panel + orbit line). */
 export function getDetail(id: string): SatelliteDetail | null {
   const e = entries.find((x) => x.id === id)
@@ -293,6 +334,12 @@ export function getDetail(id: string): SatelliteDetail | null {
     passMaxElevationDeg: pass?.maxElevationDeg,
     overheadNow: pass ? pass.inSec === 0 : undefined,
     tleEpoch: e.epoch || undefined,
-    revNumber: e.revNumber || undefined
+    revNumber: e.revNumber || undefined,
+    cosparId: e.cosparId || undefined,
+    launchYear: e.launchYear ?? undefined,
+    apogeeKm: e.apogeeKm,
+    perigeeKm: e.perigeeKm,
+    eccentricity: e.eccentricity,
+    rangeKm: rangeNow(e.rec) ?? undefined
   }
 }

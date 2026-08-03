@@ -68,6 +68,28 @@ export function pinTexture(color: string): THREE.CanvasTexture {
   return tex
 }
 
+/**
+ * A soft halo, drawn additively behind the selected object so it reads as lit
+ * once the map goes dark. Two stops rather than one: a bright small core that
+ * looks like a lamp, and a wide faint falloff that lifts the map around it.
+ */
+export function glowTexture(): THREE.CanvasTexture {
+  const s = 256
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.12, 'rgba(255,255,255,0.75)')
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.22)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, s, s)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
 /** A CanvasTexture of a text label (white with dark outline). Returns aspect w/h. */
 export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
   const fontSize = 44
@@ -124,15 +146,21 @@ export interface InfoCard {
   title: string
   /** Small right-aligned note beside it — the state, or the flight level. */
   note: string
-  /** Aircraft only: the origin → destination block. */
-  leg?: {
-    fromCode: string
-    fromCity: string
-    toCode: string
-    toCity: string
-    /** Total trip time, e.g. "4H 05M" — null when it can't be worked out. */
-    duration: string | null
+  /**
+   * A figure at each end with something strung between them. For a flight
+   * that's origin → destination and the trip time; for a satellite it's the
+   * launch it came up on → how many laps it has flown since.
+   */
+  span?: {
+    leftValue: string
+    leftLabel: string
+    rightValue: string
+    rightLabel: string
+    /** Small caption under the middle of the connecting line. */
+    middle: string | null
+    /** Marker position along the line, 0..1. Null centres it. */
     progress: number | null
+    marker: 'plane' | 'dot'
   }
   /** The countdown that gives the numbers meaning. `unit` is set out small
    * beside the figure, the way the tiles do it, so the caption stays a phrase. */
@@ -161,7 +189,7 @@ const CONTENT_W = 250
 
 const ROW_HEADER = 22
 const ROW_TITLE = 30
-const ROW_LEG = 46
+const ROW_SPAN = 46
 const ROW_HERO = 36
 const SCALE_H = 12 // the ruled countdown strip, when there is one
 const ROW_TILES = 34
@@ -260,15 +288,15 @@ export function cardTexture(card: InfoCard): {
     ? fitText(m, card.header.left, SANS, 9.5, CONTENT_W - 70, 7, '600')
     : null
 
-  // Each end of the leg takes half of what the dashed line doesn't need.
-  const LEG_LINE_MIN = 60
-  const legHalf = (CONTENT_W - LEG_LINE_MIN) / 2
-  const leg = card.leg
+  // Each end of the span takes half of what the connecting line doesn't need.
+  const SPAN_LINE_MIN = 60
+  const spanHalf = (CONTENT_W - SPAN_LINE_MIN) / 2
+  const span = card.span
     ? {
-        fromCode: fitText(m, card.leg.fromCode, MONO, 20, legHalf, 12, '700', 0.3),
-        toCode: fitText(m, card.leg.toCode, MONO, 20, legHalf, 12, '700', 0.3),
-        fromCity: fitText(m, card.leg.fromCity, SANS, 10, legHalf, 7, '500'),
-        toCity: fitText(m, card.leg.toCity, SANS, 10, legHalf, 7, '500')
+        leftValue: fitText(m, card.span.leftValue, MONO, 20, spanHalf, 11, '700', 0.3),
+        rightValue: fitText(m, card.span.rightValue, MONO, 20, spanHalf, 11, '700', 0.3),
+        leftLabel: fitText(m, card.span.leftLabel, SANS, 10, spanHalf, 7, '500'),
+        rightLabel: fitText(m, card.span.rightLabel, SANS, 10, spanHalf, 7, '500')
       }
     : null
 
@@ -302,7 +330,7 @@ export function cardTexture(card: InfoCard): {
   const H =
     (card.header ? ROW_HEADER : 0) +
     ROW_TITLE +
-    (card.leg ? ROW_LEG : 0) +
+    (card.span ? ROW_SPAN : 0) +
     (card.hero ? ROW_HERO + (hasScale ? SCALE_H : 0) : 0) +
     ROW_TILES
   const W = edge + PAD + CONTENT_W + PAD
@@ -374,25 +402,25 @@ export function cardTexture(card: InfoCard): {
   y += ROW_TITLE
   rule()
 
-  // Leg row: codes big, city names under them, the trip strung between.
-  if (card.leg && leg) {
-    setFont(g, MONO, leg.fromCode.size, '700', 0.3)
+  // Span row: a figure at each end, its label beneath, the journey between.
+  if (card.span && span) {
+    setFont(g, MONO, span.leftValue.size, '700', 0.3)
     g.fillStyle = INK
-    g.fillText(leg.fromCode.text, x0 * SS, (y + 24) * SS)
+    g.fillText(span.leftValue.text, x0 * SS, (y + 24) * SS)
     g.textAlign = 'right'
-    setFont(g, MONO, leg.toCode.size, '700', 0.3)
-    g.fillText(leg.toCode.text, x1 * SS, (y + 24) * SS)
+    setFont(g, MONO, span.rightValue.size, '700', 0.3)
+    g.fillText(span.rightValue.text, x1 * SS, (y + 24) * SS)
     g.textAlign = 'left'
-    setFont(g, SANS, leg.fromCity.size, '500')
+    setFont(g, SANS, span.leftLabel.size, '500')
     g.fillStyle = MUTED
-    g.fillText(leg.fromCity.text, x0 * SS, (y + 38) * SS)
+    g.fillText(span.leftLabel.text, x0 * SS, (y + 38) * SS)
     g.textAlign = 'right'
-    setFont(g, SANS, leg.toCity.size, '500')
-    g.fillText(leg.toCity.text, x1 * SS, (y + 38) * SS)
+    setFont(g, SANS, span.rightLabel.size, '500')
+    g.fillText(span.rightLabel.text, x1 * SS, (y + 38) * SS)
     g.textAlign = 'left'
 
-    const lineA = x0 + Math.max(leg.fromCode.width, leg.fromCity.width) + 12
-    const lineB = x1 - Math.max(leg.toCode.width, leg.toCity.width) - 12
+    const lineA = x0 + Math.max(span.leftValue.width, span.leftLabel.width) + 12
+    const lineB = x1 - Math.max(span.rightValue.width, span.rightLabel.width) - 12
     if (lineB > lineA + 20) {
       const mid = y + 19
       g.strokeStyle = RULE
@@ -403,17 +431,25 @@ export function cardTexture(card: InfoCard): {
       g.lineTo(lineB * SS, mid * SS)
       g.stroke()
       g.setLineDash([])
-      const t = card.leg.progress == null ? 0.5 : Math.max(0, Math.min(1, card.leg.progress))
-      planeGlyph(g, lineA + (lineB - lineA) * t, mid, 5, ACCENT)
-      if (card.leg.duration) {
+      const t = card.span.progress == null ? 0.5 : Math.max(0, Math.min(1, card.span.progress))
+      const mx = lineA + (lineB - lineA) * t
+      if (card.span.marker === 'plane') {
+        planeGlyph(g, mx, mid, 5, ACCENT)
+      } else {
+        g.fillStyle = ACCENT
+        g.beginPath()
+        g.arc(mx * SS, mid * SS, 2.6 * SS, 0, Math.PI * 2)
+        g.fill()
+      }
+      if (card.span.middle) {
         setFont(g, MONO, 8, '600', 1.2)
         g.fillStyle = MUTED
         g.textAlign = 'center'
-        g.fillText(card.leg.duration, ((lineA + lineB) / 2) * SS, (mid + 15) * SS)
+        g.fillText(card.span.middle, ((lineA + lineB) / 2) * SS, (mid + 15) * SS)
         g.textAlign = 'left'
       }
     }
-    y += ROW_LEG
+    y += ROW_SPAN
     rule()
   }
 

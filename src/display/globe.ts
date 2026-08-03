@@ -25,6 +25,7 @@ import {
   dotTexture,
   pinTexture,
   textTexture,
+  glowTexture,
   cardTexture,
   type InfoCard,
   categoryColor,
@@ -68,6 +69,11 @@ const PIN_ASPECT = 64 / 96 // matches pinTexture's canvas
 const LABEL_H = 0.028 // origin/destination place name
 const FLAG_H = 0.03 // country flag
 
+// The selection's halo: warm cabin light for an aircraft, cold instrument
+// light for a satellite. Sized as a multiple of the icon.
+const GLOW_COLOR = { aircraft: '#ffcf8a', satellite: '#9be8ff' } as const
+const GLOW_SCALE = 3.4
+
 interface Eased {
   lon: number // current rendered position
   lat: number
@@ -89,6 +95,10 @@ export class Globe {
   private bgUniforms: Record<string, THREE.IUniform>
   private planes: THREE.InstancedMesh
   private selectedPlane: THREE.Mesh
+  /** Halo behind the selection, which lights up as the map goes dark. */
+  private selectedGlow!: THREE.Mesh
+  /** 0 = full day, 1 = full night. Mirrors the background's uNight. */
+  private night = 0
   private originMarker!: THREE.Mesh
   private destMarker!: THREE.Mesh
   private originLabel!: THREE.Mesh
@@ -134,8 +144,6 @@ export class Globe {
   private dotTex!: THREE.CanvasTexture
   private satTex!: THREE.CanvasTexture
   private eased = new Map<string, Eased>()
-  /** Aircraft with a confirmed route, so auto-pick can favour them. */
-  private routed = new Set<string>()
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
   private spriteMat = new THREE.Matrix4()
@@ -210,6 +218,7 @@ export class Globe {
       uHasNight: { value: 0 },
       uLonOffset: { value: 0 },
       uNight: { value: 0 }, // 0 = full day, 1 = full night (from Korea time)
+      uNightFloor: { value: 0.34 }, // how much of the day map survives at night
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -225,6 +234,7 @@ export class Globe {
         varying vec2 vUv;
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight; uniform float uNight;
+        uniform float uNightFloor;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
@@ -245,11 +255,18 @@ export class Globe {
             day = mix(day, vec3(0.4, 0.6, 0.85), grid * 0.3);
           }
 
-          // Whole-screen day↔night by Korea time. Night = darkened earth + city
+          // Whole-screen day↔night by Korea time. Night = moonlit earth + city
           // lights (from the night texture) glowing.
-          vec3 nightBase = day * 0.10;
+          //
+          // The floor used to be 0.10, which left the land indistinguishable
+          // from the sea — the city lights ended up floating in black with no
+          // coastline behind them. Keeping a third of the day map, desaturated
+          // and shifted toward blue, reads as moonlight: the continents stay
+          // legible while it still plainly isn't daytime.
+          float nluma = dot(day, vec3(0.299, 0.587, 0.114));
+          vec3 moonlit = mix(vec3(nluma), day, 0.6) * vec3(0.70, 0.82, 1.18) * uNightFloor;
           vec3 lights = uHasNight > 0.5 ? texture2D(uNightMap, uv).rgb * 1.6 : vec3(0.0);
-          vec3 night = nightBase + lights;
+          vec3 night = moonlit + lights;
           vec3 col = mix(day, night, uNight);
           gl_FragColor = vec4(col, 1.0);
         }
@@ -281,6 +298,23 @@ export class Globe {
     this.scene.add(this.planes)
 
     // --- Selected aircraft: a larger, bright airplane icon ---
+    // Additive so it brightens the map beneath rather than pasting a grey disc
+    // over it; depth-tested off nothing, just drawn under the icon.
+    this.selectedGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        map: this.tuneSprite(glowTexture()),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        opacity: 0
+      })
+    )
+    this.selectedGlow.visible = false
+    this.selectedGlow.matrixAutoUpdate = false
+    this.selectedGlow.frustumCulled = false
+    this.scene.add(this.selectedGlow)
+
     this.selectedPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
       new THREE.MeshBasicMaterial({ map: planeTex, transparent: true })
@@ -539,16 +573,18 @@ export class Globe {
     if (this.interactive) this.resetAttract()
   }
 
-  /** When the selected flight has no route to show, auto-advance to another
-   * flight after ~10s so the exhibit never dwells on a route-less plane. Called
-   * from the control with the selected plane's route status. */
-  autoAdvanceOnNoRoute(active: boolean): void {
+  /**
+   * Kept as a no-op so the control's wiring doesn't have to know this went away.
+   *
+   * This used to jump to another flight ~10s after landing on a route-less one,
+   * back when such a plane showed a card that was mostly blank. It now shows a
+   * full readout — flight number, level, altitude, speed, type — so cutting the
+   * visitor off after ten seconds punished them for tapping the wrong dot.
+   */
+  autoAdvanceOnNoRoute(_active: boolean): void {
     if (this.noRouteTimer) {
       clearTimeout(this.noRouteTimer)
       this.noRouteTimer = null
-    }
-    if (active && this.interactive) {
-      this.noRouteTimer = setTimeout(() => this.autoPick(), 10000)
     }
   }
 
@@ -603,14 +639,14 @@ export class Globe {
   /** A random aircraft, never the one already selected (so every pick visibly
    * changes something). Shared by the attract cycle and Tab.
    *
-   * Prefers planes with a confirmed route: while the route cache is still
-   * filling, most aircraft are merely "unknown" rather than route-less, and
-   * landing on one of those shows a card with no route at all. */
+   * Every tracked object is a candidate. An earlier version preferred ones with
+   * a confirmed route, which meant route-less aircraft were drawn on the map but
+   * could never actually be selected — neither by Tab nor by the attract cycle.
+   * The card now reads perfectly well without a route, so there is nothing left
+   * to protect the visitor from. */
   private randomPick(): string | null {
-    const all = [...this.eased.keys()]
-    if (!all.length) return null
-    const routed = all.filter((id) => this.routed.has(id))
-    const ids = routed.length ? routed : all
+    const ids = [...this.eased.keys()]
+    if (!ids.length) return null
     if (ids.length === 1) return ids[0]
     let id = ids[Math.floor(Math.random() * ids.length)]
     while (id === this.selected) id = ids[Math.floor(Math.random() * ids.length)]
@@ -803,6 +839,7 @@ export class Globe {
     }
     this.selected = icao24
     this.selectedPlane.visible = false
+    this.selectedGlow.visible = false
     if (icao24) {
       // Request a one-shot camera align on the plane — done in frame() the moment
       // the selected plane is rendered, so it works with OR without a route and
@@ -868,9 +905,6 @@ export class Globe {
         this.order.push(a.icao24)
       }
     }
-    // Track which aircraft have a confirmed route (for auto-pick preference).
-    this.routed.clear()
-    for (const a of list) if (a.hasRoute) this.routed.add(a.icao24)
     // Drop aircraft no longer reported.
     for (const id of [...this.eased.keys()]) {
       if (!seen.has(id)) {
@@ -915,9 +949,6 @@ export class Globe {
         this.order.push(s.id)
       }
     }
-    // Every satellite has an orbit to draw, so auto-pick has no reason to prefer.
-    this.routed.clear()
-    for (const s of list) this.routed.add(s.id)
     for (const id of [...this.eased.keys()]) if (!seen.has(id)) this.eased.delete(id)
     this.order = this.order.filter((id) => this.eased.has(id))
   }
@@ -938,6 +969,7 @@ export class Globe {
     inst.needsUpdate = true
     selMat.map = kind === 'satellite' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
+    ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
     if (kind === 'satellite') {
       for (const m of [
         this.originMarker,
@@ -956,10 +988,10 @@ export class Globe {
    * doesn't linger while the new one's first snapshot is in flight. */
   clearObjects(): void {
     this.eased.clear()
-    this.routed.clear()
     this.order = []
     this.selected = null
     this.selectedPlane.visible = false
+    this.selectedGlow.visible = false
   }
 
   /** Set origin/destination place-name labels (null clears them). */
@@ -1135,7 +1167,8 @@ export class Globe {
   private updateNight(): void {
     if (this.nightHourOverride != null) {
       // Manual override (hour 0–24): 1 at midnight, 0 at noon.
-      this.bgUniforms.uNight.value = 0.5 + 0.5 * Math.cos((this.nightHourOverride / 24) * 2 * Math.PI)
+      this.night = 0.5 + 0.5 * Math.cos((this.nightHourOverride / 24) * 2 * Math.PI)
+      this.bgUniforms.uNight.value = this.night
       return
     }
     // Exhibit auto-cycle: a full day↔night sweep every ~6 minutes (≈3 min day,
@@ -1143,7 +1176,8 @@ export class Globe {
     // without any hub traffic. phase 0 = day, 0.5 = night.
     const PERIOD_MS = 6 * 60 * 1000
     const phase = (Date.now() % PERIOD_MS) / PERIOD_MS
-    this.bgUniforms.uNight.value = 0.5 - 0.5 * Math.cos(phase * 2 * Math.PI)
+    this.night = 0.5 - 0.5 * Math.cos(phase * 2 * Math.PI)
+    this.bgUniforms.uNight.value = this.night
   }
 
   private frame = (now: number): void => {
@@ -1211,8 +1245,10 @@ export class Globe {
           this.kind === 'satellite' ? 0 : angle
         )
       )
-      // Dim every other plane while one is selected so it stands out.
-      this.scratchColor.copy(e.color)
+      // Lift every icon as the map darkens — the same aircraft that reads well
+      // over a daylit ocean disappears into a night one — then dim the
+      // unselected ones so the selection still stands out.
+      this.scratchColor.copy(e.color).multiplyScalar(1 + 0.6 * this.night)
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
       if (isSel) {
@@ -1222,6 +1258,15 @@ export class Globe {
         const placeSelected = (au: number, ay: number, ang: number): void => {
           this.selectedPlane.matrix.copy(this.setSpriteMatrix(au, ay, 0.7, SEL_H * ps, ang))
           this.selectedPlane.matrixWorldNeedsUpdate = true
+          // The halo sits under the icon, unrotated (a glow has no heading) and
+          // fades up as the map darkens, so the selection reads as lit at night.
+          this.selectedGlow.matrix.copy(
+            this.setSpriteMatrix(au, ay, 0.66, SEL_H * ps * GLOW_SCALE, 0)
+          )
+          this.selectedGlow.matrixWorldNeedsUpdate = true
+          const glowMat = this.selectedGlow.material as THREE.MeshBasicMaterial
+          glowMat.opacity = 0.1 + 0.8 * this.night
+          this.selectedGlow.visible = true
         }
         // A satellite icon is drawn upright; turning it to the ground track just
         // makes the solar panels point at nothing.
@@ -1401,6 +1446,7 @@ export class Globe {
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
       this.selectedPlane.visible = false
+      this.selectedGlow.visible = false
       this.originMarker.visible = false
       this.destMarker.visible = false
       this.originLabel.visible = false

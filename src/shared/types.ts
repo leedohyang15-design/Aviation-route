@@ -81,6 +81,18 @@ export interface SatelliteDetail {
   tleEpoch?: string
   /** Revolution number at epoch — how many times it has been round. */
   revNumber?: number
+  /** International designator, e.g. "1998-067A" — the launch it came up on. */
+  cosparId?: string
+  /** Year it was launched, from that designator. */
+  launchYear?: number
+  /** Highest and lowest points of the orbit. Equal for a circular one; far
+   * apart for a transfer or Molniya orbit, which is worth showing. */
+  apogeeKm?: number
+  perigeeKm?: number
+  /** 0 = a perfect circle. */
+  eccentricity?: number
+  /** How far away it is from the exhibit right now, kilometres. */
+  rangeKm?: number
 }
 
 /** A single point of a rendered route, in geographic coordinates. */

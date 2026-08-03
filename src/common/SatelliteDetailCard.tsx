@@ -16,25 +16,63 @@ const ORBIT_LABEL: Record<OrbitClass, string> = {
   geo: '정지궤도'
 }
 
-/** A comparison a child can picture, rather than a bare number. */
-function altitudeStory(km: number): string {
-  if (km >= 30000) return '지구 어디서 봐도 늘 같은 자리에 있어요'
-  if (km >= 15000) return '지구 지름보다 더 높이 떠 있어요'
-  if (km >= 1000) return '서울에서 도쿄까지 거리보다 더 높아요'
-  if (km >= 300) return '서울에서 부산보다 조금 더 먼 높이예요'
-  return '아주 낮게 도는 위성이에요'
+// The notes below have to actually differ between satellites. An earlier set
+// bucketed altitude into four bands, and since most of the catalogue sits
+// between 400 and 900 km, nearly every object showed the identical sentence —
+// which reads as a canned message rather than as information about the thing
+// the visitor just tapped. Each note here is derived from a number that is
+// genuinely different per object: its launch, the shape of its orbit, how many
+// laps it has done, how far away it is right now.
+
+/** Seoul→Busan, the yardstick. Scaling by it keeps the comparison relatable
+ * while still giving every satellite its own number. */
+const BUSAN_KM = 325
+
+function altitudeNote(km: number): string {
+  const times = km / BUSAN_KM
+  const n = times >= 10 ? Math.round(times) : times.toFixed(1)
+  return `서울에서 부산까지 거리의 약 ${n}배 높이에 있어요`
 }
 
-function periodStory(min: number): string {
-  if (min >= 1400) return '지구가 도는 속도와 똑같아서, 하늘에 멈춰 있는 것처럼 보여요'
-  if (min >= 300) return `${Math.round(min / 60)}시간에 지구를 한 바퀴 돌아요`
-  return `${Math.round(min)}분에 지구를 한 바퀴 돌아요`
+function launchNote(d: SatelliteDetail): string | null {
+  if (d.launchYear == null) return null
+  const years = new Date().getFullYear() - d.launchYear
+  if (years <= 0) return `${d.launchYear}년에 올라간 새 위성이에요`
+  return `${d.launchYear}년에 올라가 ${years}년째 돌고 있어요`
 }
 
-function inclinationStory(deg: number): string {
-  if (deg < 5) return '적도 위를 따라 돌아요'
-  if (deg > 80) return '북극과 남극 위를 지나며 돌아요'
-  return `적도에서 ${Math.round(deg)}° 기울어져 돌아요`
+function shapeNote(d: SatelliteDetail): string | null {
+  if (d.apogeeKm == null || d.perigeeKm == null) return null
+  const spread = d.apogeeKm - d.perigeeKm
+  if (spread < 100) return '거의 완벽한 동그라미를 그리며 돌아요'
+  return (
+    `높을 땐 ${Math.round(d.apogeeKm).toLocaleString()}km, ` +
+    `낮을 땐 ${Math.round(d.perigeeKm).toLocaleString()}km — 길쭉한 타원을 그려요`
+  )
+}
+
+/** A near-polar orbit at low altitude is almost always sun-synchronous, which
+ * is why so many Earth-observation satellites share that 98° inclination. */
+function isSunSynchronous(d: SatelliteDetail): boolean {
+  return d.inclinationDeg >= 95 && d.inclinationDeg <= 104 && d.altKm < 1600
+}
+
+function pathNote(d: SatelliteDetail): string {
+  if (d.periodMin >= 1400) return '지구가 도는 속도와 똑같아서, 하늘에 멈춰 있는 것처럼 보여요'
+  if (isSunSynchronous(d)) return '태양동기궤도 — 늘 같은 시각에 같은 곳 위를 지나가요'
+  if (d.inclinationDeg > 80) return '북극과 남극 위를 지나며 돌아요'
+  if (d.inclinationDeg < 5) return '적도 바로 위를 따라 돌아요'
+  return `적도에서 ${Math.round(d.inclinationDeg)}° 기울어진 길을 돌아요`
+}
+
+function lapsNote(d: SatelliteDetail): string | null {
+  if (!d.revNumber) return null
+  return `지금까지 지구를 ${d.revNumber.toLocaleString()}바퀴 돌았어요`
+}
+
+function rangeNote(d: SatelliteDetail): string | null {
+  if (d.rangeKm == null) return null
+  return `지금 여기서 ${Math.round(d.rangeKm).toLocaleString()}km 떨어져 있어요`
 }
 
 interface Pass {
@@ -118,7 +156,14 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
     )
   }
   const pass = passReadout(d)
-  const notes = [altitudeStory(d.altKm), periodStory(d.periodMin), inclinationStory(d.inclinationDeg)]
+  const notes = [
+    launchNote(d),
+    altitudeNote(d.altKm),
+    shapeNote(d),
+    pathNote(d),
+    lapsNote(d),
+    rangeNote(d)
+  ].filter((n): n is string => n != null)
   return (
     <div className="sat-panel">
       <div className="sat-head">
@@ -165,8 +210,8 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
       </div>
 
       <div className="sat-foot">
+        <span>COSPAR {d.cosparId ?? '—'}</span>
         <span>TLE EPOCH {d.tleEpoch ?? '—'}</span>
-        <span>REV {d.revNumber != null ? d.revNumber.toLocaleString() : '—'}</span>
       </div>
     </div>
   )

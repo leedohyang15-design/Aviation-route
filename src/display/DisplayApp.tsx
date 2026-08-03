@@ -42,6 +42,28 @@ function satPassHero(sd: SatelliteDetail): InfoCard['hero'] {
   }
 }
 
+/**
+ * The satellite's span row: the launch it rode up on, and the laps it has flown
+ * since. The marker sits at how far through its current orbit it is — the one
+ * thing on the card that visibly moves.
+ */
+function satSpan(sd: SatelliteDetail): InfoCard['span'] {
+  const years = sd.launchYear != null ? new Date().getFullYear() - sd.launchYear : null
+  const shape =
+    sd.apogeeKm != null && sd.perigeeKm != null && sd.apogeeKm - sd.perigeeKm >= 100
+      ? '타원궤도'
+      : '원궤도'
+  return {
+    leftValue: sd.launchYear != null ? String(sd.launchYear) : '—',
+    leftLabel: years != null && years > 0 ? `${years}년째 비행` : '발사',
+    rightValue: sd.revNumber != null ? sd.revNumber.toLocaleString() : '—',
+    rightLabel: '바퀴 돌았어요',
+    middle: shape,
+    progress: null,
+    marker: 'dot'
+  }
+}
+
 function etaHero(d: FlightDetail): InfoCard['hero'] {
   if (d.etaRemainingSec == null || d.etaRemainingSec <= 0) {
     return { label: 'ETA', value: '—', caption: '곧 도착해요', fill: d.progress ?? null }
@@ -114,11 +136,21 @@ export function DisplayApp(): JSX.Element {
         // about a satellite a visitor can act on ("that's the one that stands
         // still"), and this card has no other slot for it.
         note: `${ORBIT_NOTE[sd.orbit]} · TRACKING`,
+        // The satellite's equivalent of a flight leg: where it came from (the
+        // launch) and how far it has got (laps flown). Unlike altitude or speed,
+        // these differ enormously between objects, which is what makes the card
+        // worth reading twice.
+        span: satSpan(sd),
         hero: satPassHero(sd),
         tiles: [
           { label: 'ALT', value: Math.round(sd.altKm).toLocaleString(), unit: 'km' },
           { label: 'VEL', value: sd.speedKmS.toFixed(1), unit: 'km/s' },
-          { label: 'ORBIT', value: String(Math.round(sd.periodMin)), unit: 'min' }
+          { label: 'ORBIT', value: String(Math.round(sd.periodMin)), unit: 'min' },
+          {
+            label: 'RANGE',
+            value: sd.rangeKm != null ? Math.round(sd.rangeKm).toLocaleString() : '—',
+            unit: sd.rangeKm != null ? 'km' : undefined
+          }
         ]
       }
     }
@@ -147,15 +179,16 @@ export function DisplayApp(): JSX.Element {
       title: flightNo,
       // Flight level: the altitude in hundreds of feet, as air traffic says it.
       note: sel.altitude != null ? `FL${Math.round((sel.altitude * 3.28084) / 100)}` : '',
-      leg: routed
+      span: routed
         ? {
-            fromCode: d!.origin?.code ?? '—',
-            toCode: d!.destination?.code ?? '—',
+            leftValue: d!.origin?.code ?? '—',
+            rightValue: d!.destination?.code ?? '—',
             // City names (Korean when known) read better than airport codes.
-            fromCity: d!.origin?.city ?? '',
-            toCity: d!.destination?.city ?? '',
-            duration: tripDuration(d!),
-            progress: d!.progress ?? null
+            leftLabel: d!.origin?.city ?? '',
+            rightLabel: d!.destination?.city ?? '',
+            middle: tripDuration(d!),
+            progress: d!.progress ?? null,
+            marker: 'plane'
           }
         : undefined,
       hero: routed ? etaHero(d!) : { label: '', value: '—', caption: noRouteText(d), fill: null },
