@@ -146,6 +146,9 @@ export class Globe {
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
+  /** Objects with something to show — a confirmed route, or (for a satellite)
+   * an orbit, which is always. Only the attract cycle consults this. */
+  private routed = new Set<string>()
   private spriteMat = new THREE.Matrix4()
   private scratchColor = new THREE.Color()
   /** Rendered pixel width ÷ height (2:1 by construction). The world is [0,1]²,
@@ -548,7 +551,7 @@ export class Globe {
   /** Auto-select a random flight, then keep cycling every 30s until a real
    * interaction resets the countdown. */
   private autoPick(): void {
-    const next = this.randomPick()
+    const next = this.randomPick(true)
     if (next) this.onSelectChange?.(next)
     // Reset BOTH timers through the single scheduler so they can't accumulate.
     // (Directly re-assigning idleTimer here used to orphan the pending timer when
@@ -636,17 +639,24 @@ export class Globe {
     this.onSelectChange?.(best)
   }
 
-  /** A random aircraft, never the one already selected (so every pick visibly
-   * changes something). Shared by the attract cycle and Tab.
+  /**
+   * A random object, never the one already selected (so every pick visibly
+   * changes something).
    *
-   * Every tracked object is a candidate. An earlier version preferred ones with
-   * a confirmed route, which meant route-less aircraft were drawn on the map but
-   * could never actually be selected — neither by Tab nor by the attract cycle.
-   * The card now reads perfectly well without a route, so there is nothing left
-   * to protect the visitor from. */
-  private randomPick(): string | null {
-    const ids = [...this.eased.keys()]
-    if (!ids.length) return null
+   * `preferRouted` splits the two callers by what they are for. The attract
+   * cycle is the exhibit demonstrating itself to an empty room, and it should
+   * land on something with a journey to show; now that the unidentifiable long
+   * tail is visible, roughly half of all aircraft are private flights that have
+   * no published route and never will, so an unbiased pick showed an empty map
+   * about half the time. Tab is the operator deliberately asking for a
+   * different aircraft, so it stays completely unbiased — as does clicking,
+   * which never went through here at all.
+   */
+  private randomPick(preferRouted: boolean): string | null {
+    const all = [...this.eased.keys()]
+    if (!all.length) return null
+    const routed = preferRouted ? all.filter((id) => this.routed.has(id)) : []
+    const ids = routed.length ? routed : all
     if (ids.length === 1) return ids[0]
     let id = ids[Math.floor(Math.random() * ids.length)]
     while (id === this.selected) id = ids[Math.floor(Math.random() * ids.length)]
@@ -761,7 +771,7 @@ export class Globe {
       ev.preventDefault()
       // Jump to a random flight. Stepping in feed order was effectively a fixed
       // sequence — it ignored the view and replayed the same run every time.
-      const next = this.randomPick()
+      const next = this.randomPick(false)
       if (!next) return
       this.resetAttract()
       this.onSelectChange?.(next)
@@ -905,6 +915,8 @@ export class Globe {
         this.order.push(a.icao24)
       }
     }
+    this.routed.clear()
+    for (const a of list) if (a.hasRoute) this.routed.add(a.icao24)
     // Drop aircraft no longer reported.
     for (const id of [...this.eased.keys()]) {
       if (!seen.has(id)) {
@@ -949,6 +961,9 @@ export class Globe {
         this.order.push(s.id)
       }
     }
+    // Every satellite has an orbit, so the attract cycle has no reason to prefer.
+    this.routed.clear()
+    for (const s of list) this.routed.add(s.id)
     for (const id of [...this.eased.keys()]) if (!seen.has(id)) this.eased.delete(id)
     this.order = this.order.filter((id) => this.eased.has(id))
   }
@@ -988,6 +1003,7 @@ export class Globe {
    * doesn't linger while the new one's first snapshot is in flight. */
   clearObjects(): void {
     this.eased.clear()
+    this.routed.clear()
     this.order = []
     this.selected = null
     this.selectedPlane.visible = false

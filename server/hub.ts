@@ -109,6 +109,9 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     const icao24 = state.selected
     try {
       const detail = icao24 ? await feed.getDetail(icao24) : null
+      // Which feed answered. If a real aircraft is on screen but this says
+      // "mock", the detail came from the simulation and can never have a route.
+      if (icao24) opsLog(`[detail] feed=${feed.source} points=${detail?.route?.length ?? 0}`)
       if (state.selected !== icao24) return // selection changed mid-fetch
       const route: ServerMessage = { type: 'route', icao24: icao24 ?? '', points: detail?.route ?? null }
       const det: ServerMessage = { type: 'detail', detail }

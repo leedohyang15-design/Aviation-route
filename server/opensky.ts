@@ -225,12 +225,15 @@ async function buildDetail(
   // several lookups a second, every aircraft a visitor tapped came back with no
   // route at all. It also still called adsb.lol, an endpoint proven not to exist.
   let ports = cachedRoute(callsign)
+  let how = ports === undefined ? '' : 'cache'
   let rateLimited = false
   if (ports === undefined && callsign) {
     try {
       ports = await lookupRoute(callsign)
       cacheRoute(callsign, ports) // the resolver benefits from this answer too
-    } catch {
+      how = 'adsbdb'
+    } catch (err) {
+      how = `adsbdb failed: ${(err as Error).message}`
       // Rate-limited or unreachable. Leave it UNKNOWN rather than caching a
       // negative — and hand it to the resolver, which paces itself and backs off.
       ports = undefined
@@ -260,6 +263,8 @@ async function buildDetail(
   const o = detail.origin
   const d = detail.destination
   let mismatch = false
+  let offKm = 0
+  let budgetOut = 0
   if (o && d) {
     const route = greatCirclePoints(o, d, 128)
     const here = ac ? { lon: ac.lon, lat: ac.lat } : null
@@ -286,6 +291,8 @@ async function buildDetail(
     // flight at all".
     const budgetKm = Math.min(3000, Math.max(500, routeKm * 0.32))
     const offRouteKm = here ? greatCircleDistanceKm(here, route[idx]) : 0
+    offKm = Math.round(offRouteKm)
+    budgetOut = Math.round(budgetKm)
     if (offRouteKm > budgetKm) {
       detail.origin = undefined
       detail.destination = undefined
@@ -318,5 +325,17 @@ async function buildDetail(
             ? '비밀 비행기예요 🤫'
             : '경로 정보가 없어요'
   }
+  // One line per selection, with everything needed to tell the failure modes
+  // apart without another round of guessing: which callsign was asked about,
+  // where the answer came from, and — when a route was found but dropped — by
+  // how much it missed the plausibility budget.
+  opsLog(
+    `[detail] ${icao24} ${callsign || '(no callsign)'} → ` +
+      (detail.route
+        ? `${o?.code}→${d?.code} ok (${how}, off ${offKm}km / ${budgetOut}km)`
+        : mismatch
+          ? `${how} gave a route but it was REJECTED (off ${offKm}km > ${budgetOut}km)`
+          : `no route (${how || 'no callsign'})`)
+  )
   return detail
 }

@@ -344,14 +344,22 @@ export function loadRouteCache(explicitPath?: string): void {
   try {
     const data = JSON.parse(text) as Persisted
     if (data?.version !== 1 || !data.entries) return
-    let loaded = 0
+    let withRoute = 0
+    let without = 0
     for (const [cs, e] of Object.entries(data.entries)) {
       const entry: Entry = { ports: e.p, ts: e.t }
       if (!fresh(entry)) continue // expired while the exhibit was off
       cache.set(cs, entry)
-      loaded++
+      if (entry.ports) withRoute++
+      else without++
     }
-    opsLog(`[routes] loaded ${loaded} cached routes from ${path}`)
+    // Split the count: "9,116 cached" reads like nine thousand routes, but the
+    // cache also stores confirmed absences, and the two mean opposite things
+    // when the screen is showing no routes at all.
+    opsLog(
+      `[routes] loaded ${withRoute + without} cached from ${path} — ` +
+        `${withRoute} with a route / ${without} without`
+    )
   } catch (err) {
     // A truncated or corrupt file must never stop the exhibit starting.
     opsLog(`[routes] ignoring unreadable route cache: ${(err as Error).message}`)
