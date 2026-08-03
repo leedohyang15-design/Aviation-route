@@ -13,7 +13,7 @@ import type {
   ServerMessage
 } from '../src/shared/types'
 import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
-import { hasOpenSkyCredentials } from './opensky'
+import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createResilientFeed, type SwitchableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { withDeadline } from './http'
@@ -256,6 +256,13 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   // The simulation and live data share no aircraft, so a handover invalidates
   // the selection outright — don't wait for the two-snapshot grace period.
   feed.onSourceChange = () => clearSelection('belonged to the previous feed')
+
+  // The aircraft type arrives after the card has already gone out (it is never
+  // waited on). When it lands for whatever is on screen, send the detail again
+  // so the TYPE tile fills itself in.
+  onDetailEnriched((icao24) => {
+    if (state.selected === icao24) void sendDetail(null)
+  })
 
   feed.start(
     (snapshot) => {

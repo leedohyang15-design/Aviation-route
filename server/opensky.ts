@@ -194,21 +194,72 @@ export function createOpenSkyFeed(): FlightFeed {
 // best-effort from public APIs and cache. Failures degrade to partial detail.
 // ---------------------------------------------------------------------------
 
-/** The aircraft type is a nice-to-have; never let it hold up the card. */
-const HEXDB_TIMEOUT_MS = 5000
+// ---------------------------------------------------------------------------
+// Aircraft type (hexdb), fetched in the background.
+//
+// The type is one line of the card. Waiting for it was costing a visitor the
+// full timeout on every first selection — with hexdb unreachable, that is five
+// seconds of blank card for a route that was already cached and instant. So the
+// lookup no longer blocks: the card goes out at once, the type is filled in
+// when it lands, and the hub re-sends the detail if that aircraft is still the
+// one on screen.
+//
+// It also gives up for a while after repeated failures. A service that isn't
+// answering isn't going to start answering on the next click, and there is no
+// point spending a request and a pending socket per selection to re-learn that.
+// ---------------------------------------------------------------------------
 
+const HEXDB_TIMEOUT_MS = 5000
+const HEXDB_COOLDOWN_MS = 10 * 60_000
+const HEXDB_FAILURES_BEFORE_COOLDOWN = 3
+
+/** icao24 → type, or undefined when hexdb has no entry (also worth remembering). */
+const typeCache = new Map<string, string | undefined>()
+const typeInFlight = new Set<string>()
+let hexdbFailures = 0
+let hexdbSkipUntil = 0
+
+/** Called when a background enrichment finishes and the detail is worth re-sending. */
+let onEnriched: ((icao24: string) => void) | null = null
+export function onDetailEnriched(cb: (icao24: string) => void): void {
+  onEnriched = cb
+}
+
+/** Throws on transport failure so the caller can count it; resolves to
+ * undefined only when hexdb genuinely has nothing for this airframe. */
 async function fetchType(icao24: string): Promise<string | undefined> {
-  try {
-    const res = await fetchWithTimeout(
-      `https://hexdb.io/api/v1/aircraft/${encodeURIComponent(icao24)}`,
-      HEXDB_TIMEOUT_MS
-    )
-    if (!res.ok) return undefined
-    const j = (await res.json()) as any
-    return j?.Type || j?.ICAOTypeCode || undefined
-  } catch {
-    return undefined
-  }
+  const res = await fetchWithTimeout(
+    `https://hexdb.io/api/v1/aircraft/${encodeURIComponent(icao24)}`,
+    HEXDB_TIMEOUT_MS
+  )
+  if (!res.ok) return undefined
+  const j = (await res.json()) as { Type?: string; ICAOTypeCode?: string }
+  return j?.Type || j?.ICAOTypeCode || undefined
+}
+
+/** The type if we already have it; otherwise start looking and return nothing. */
+function typeFor(icao24: string): string | undefined {
+  if (typeCache.has(icao24)) return typeCache.get(icao24)
+  if (Date.now() < hexdbSkipUntil || typeInFlight.has(icao24)) return undefined
+  typeInFlight.add(icao24)
+  void fetchType(icao24)
+    .then((t) => {
+      typeCache.set(icao24, t)
+      hexdbFailures = 0
+      if (t) onEnriched?.(icao24)
+    })
+    .catch((err) => {
+      if (++hexdbFailures >= HEXDB_FAILURES_BEFORE_COOLDOWN) {
+        hexdbSkipUntil = Date.now() + HEXDB_COOLDOWN_MS
+        hexdbFailures = 0
+        opsLog(
+          `[detail] hexdb unreachable (${(err as Error).message}) — skipping aircraft-type ` +
+            `lookups for ${HEXDB_COOLDOWN_MS / 60_000} minutes; TYPE will show as —`
+        )
+      }
+    })
+    .finally(() => typeInFlight.delete(icao24))
+  return undefined
 }
 
 async function buildDetail(
@@ -249,10 +300,8 @@ async function buildDetail(
     }
   }
 
-  // The aircraft type is separate (hexdb, keyed by airframe) and rarely changes,
-  // so it is worth keeping on the per-selection cache.
-  let type = prev?.aircraftType
-  if (type === undefined && !prev) type = await fetchType(icao24)
+  // Never awaited — see typeFor. The card must not wait on a decoration.
+  const type = typeFor(icao24) ?? prev?.aircraftType
 
   const enrich: FlightDetail & { _ts?: number } = {
     icao24,
