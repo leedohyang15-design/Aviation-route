@@ -48,14 +48,10 @@ export function DisplayApp(): JSX.Element {
    * gets there, or until it passes over us.
    */
   const callout = useMemo<Callout>(() => {
-    if (isSat) {
-      if (!state.selected) return NOTHING
-      const sd = satDetail?.id === state.selected ? satDetail : null
-      if (!sd) return { ...NOTHING, prefix: '위성을 찾는 중이에요' }
-      if (sd.overheadNow) return { prefix: '지금', value: '우리 머리 위', suffix: '' }
-      if (sd.nextPassSec == null) return { ...NOTHING, prefix: '우리나라 위로는 지나가지 않아요' }
-      return { prefix: '머리 위까지', value: hhmm(sd.nextPassSec), suffix: '남음' }
-    }
+    // Satellites carry no caption at all: the orbit line is the whole story on
+    // the dome, and the pass forecast is on the control screen where it can be
+    // read properly.
+    if (isSat) return NOTHING
     if (!sel) return NOTHING
     // Once something is selected the frame always says SOMETHING about it. An
     // empty callout used to be the outcome for two ordinary cases — a flight on

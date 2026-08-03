@@ -140,27 +140,11 @@ export function ControlApp(): JSX.Element {
             🛰 위성
           </button>
         </div>
-        {/* Data source tabs — live by default, simulation on demand. */}
-        <div className={'feed-tabs' + (isSat ? ' hidden' : '')} role="tablist" aria-label="데이터 소스">
-          <button
-            role="tab"
-            aria-selected={feedMode === 'auto'}
-            className={'feed-tab' + (feedMode === 'auto' ? ' on' : '')}
-            onClick={() => send({ type: 'setFeedMode', mode: 'auto' })}
-            title="OpenSky 실시간 데이터 (끊기면 자동으로 시뮬레이션)"
-          >
-            📡 실시간
-          </button>
-          <button
-            role="tab"
-            aria-selected={feedMode === 'mock'}
-            className={'feed-tab' + (feedMode === 'mock' ? ' on' : '')}
-            onClick={() => send({ type: 'setFeedMode', mode: 'mock' })}
-            title="시뮬레이션 데이터 (인터넷·크레딧 없이도 동작)"
-          >
-            🎮 시뮬레이션
-          </button>
-        </div>
+        {/* The simulation/live tabs are gone: the exhibit picks for itself. It
+            runs live whenever OpenSky is answering and falls back to simulation
+            on its own when it isn't, so the choice was one an operator never
+            needed to make — and one a visitor could make by accident. FEED=mock
+            in .env still pins simulation for a demo. */}
         {isSat ? (
           <div className="legend">
             {(

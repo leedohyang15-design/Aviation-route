@@ -26,6 +26,8 @@ import {
   pinTexture,
   textTexture,
   glowTexture,
+  wingLightTexture,
+  WING_LIGHT_SCALE,
   calloutTexture,
   categoryColor,
   orbitColor,
@@ -110,6 +112,8 @@ export class Globe {
   private bgUniforms: Record<string, THREE.IUniform>
   private planes: THREE.InstancedMesh
   private selectedPlane: THREE.Mesh
+  /** Navigation lights at every aircraft's wingtips, lit on the night side. */
+  private wingLights!: THREE.InstancedMesh
   /** Halo behind the selection, which lights up as the map goes dark. */
   private selectedGlow!: THREE.Mesh
   // Sun position for this frame, shared by the background shader and the
@@ -139,12 +143,26 @@ export class Globe {
   private routePoints: GeoPoint[] | null = null
   private lastRouteIdx = -1
   private lastRouteOffset = NaN
+  /**
+   * A dark casing under the route, for the same reason the orbit has one: the
+   * remaining leg is pale yellow, which vanishes over pale ground — the steppe
+   * and desert across Mongolia and central Asia especially, which happens to be
+   * where a great many long-haul routes run. Outlining it works over any
+   * terrain, where no single colour does.
+   */
+  private routeCasingMat = new LineMaterial({
+    color: 0x0a1020,
+    linewidth: 9,
+    transparent: true,
+    opacity: 0.55
+  })
   private flownMat = new LineMaterial({ color: 0xff3b30, linewidth: 5, transparent: true })
   private remainMat = new LineMaterial({
     color: 0xffe08a,
-    linewidth: 3,
+    linewidth: 3.5,
     transparent: true,
-    opacity: 0.4
+    // Was 0.4, which on top of the colour clash left the leg barely there.
+    opacity: 0.92
   })
   /**
    * Orbits are drawn as one continuous line: a satellite has no departure to
@@ -361,6 +379,24 @@ export class Globe {
     this.planes.frustumCulled = false
     this.planes.count = 0
     this.scene.add(this.planes)
+
+    // Additive, so a light adds to whatever is under it rather than pasting a
+    // grey disc over it, and so an unlit one (instance colour black) simply
+    // isn't there — which is what daylight should look like.
+    this.wingLights = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        map: this.tuneSprite(wingLightTexture()),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      }),
+      CAPACITY
+    )
+    this.wingLights.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    this.wingLights.frustumCulled = false
+    this.wingLights.count = 0
+    this.scene.add(this.wingLights)
 
     // --- Selected aircraft: a larger, bright airplane icon ---
     // Additive so it brightens the map beneath rather than pasting a grey disc
@@ -1270,8 +1306,9 @@ export class Globe {
     }
     const remaining = pts.slice(idx)
     const flown = pts.slice(0, idx + 1)
-    if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat)
-    if (flown.length >= 2) this.addRouteLines(flown, this.flownMat)
+    if (pts.length >= 2) this.addRouteLines(pts, this.routeCasingMat, 0.18)
+    if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat, 0.2)
+    if (flown.length >= 2) this.addRouteLines(flown, this.flownMat, 0.22)
   }
 
   /** Override the day/night clock (KST hour 0–24), or null for live time. */
@@ -1403,6 +1440,19 @@ export class Globe {
         .multiplyScalar(1 + localNight * (0.35 + 0.55 * this.pulse))
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
+
+      // Wing lights: on over the night side, breathing with everything else,
+      // absent in daylight. Same position and heading as the icon, on a larger
+      // quad so the lights bloom past the wingtips the way a strobe does.
+      if (this.kind === 'aircraft') {
+        this.wingLights.setMatrixAt(
+          i,
+          this.setSpriteMatrix(u, 1 - v, 0.05, ICON_H * this.iconScale * WING_LIGHT_SCALE, angle, e.lat)
+        )
+        const lit = localNight * (0.35 + 0.65 * this.pulse) * (selVisible && !isSel ? 0.3 : 1)
+        this.scratchColor.setRGB(lit, lit * 0.08, lit * 0.05)
+        this.wingLights.setColorAt(i, this.scratchColor)
+      }
       if (isSel) {
         // First frame the selected plane is rendered → center the camera on it.
         if (this.pendingRecenter) this.recenterOnPlane(e.lon, e.lat)
@@ -1595,6 +1645,10 @@ export class Globe {
     this.planes.count = i
     this.planes.instanceMatrix.needsUpdate = true
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
+    // Satellites have no wings to light.
+    this.wingLights.count = this.kind === 'aircraft' ? i : 0
+    this.wingLights.instanceMatrix.needsUpdate = true
+    if (this.wingLights.instanceColor) this.wingLights.instanceColor.needsUpdate = true
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
       this.selectedPlane.visible = false
@@ -1667,6 +1721,7 @@ export class Globe {
     this.remainMat.resolution.set(rw * pr, rh * pr)
     this.orbitMat.resolution.set(rw * pr, rh * pr)
     this.orbitCasingMat.resolution.set(rw * pr, rh * pr)
+    this.routeCasingMat.resolution.set(rw * pr, rh * pr)
   }
 
   dispose(): void {

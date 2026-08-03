@@ -90,6 +90,50 @@ export function glowTexture(): THREE.CanvasTexture {
   return tex
 }
 
+/**
+ * Navigation lights at the wingtips, for the night side.
+ *
+ * Drawn white and tinted per instance, so one texture serves every aircraft and
+ * the brightness can follow that aircraft's own local night. The positions come
+ * from the plane silhouette itself (PLANE_SVG, a 64-unit box): its wings run out
+ * to x=5 and x=59 at about y=42. The quad this lands on is drawn larger than the
+ * aircraft icon, because a light seen at distance is bigger than the thing
+ * carrying it — at world zoom the icon is barely a dozen pixels and lights
+ * confined inside it would be invisible.
+ */
+export function wingLightTexture(): THREE.CanvasTexture {
+  const S = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = S
+  const g = c.getContext('2d')!
+  // The icon occupies the middle 1/WING_LIGHT_SCALE of this quad, so map the
+  // silhouette's 64-unit box into that centred region.
+  const inner = S / WING_LIGHT_SCALE
+  const off = (S - inner) / 2
+  const at = (sx: number, sy: number) => [off + (sx / 64) * inner, off + (sy / 64) * inner]
+  for (const [sx, sy] of [
+    [5.5, 42],
+    [58.5, 42]
+  ]) {
+    const [x, y] = at(sx, sy)
+    const r = S * 0.115
+    const grad = g.createRadialGradient(x, y, 0, x, y, r)
+    grad.addColorStop(0, 'rgba(255,255,255,1)')
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.55)')
+    grad.addColorStop(1, 'rgba(255,255,255,0)')
+    g.fillStyle = grad
+    g.beginPath()
+    g.arc(x, y, r, 0, Math.PI * 2)
+    g.fill()
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** How much larger the wing-light quad is than the aircraft icon. */
+export const WING_LIGHT_SCALE = 1.7
+
 /** A CanvasTexture of a text label (white with dark outline). Returns aspect w/h. */
 export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
   const fontSize = 44
