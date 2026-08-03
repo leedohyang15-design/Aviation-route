@@ -142,13 +142,18 @@ const SANS = `'Pretendard',system-ui,-apple-system,'Segoe UI',sans-serif`
 const SS = 3 // supersample: canvas pixels per design unit
 /** Design units that span the full height of the display frame. Sets how large
  * the card lands on the dome — smaller number, bigger card. */
-const DESIGN_FRAME_H = 660
+const DESIGN_FRAME_H = 775
 
 const HEAD_H = 20
 const TAB_W = 24
 const PAD = 14
-const MIN_CONTENT = 230
-const MAX_CONTENT = 430
+/**
+ * The content column is a FIXED width. Letting it grow to fit meant a satellite
+ * called "TRANSPORTER-15 OBJECT H" produced a card half again as wide as one
+ * called "ISS", which is both distracting on a projection and unlike any real
+ * instrument. Text that doesn't fit is shrunk, then clipped with an ellipsis.
+ */
+const CONTENT_W = 300
 
 /** `letterSpacing` is a Chromium canvas property that TypeScript's DOM lib
  * doesn't know about yet; it is what gives the labels their tracked-out look. */
@@ -162,6 +167,43 @@ function setFont(g: Ctx, family: string, size: number, weight = '400', spacing =
 function measure(g: Ctx, text: string, family: string, size: number, weight = '400', spacing = 0): number {
   setFont(g, family, size, weight, spacing)
   return g.measureText(text).width / SS
+}
+
+interface Fitted {
+  text: string
+  size: number
+  width: number
+}
+
+/**
+ * Fit `text` into `maxW` design units: shrink the type down to `minSize`, and
+ * only if that still isn't enough, cut it with an ellipsis. Shrinking first
+ * keeps the whole name readable in the common case; clipping is the last resort
+ * for the genuinely absurd ones.
+ */
+function fitText(
+  g: Ctx,
+  text: string,
+  family: string,
+  size: number,
+  maxW: number,
+  minSize: number,
+  weight = '400',
+  spacing = 0
+): Fitted {
+  let w = measure(g, text, family, size, weight, spacing)
+  if (w <= maxW) return { text, size, width: w }
+  const shrunk = Math.max(minSize, size * (maxW / w))
+  w = measure(g, text, family, shrunk, weight, spacing)
+  if (w <= maxW) return { text, size: shrunk, width: w }
+  let cut = text
+  while (cut.length > 1) {
+    cut = cut.slice(0, -1)
+    const candidate = cut.trimEnd() + '…'
+    w = measure(g, candidate, family, shrunk, weight, spacing)
+    if (w <= maxW) return { text: candidate, size: shrunk, width: w }
+  }
+  return { text: cut, size: shrunk, width: w }
 }
 
 function roundRect(g: Ctx, x: number, y: number, w: number, h: number, r: number): void {
@@ -198,33 +240,41 @@ export function cardTexture(card: InfoCard): {
   const accent = card.kind === 'aircraft' ? ACCENT : INK
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
 
-  // --- Measure: the card is only as wide as its widest row ---
-  const titleW =
-    measure(measuring, card.title, MONO, 21, '700', 0.4) +
-    18 +
-    measure(measuring, card.status, MONO, 9, '600', 1.6)
-  const legW = card.leg
-    ? measure(measuring, card.leg.from, SANS, 12, '600') +
-      110 +
-      measure(measuring, card.leg.to, SANS, 12, '600')
-    : 0
-  const heroW = card.hero
-    ? measure(measuring, card.hero.label, MONO, 10, '600', 1.4) +
-      8 +
-      measure(measuring, card.hero.value, MONO, 26, '700') +
-      10 +
-      measure(measuring, card.hero.caption, SANS, 12, '600')
-    : 0
-  const tileWidths = card.tiles.map(
-    (t) =>
-      Math.max(
-        measure(measuring, t.label, MONO, 8, '600', 1.5),
-        measure(measuring, t.value, MONO, 16, '700') +
-          (t.unit ? 3 + measure(measuring, t.unit, MONO, 9, '600') : 0)
-      ) + 24
-  )
-  const tilesW = tileWidths.reduce((a, b) => a + b, 0)
-  const contentW = Math.max(MIN_CONTENT, Math.min(MAX_CONTENT, Math.max(titleW, legW, heroW, tilesW)))
+  // --- Fit the text to the fixed column, rather than the column to the text ---
+  const contentW = CONTENT_W
+  const statusW = measure(measuring, card.status, MONO, 9, '600', 1.6)
+  const title = fitText(measuring, card.title, MONO, 21, contentW - statusW - 14, 12, '700', 0.4)
+
+  // The leg gets whatever the dashed line doesn't need; each end takes half.
+  const LEG_LINE_MIN = 56
+  const legHalf = (contentW - LEG_LINE_MIN) / 2
+  const legFrom = card.leg ? fitText(measuring, card.leg.from, SANS, 12, legHalf, 8, '600') : null
+  const legTo = card.leg ? fitText(measuring, card.leg.to, SANS, 12, legHalf, 8, '600') : null
+
+  const heroLabelW = card.hero ? measure(measuring, card.hero.label, MONO, 10, '600', 1.4) : 0
+  const heroValueW = card.hero ? measure(measuring, card.hero.value, MONO, 26, '700') : 0
+  const heroCaption = card.hero
+    ? fitText(
+        measuring,
+        card.hero.caption,
+        SANS,
+        12,
+        Math.max(40, contentW - heroLabelW - heroValueW - 18),
+        8,
+        '600'
+      )
+    : null
+
+  // Tiles share the column equally, so the hairlines line up whatever the values.
+  const tileW = contentW / Math.max(1, card.tiles.length)
+  const tiles = card.tiles.map((t) => {
+    const unitW = t.unit ? 3 + measure(measuring, t.unit, MONO, 9, '600') : 0
+    return {
+      label: fitText(measuring, t.label, MONO, 8, tileW - 10, 6, '600', 1.5),
+      value: fitText(measuring, t.value, MONO, 16, tileW - 10 - unitW, 9, '700'),
+      unit: t.unit
+    }
+  })
 
   const ROW_TITLE = 34
   const ROW_LEG = 30
@@ -281,9 +331,9 @@ export function cardTexture(card: InfoCard): {
   }
 
   // Title row: identifier left, state right.
-  setFont(g, MONO, 21, '700', 0.4)
+  setFont(g, MONO, title.size, '700', 0.4)
   g.fillStyle = accent
-  g.fillText(card.title, x0 * SS, (y + 24) * SS)
+  g.fillText(title.text, x0 * SS, (y + 24) * SS)
   setFont(g, MONO, 9, '600', 1.6)
   g.fillStyle = MUTED
   g.textAlign = 'right'
@@ -293,18 +343,17 @@ export function cardTexture(card: InfoCard): {
   rule()
 
   // Leg row: from — plane — to, with the plane at its progress along the line.
-  if (card.leg) {
-    const fromW = measure(g, card.leg.from, SANS, 12, '600')
-    const toW = measure(g, card.leg.to, SANS, 12, '600')
+  if (card.leg && legFrom && legTo) {
     const mid = y + ROW_LEG / 2
-    setFont(g, SANS, 12, '600')
+    setFont(g, SANS, legFrom.size, '600')
     g.fillStyle = INK
-    g.fillText(card.leg.from, x0 * SS, (mid + 4) * SS)
+    g.fillText(legFrom.text, x0 * SS, (mid + 4) * SS)
+    setFont(g, SANS, legTo.size, '600')
     g.textAlign = 'right'
-    g.fillText(card.leg.to, x1 * SS, (mid + 4) * SS)
+    g.fillText(legTo.text, x1 * SS, (mid + 4) * SS)
     g.textAlign = 'left'
-    const lineA = x0 + fromW + 10
-    const lineB = x1 - toW - 10
+    const lineA = x0 + legFrom.width + 10
+    const lineB = x1 - legTo.width - 10
     if (lineB > lineA + 20) {
       g.strokeStyle = RULE
       g.lineWidth = Math.max(1, SS)
@@ -322,18 +371,16 @@ export function cardTexture(card: InfoCard): {
   }
 
   // Hero row: the countdown, with an optional ruled scale under it.
-  if (card.hero) {
-    const labelW = measure(g, card.hero.label, MONO, 10, '600', 1.4)
-    const valueW = measure(g, card.hero.value, MONO, 26, '700')
+  if (card.hero && heroCaption) {
     setFont(g, MONO, 10, '600', 1.4)
     g.fillStyle = MUTED
     g.fillText(card.hero.label, x0 * SS, (y + 26) * SS)
     setFont(g, MONO, 26, '700')
     g.fillStyle = accent
-    g.fillText(card.hero.value, (x0 + labelW + 8) * SS, (y + 29) * SS)
-    setFont(g, SANS, 12, '600')
+    g.fillText(card.hero.value, (x0 + heroLabelW + 8) * SS, (y + 29) * SS)
+    setFont(g, SANS, heroCaption.size, '600')
     g.fillStyle = INK
-    g.fillText(card.hero.caption, (x0 + labelW + valueW + 18) * SS, (y + 27) * SS)
+    g.fillText(heroCaption.text, (x0 + heroLabelW + heroValueW + 18) * SS, (y + 27) * SS)
     if (card.hero.fill != null) {
       // Ruled scale: ticks fill toward the event, the marker stands taller.
       const n = 30
@@ -355,28 +402,24 @@ export function cardTexture(card: InfoCard): {
     rule()
   }
 
-  // Tile row: label over value, separated by hairlines.
-  const scale = tilesW > 0 ? contentW / Math.max(tilesW, contentW) : 1
-  let tx = x0
-  card.tiles.forEach((t, i) => {
-    const tw = tileWidths[i] * scale
+  // Tile row: equal columns, label over value, separated by hairlines.
+  tiles.forEach((t, i) => {
+    const tx = x0 + i * tileW
     if (i > 0) {
       g.fillStyle = RULE
       g.fillRect(Math.round((tx - 8) * SS), (y + 8) * SS, Math.max(1, Math.round(SS / 2)), 24 * SS)
     }
-    setFont(g, MONO, 8, '600', 1.5)
+    setFont(g, MONO, t.label.size, '600', 1.5)
     g.fillStyle = MUTED
-    g.fillText(t.label, tx * SS, (y + 15) * SS)
-    setFont(g, MONO, 16, '700')
+    g.fillText(t.label.text, tx * SS, (y + 15) * SS)
+    setFont(g, MONO, t.value.size, '700')
     g.fillStyle = INK
-    g.fillText(t.value, tx * SS, (y + 32) * SS)
+    g.fillText(t.value.text, tx * SS, (y + 32) * SS)
     if (t.unit) {
-      const vw = measure(g, t.value, MONO, 16, '700')
       setFont(g, MONO, 9, '600')
       g.fillStyle = MUTED
-      g.fillText(t.unit, (tx + vw + 3) * SS, (y + 32) * SS)
+      g.fillText(t.unit, (tx + t.value.width + 3) * SS, (y + 32) * SS)
     }
-    tx += tw
   })
 
   const tex = new THREE.CanvasTexture(c)
