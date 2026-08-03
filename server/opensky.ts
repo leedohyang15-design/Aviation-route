@@ -12,8 +12,8 @@ import type { FlightFeed } from './feed'
 import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
-import { cityKo } from '../src/common/airports'
 import { opsLog } from './log'
+import { koCity, cachedRoute, cacheRoute, lookupRoutes, type RoutePorts } from './routes'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -185,26 +185,6 @@ export function createOpenSkyFeed(): FlightFeed {
 // best-effort from public APIs and cache. Failures degrade to partial detail.
 // ---------------------------------------------------------------------------
 
-// Korean city for an airport code, logging codes we don't have a translation for
-// (once each) so the operator can collect them and we can add them in a batch —
-// instead of hunting for them one screenshot at a time.
-const missingCity = new Set<string>()
-function koCity(code: string | undefined, english: string | undefined): string | undefined {
-  const ko = cityKo(code)
-  if (ko) return ko
-  if (code && !missingCity.has(code)) {
-    missingCity.add(code)
-    console.log(`[city] no Korean for ${code}${english ? ` (${english})` : ''} — add to airports.ts`)
-  }
-  return english
-}
-
-interface RoutePorts {
-  airline?: string
-  origin?: { code: string; city?: string; lon: number; lat: number }
-  destination?: { code: string; city?: string; lon: number; lat: number }
-}
-
 /** Try adsbdb first, then adsb.lol as a fallback (a different community route
  * DB, so it fills gaps where adsbdb has no entry for the flight number). */
 async function fetchRoute(
@@ -212,7 +192,13 @@ async function fetchRoute(
   pos: { lat: number; lon: number } | null
 ): Promise<RoutePorts | null> {
   if (!callsign) return null
-  return (await fetchRouteAdsbdb(callsign)) ?? (await fetchRouteAdsbLol(callsign, pos))
+  // The bulk resolver has usually already answered for this callsign, so a
+  // selection normally costs no network round-trip at all.
+  const known = cachedRoute(callsign)
+  if (known !== undefined) return known
+  const found = (await fetchRouteAdsbdb(callsign)) ?? (await fetchRouteAdsbLol(callsign, pos))
+  cacheRoute(callsign, found)
+  return found
 }
 
 async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
@@ -238,33 +224,15 @@ async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
   }
 }
 
-/** adsb.lol routeset: POST the callsign + current position, get back the
- * airports (first = origin, last = destination) with coordinates. */
+/** Single-plane adsb.lol lookup — a one-item call to the shared batch helper,
+ * used only when adsbdb has no entry and the bulk pass hasn't covered it yet. */
 async function fetchRouteAdsbLol(
   callsign: string,
   pos: { lat: number; lon: number } | null
 ): Promise<RoutePorts | null> {
   try {
-    const res = await fetch('https://api.adsb.lol/api/0/routeset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planes: [{ callsign, lat: pos?.lat ?? 0, lng: pos?.lon ?? 0 }] })
-    })
-    if (!res.ok) return null
-    const arr = (await res.json()) as any[]
-    const aps = Array.isArray(arr) ? arr[0]?._airports : null
-    if (!Array.isArray(aps) || aps.length < 2) return null
-    const port = (p: any) =>
-      p && p.lon != null && p.lat != null
-        ? {
-            code: p.iata || p.icao || '',
-            city: koCity(p.iata, p.location),
-            countryCode: (p.countryiso2 || '').toLowerCase() || undefined,
-            lon: p.lon,
-            lat: p.lat
-          }
-        : undefined
-    return { origin: port(aps[0]), destination: port(aps[aps.length - 1]) }
+    const found = await lookupRoutes([{ callsign, lat: pos?.lat ?? 0, lon: pos?.lon ?? 0 }])
+    return found.get(callsign.trim().toUpperCase()) ?? null
   } catch {
     return null
   }

@@ -37,6 +37,13 @@ export function ControlApp(): JSX.Element {
     send({ type: 'setFilter', filter: { ...state.filter, scheduledOnly: !scheduledOnly } })
   }
 
+  // "Route known only": hides aircraft confirmed to have no published route, so
+  // visitors don't land on a plane that can't draw one. On by default.
+  const routeOnly = state.filter.routeOnly ?? false
+  const toggleRouteOnly = () => {
+    send({ type: 'setFilter', filter: { ...state.filter, routeOnly: !routeOnly } })
+  }
+
   // Live data vs. forced simulation. Live is the default; simulation is there
   // for demos and for when the daily OpenSky credit budget runs out.
   const feedMode = state.feedMode ?? 'auto'
@@ -129,6 +136,13 @@ export function ControlApp(): JSX.Element {
             title="식별되는 항공기(여객·화물·군용)만 표시 / 끄면 전체"
           >
             {scheduledOnly ? '✓ 여객·화물·군용만' : '전체 표시'}
+          </button>
+          <button
+            className={'leg toggle' + (routeOnly ? ' on' : '')}
+            onClick={toggleRouteOnly}
+            title="경로가 확인된 항공기만 표시 / 끄면 경로 없는 것도 보임"
+          >
+            {routeOnly ? '✓ 경로 있는 것만' : '경로 없어도 표시'}
           </button>
         </div>
       </div>

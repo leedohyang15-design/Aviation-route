@@ -39,6 +39,20 @@ export const MOCK_POLL_INTERVAL_MS = Number(readEnv('MOCK_POLL_INTERVAL_MS') ?? 
  */
 export const MOCK_AIRCRAFT_COUNT = Number(readEnv('MOCK_AIRCRAFT_COUNT') ?? 6000)
 
+/**
+ * Bulk route lookup (adsb.lol). OpenSky's snapshot has no origin/destination, so
+ * routes are resolved by callsign and cached; aircraft confirmed to have no
+ * route are hidden. adsb.lol is a free community API, so the defaults are
+ * deliberately gentle: chunked, sequential, and capped per poll cycle. Raise
+ * CHUNKS_PER_POLL to fill the cache faster, lower it to be lighter on the API.
+ */
+export const ROUTE_LOOKUP_CHUNK = Number(readEnv('ROUTE_LOOKUP_CHUNK') ?? 100)
+export const ROUTE_LOOKUP_CHUNKS_PER_POLL = Number(readEnv('ROUTE_LOOKUP_CHUNKS_PER_POLL') ?? 10)
+/** How long a resolved route stays cached (routes rarely change mid-day). */
+export const ROUTE_CACHE_TTL_MS = Number(readEnv('ROUTE_CACHE_TTL_MS') ?? 24 * 3600_000)
+/** How long a "no route" answer sticks before we try that callsign again. */
+export const ROUTE_NEGATIVE_TTL_MS = Number(readEnv('ROUTE_NEGATIVE_TTL_MS') ?? 6 * 3600_000)
+
 /** Equirectangular render target. Must stay exactly 2:1 for sphere projection. */
 export const EQUIRECT_WIDTH = Number(readEnv('EQUIRECT_WIDTH') ?? 4096)
 export const EQUIRECT_HEIGHT = EQUIRECT_WIDTH / 2

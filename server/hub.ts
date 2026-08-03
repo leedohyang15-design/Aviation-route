@@ -16,6 +16,8 @@ import { hasOpenSkyCredentials } from './opensky'
 import { createResilientFeed, type SwitchableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { opsLog } from './log'
+import { hasRoute, resolveRoutes } from './routes'
+import { isKnownFlight } from '../src/common/flightClass'
 
 export interface Hub {
   close(): void
@@ -100,9 +102,27 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     }
   }
 
+  // Tag each aircraft with what we know about its route, and queue the ones we
+  // haven't asked about yet. Only real data needs this — the simulation always
+  // knows its own routes — and only identifiable callsigns are worth asking
+  // about, which keeps the lookup volume down.
+  const annotateRoutes = (snapshot: Aircraft[]): Aircraft[] => {
+    if (feed.source === 'mock') return snapshot
+    const pending: { callsign: string; lat: number; lon: number }[] = []
+    const out = snapshot.map((a) => {
+      if (!isKnownFlight(a.callsign)) return a
+      const known = hasRoute(a.callsign)
+      if (known === undefined) pending.push({ callsign: a.callsign, lat: a.lat, lon: a.lon })
+      return known === undefined ? a : { ...a, hasRoute: known }
+    })
+    // Deliberately not awaited: results land in the cache for the next snapshot.
+    if (pending.length) void resolveRoutes(pending)
+    return out
+  }
+
   feed.start(
     (snapshot) => {
-      aircraft = snapshot
+      aircraft = annotateRoutes(snapshot)
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
       // Keep the selected plane's route/progress/ETA live (e.g. after a mock
