@@ -143,6 +143,20 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     // Queue only; the resolver loop drains it in the background and results
     // land in the cache for a later snapshot.
     if (pending.length) resolveRoutes(pending)
+    // How much of the sky actually has a route to draw. "Why does nothing show
+    // a route" is answerable from this line alone: all-unknown means the lookup
+    // hasn't caught up, all-none means the callsigns genuinely have no route,
+    // and a healthy split with nothing on screen points somewhere else entirely.
+    let withRoute = 0
+    let without = 0
+    for (const a of out) {
+      if (a.hasRoute === true) withRoute++
+      else if (a.hasRoute === false) without++
+    }
+    opsLog(
+      `[routes] ${out.length} aircraft — ${withRoute} route / ${without} none / ` +
+        `${out.length - withRoute - without} not looked up yet`
+    )
     return out
   }
 
@@ -152,6 +166,59 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     if (state.mode !== 'satellite') return
     broadcast({ type: 'satellites', data: satSnapshot(), serverTime: Date.now() })
     if (state.selected) broadcast({ type: 'satDetail', detail: satDetail(state.selected) })
+  }
+
+  /** Drop the current selection and clear every trace of it on both windows. */
+  function clearSelection(why: string): void {
+    if (!state.selected) return
+    opsLog(`[hub] selection ${state.selected} ${why} — cleared`)
+    state.selected = null
+    missedSnapshots = 0
+    broadcast({ type: 'state', state })
+    broadcast({ type: 'route', icao24: '', points: null })
+    broadcast({ type: 'detail', detail: null })
+  }
+
+  /**
+   * A selected aircraft that is no longer in the snapshot has to be released.
+   *
+   * Nothing used to do this, and the consequence was the reported "nothing
+   * appears when I click a plane": the exhibit spends its first minute on the
+   * simulation while OpenSky's first poll is in flight, the attract cycle picks
+   * a simulated aircraft, and then live data replaces the whole fleet. That
+   * simulated icao24 exists in no later snapshot, but `state.selected` stayed
+   * pinned to it — so the control's card (which is looked up by id in the
+   * current snapshot) vanished and never came back, while the hub went on
+   * asking for the detail of an aircraft that wasn't there.
+   *
+   * Two consecutive misses rather than one: an aircraft dropping out of
+   * coverage for a single poll is ordinary, and releasing the visitor's
+   * selection for that would be its own bug.
+   */
+  let missedSnapshots = 0
+  let lastSelectedState: Aircraft | null = null
+  function holdSelection(snapshot: Aircraft[]): Aircraft[] {
+    if (!state.selected) {
+      missedSnapshots = 0
+      lastSelectedState = null
+      return snapshot
+    }
+    const here = snapshot.find((a) => a.icao24 === state.selected)
+    if (here) {
+      missedSnapshots = 0
+      lastSelectedState = here
+      return snapshot
+    }
+    if (++missedSnapshots >= 2) {
+      clearSelection('left the snapshot')
+      return snapshot
+    }
+    // Inside the grace period: carry the last known state through, so a plane
+    // that blinks out for one poll doesn't blank the card for the whole
+    // interval — which on live data is a minute and a half. The renderer already
+    // dead-reckons from the last position, so this is the state it was showing
+    // anyway; it just no longer has to throw the aircraft away to do it.
+    return lastSelectedState ? [...snapshot, lastSelectedState] : snapshot
   }
 
   function applyMode(next: ExhibitMode): void {
@@ -171,9 +238,13 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     broadcast({ type: 'satDetail', detail: null })
   }
 
+  // The simulation and live data share no aircraft, so a handover invalidates
+  // the selection outright — don't wait for the two-snapshot grace period.
+  feed.onSourceChange = () => clearSelection('belonged to the previous feed')
+
   feed.start(
     (snapshot) => {
-      aircraft = annotateRoutes(snapshot)
+      aircraft = holdSelection(annotateRoutes(snapshot))
       if (state.mode !== 'flight') return
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
@@ -221,7 +292,20 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     switch (msg.type) {
       case 'hello':
         return
-      case 'select':
+      case 'select': {
+        // Log what arrived, and whether the hub can even see that aircraft.
+        // Without this there is no way to tell a click that never reached the
+        // hub from one that did but had nothing to show.
+        const found = msg.icao24 ? aircraft.find((a) => a.icao24 === msg.icao24) : null
+        opsLog(
+          msg.icao24
+            ? `[hub] select ${msg.icao24} ${found ? `(${found.callsign || 'no callsign'})` : '— NOT in the current snapshot'}`
+            : '[hub] select cleared'
+        )
+        missedSnapshots = 0
+        // Remember it now, not on the next poll: a plane selected moments before
+        // it blinks out would otherwise have nothing to carry through the gap.
+        lastSelectedState = found ?? null
         state.selected = msg.icao24
         broadcast({ type: 'state', state })
         if (state.mode === 'satellite') {
@@ -232,6 +316,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
           void sendDetail(null)
         }
         return
+      }
       case 'setFilter':
         state.filter = msg.filter
         broadcast({ type: 'state', state })

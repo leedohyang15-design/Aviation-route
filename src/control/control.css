@@ -81,6 +81,20 @@ body,
 .ctrl-info .warn {
   color: #ffcf6b;
 }
+/* Not live yet (or no longer live): a badge rather than a whisper, so nobody
+   spends the exhibit's first minute judging simulated aircraft. */
+.ctrl-info .src.pending {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(232, 137, 12, 0.85);
+  background: rgba(232, 137, 12, 0.22);
+  color: #ffcf6b;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 1;
+}
 
 /* Touch invitation, bottom-center, gently pulsing. */
 .touch-hint {

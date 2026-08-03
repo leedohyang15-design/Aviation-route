@@ -103,7 +103,11 @@ export function ControlApp(): JSX.Element {
             </>
           )}
         </div>
-        <div className={'src ' + (isSat || live ? 'ok' : 'warn')}>
+        {/* While OpenSky's first poll is still in flight the exhibit runs on the
+            simulation — for up to a minute or so after launch. That used to be a
+            line of small grey text, which is how a whole evaluation session got
+            spent on simulated aircraft. Make it a badge nobody can miss. */}
+        <div className={'src ' + (isSat || live ? 'ok' : 'pending')}>
           {isSat ? '위성 궤도 · 실시간 계산' : statusText}
         </div>
 
