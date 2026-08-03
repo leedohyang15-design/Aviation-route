@@ -129,14 +129,12 @@ export function wingLightTexture(x: number, y: number): THREE.CanvasTexture {
 }
 
 /**
- * Where the lights sit on each icon, in those icon-relative coordinates.
- * From the silhouettes themselves: PLANE_SVG's wings reach x=5.5 and 58.5 of a
- * 64 box at y=42, and satelliteTexture's panels run out to x=±56 of 128, level
- * with the body.
+ * Where the lights sit on the icon, in those icon-relative coordinates — taken
+ * from the silhouette itself: PLANE_SVG's wings reach x=5.5 and 58.5 of a 64
+ * box, at y=42.
  */
 export const LIGHT_POS = {
-  aircraft: { x: (32 - 5.5) / 32, y: (42 - 32) / 32 },
-  satellite: { x: 56 / 64, y: 0 }
+  aircraft: { x: (32 - 5.5) / 32, y: (42 - 32) / 32 }
 } as const
 
 /** How much larger the wing-light quad is than the aircraft icon. */

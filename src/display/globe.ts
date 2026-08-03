@@ -117,7 +117,6 @@ export class Globe {
    * the marker for "this is the one you picked". */
   private selectedLights!: THREE.Mesh
   private planeLightTex!: THREE.CanvasTexture
-  private satLightTex!: THREE.CanvasTexture
   /** Halo behind the selection, which lights up as the map goes dark. */
   private selectedGlow!: THREE.Mesh
   // Sun position for this frame, shared by the background shader and the
@@ -407,9 +406,6 @@ export class Globe {
     // disc over it, and so turning them down turns them off completely.
     this.planeLightTex = this.tuneSprite(
       wingLightTexture(LIGHT_POS.aircraft.x, LIGHT_POS.aircraft.y)
-    )
-    this.satLightTex = this.tuneSprite(
-      wingLightTexture(LIGHT_POS.satellite.x, LIGHT_POS.satellite.y)
     )
     this.selectedLights = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -1126,12 +1122,6 @@ export class Globe {
     selMat.map = kind === 'satellite' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
-    // The lights sit at the wingtips of a plane and at the ends of a
-    // satellite's panels, which are nowhere near each other in icon space, so
-    // each kind gets its own texture rather than one shared pair of dots.
-    const litMat = this.selectedLights.material as THREE.MeshBasicMaterial
-    litMat.map = kind === 'satellite' ? this.satLightTex : this.planeLightTex
-    litMat.needsUpdate = true
     if (kind === 'satellite') {
       for (const m of [
         this.originMarker,
@@ -1474,20 +1464,29 @@ export class Globe {
           const glowMat = this.selectedGlow.material as THREE.MeshBasicMaterial
           glowMat.opacity = 0.1 + this.nightAt(e.lon, e.lat) * (0.25 + 0.6 * this.pulse)
           this.selectedGlow.visible = true
-          // Navigation lights on the wingtips (or on the ends of a satellite's
-          // panels), red and blinking. Only on the targeted object: every plane
-          // carrying them turned the night side into a field of red specks and
-          // hid the one thing the visitor is meant to be following. Additive on
-          // top of the icon, so at the bottom of the pulse they vanish
-          // completely and the icon reads normally.
-          this.selectedLights.matrix.copy(
-            this.setSpriteMatrix(au, ay, 0.72, SEL_H * ps * WING_LIGHT_SCALE, ang, alat)
-          )
-          this.selectedLights.matrixWorldNeedsUpdate = true
-          const litMat = this.selectedLights.material as THREE.MeshBasicMaterial
-          const lit = 0.25 + 0.75 * this.pulse
-          litMat.color.setRGB(lit, lit * 0.06, lit * 0.04)
-          this.selectedLights.visible = true
+          // Red navigation lights on the wingtips, blinking — an aircraft in
+          // the dark, which is when a real one shows them. Only on the targeted
+          // plane: every plane carrying them turned the night side into a field
+          // of red specks and hid the one thing the visitor is meant to be
+          // following. Additive over the icon, so as the plane crosses back
+          // into daylight they fade out with the local night rather than
+          // switching off.
+          const night = this.nightAt(e.lon, e.lat)
+          if (this.kind === 'aircraft' && night > 0.01) {
+            this.selectedLights.matrix.copy(
+              this.setSpriteMatrix(au, ay, 0.72, SEL_H * ps * WING_LIGHT_SCALE, ang, alat)
+            )
+            this.selectedLights.matrixWorldNeedsUpdate = true
+            const lit = night * (0.25 + 0.75 * this.pulse)
+            ;(this.selectedLights.material as THREE.MeshBasicMaterial).color.setRGB(
+              lit,
+              lit * 0.06,
+              lit * 0.04
+            )
+            this.selectedLights.visible = true
+          } else {
+            this.selectedLights.visible = false
+          }
         }
         // A satellite icon is drawn upright; turning it to the ground track just
         // makes the solar panels point at nothing.
