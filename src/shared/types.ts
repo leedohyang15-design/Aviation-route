@@ -33,6 +33,50 @@ export interface Aircraft {
   hasRoute?: boolean
 }
 
+/** Which layer the exhibit is showing. Tabs switch between them. */
+export type ExhibitMode = 'flight' | 'satellite'
+
+/** Orbit class — drives colour and the filter chips. */
+export type OrbitClass = 'leo' | 'starlink' | 'meo' | 'geo'
+
+/** One satellite, propagated from its orbital elements. Deliberately the same
+ * shape the renderer already needs for aircraft (id / name / position / heading
+ * / speed) so the map, selection, and camera work unchanged. */
+export interface Satellite {
+  /** NORAD catalogue number. */
+  id: string
+  name: string
+  lon: number
+  lat: number
+  /** Altitude above sea level, kilometres (aircraft use metres). */
+  altKm: number
+  /** Ground speed of the sub-satellite point, km/s. */
+  speedKmS: number
+  /** Direction of travel in degrees clockwise from north. */
+  heading: number
+  orbit: OrbitClass
+}
+
+/** On-demand detail for the selected satellite (panel + orbit line). */
+export interface SatelliteDetail {
+  id: string
+  name: string
+  altKm: number
+  speedKmS: number
+  /** Time for one orbit, minutes. */
+  periodMin: number
+  inclinationDeg: number
+  orbit: OrbitClass
+  /** One full orbit's ground track, or null if it couldn't be computed. */
+  track: GeoPoint[] | null
+  /** Seconds until it next rises over the exhibit, when that's known. */
+  nextPassSec?: number
+  /** How high it gets during that pass, degrees above the horizon. */
+  passMaxElevationDeg?: number
+  /** True when it is above the horizon right now. */
+  overheadNow?: boolean
+}
+
 /** A single point of a rendered route, in geographic coordinates. */
 export interface GeoPoint {
   lon: number
@@ -119,6 +163,10 @@ export interface PresentationState {
   dayNightHour: number | null
   /** Live data or forced simulation. Defaults to live. */
   feedMode: FeedMode
+  /** Aircraft layer or satellite layer. Defaults to aircraft. */
+  mode: ExhibitMode
+  /** Orbit classes to hide in satellite mode (empty = show all). */
+  hiddenOrbits: OrbitClass[]
 }
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
@@ -130,7 +178,9 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },
   dayNightHour: null, // live time
-  feedMode: 'auto' // real data by default; the operator can force simulation
+  feedMode: 'auto', // real data by default; the operator can force simulation
+  mode: 'flight',
+  hiddenOrbits: []
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +193,8 @@ export type ServerMessage =
   | { type: 'state'; state: PresentationState }
   | { type: 'route'; icao24: string; points: GeoPoint[] | null }
   | { type: 'detail'; detail: FlightDetail | null }
+  | { type: 'satellites'; data: Satellite[]; serverTime: number }
+  | { type: 'satDetail'; detail: SatelliteDetail | null }
   | {
       type: 'status'
       /** Which feed is actually painting the screen right now. */
@@ -162,4 +214,6 @@ export type ClientMessage =
   | { type: 'toggleOverlay'; key: OverlayKey; value?: boolean }
   | { type: 'setDayNight'; hour: number | null }
   | { type: 'setFeedMode'; mode: FeedMode }
+  | { type: 'setMode'; mode: ExhibitMode }
+  | { type: 'setHiddenOrbits'; orbits: OrbitClass[] }
   | { type: 'hello'; role: 'control' | 'display' }

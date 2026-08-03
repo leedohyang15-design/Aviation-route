@@ -257,3 +257,29 @@ body,
     opacity: 1;
   }
 }
+
+/* Satellite mode: the data-source tabs are aviation-only, so they fold away
+   rather than sitting there inert. */
+.ctrl-info .feed-tabs.hidden {
+  display: none;
+}
+
+/* An imminent overhead pass is the one line visitors look for — make it glow
+   instead of reading like the neutral "no route" notice it shares styling with. */
+.bp-noroute.soon {
+  color: #04121f;
+  background: rgba(143, 227, 160, 0.92);
+  font-weight: 700;
+}
+
+/* Plain-language orbit notes under the numbers. */
+.sat-story {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #b9c8dc;
+}
+.sat-story li {
+  margin: 2px 0;
+}

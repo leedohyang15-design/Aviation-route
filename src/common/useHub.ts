@@ -16,7 +16,9 @@ import {
   type ClientMessage,
   type FlightDetail,
   type GeoPoint,
-  type PresentationState
+  type PresentationState,
+  type Satellite,
+  type SatelliteDetail
 } from '@shared/types'
 
 export interface HubView {
@@ -29,6 +31,8 @@ export interface HubView {
   credentials: boolean
   route: { icao24: string; points: GeoPoint[] | null }
   detail: FlightDetail | null
+  satellites: Satellite[]
+  satDetail: SatelliteDetail | null
 }
 
 export function useHub(role: 'control' | 'display'): HubView {
@@ -42,6 +46,8 @@ export function useHub(role: 'control' | 'display'): HubView {
     points: null
   })
   const [detail, setDetail] = useState<FlightDetail | null>(null)
+  const [satellites, setSatellites] = useState<Satellite[]>([])
+  const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
   const busRef = useRef<Bus | null>(null)
 
   useEffect(() => {
@@ -65,6 +71,12 @@ export function useHub(role: 'control' | 'display'): HubView {
         case 'detail':
           setDetail(msg.detail)
           break
+        case 'satellites':
+          setSatellites(msg.data)
+          break
+        case 'satDetail':
+          setSatDetail(msg.detail)
+          break
       }
     })
     bus.onStatus(setConnected)
@@ -77,5 +89,16 @@ export function useHub(role: 'control' | 'display'): HubView {
 
   const send = useCallback((msg: ClientMessage) => busRef.current?.send(msg), [])
 
-  return { send, aircraft, state, connected, source, credentials, route, detail }
+  return {
+    send,
+    aircraft,
+    state,
+    connected,
+    source,
+    credentials,
+    route,
+    detail,
+    satellites,
+    satDetail
+  }
 }

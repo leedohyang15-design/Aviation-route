@@ -158,3 +158,19 @@ const CAT_COLOR = {
 export function categoryColor(cat: FlightCategory): THREE.Color {
   return cat === 'military' ? CAT_COLOR.military : cat === 'cargo' ? CAT_COLOR.cargo : CAT_COLOR.passenger
 }
+
+/** Colour per orbit class, so the shells read apart at a glance: low orbit
+ * cyan, the Starlink shells violet (they're most of the sky), navigation gold,
+ * geostationary a warm red that sits still over the equator. */
+export function orbitColor(orbit: string): THREE.Color {
+  switch (orbit) {
+    case 'starlink':
+      return new THREE.Color('#b48cff')
+    case 'meo':
+      return new THREE.Color('#ffd166')
+    case 'geo':
+      return new THREE.Color('#ff7b6b')
+    default:
+      return new THREE.Color('#5ce1e6')
+  }
+}

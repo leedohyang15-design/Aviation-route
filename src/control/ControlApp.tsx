@@ -3,10 +3,29 @@ import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
+import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
+import type { OrbitClass } from '@shared/types'
 import { MapView } from './MapView'
 
 export function ControlApp(): JSX.Element {
-  const { send, aircraft, state, connected, source, credentials, route, detail } = useHub('control')
+  const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
+    useHub('control')
+  const isSat = state.mode === 'satellite'
+  // Orbit-class filter, mirroring how the aircraft category chips work.
+  const hiddenOrbits = state.hiddenOrbits ?? []
+  const satVisible = useMemo(
+    () => satellites.filter((s) => !hiddenOrbits.includes(s.orbit)),
+    [satellites, hiddenOrbits]
+  )
+  const perOrbit = useMemo(() => {
+    const c: Record<OrbitClass, number> = { leo: 0, starlink: 0, meo: 0, geo: 0 }
+    for (const s of satellites) c[s.orbit]++
+    return c
+  }, [satellites])
+  const toggleOrbit = (o: OrbitClass) => {
+    const next = hiddenOrbits.includes(o) ? hiddenOrbits.filter((x) => x !== o) : [...hiddenOrbits, o]
+    send({ type: 'setHiddenOrbits', orbits: next })
+  }
   const visible = useMemo(
     () => applyFilter(aircraft, state.filter, state.selected),
     [aircraft, state.filter, state.selected]
@@ -53,6 +72,8 @@ export function ControlApp(): JSX.Element {
   return (
     <div className="control-root">
       <MapView
+        mode={state.mode}
+        satellites={satVisible}
         aircraft={visible}
         selected={state.selected}
         route={route.points}
@@ -72,11 +93,41 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          지금 하늘에 ✈ <b>{visible.length.toLocaleString()}</b>대
+          {isSat ? (
+            <>
+              지금 지구 위에 🛰 <b>{satVisible.length.toLocaleString()}</b>개
+            </>
+          ) : (
+            <>
+              지금 하늘에 ✈ <b>{visible.length.toLocaleString()}</b>대
+            </>
+          )}
         </div>
-        <div className={'src ' + (live ? 'ok' : 'warn')}>{statusText}</div>
+        <div className={'src ' + (isSat || live ? 'ok' : 'warn')}>
+          {isSat ? '위성 궤도 · 실시간 계산' : statusText}
+        </div>
+
+        {/* Layer tabs — aircraft or satellites. */}
+        <div className="feed-tabs" role="tablist" aria-label="화면">
+          <button
+            role="tab"
+            aria-selected={!isSat}
+            className={'feed-tab' + (!isSat ? ' on' : '')}
+            onClick={() => send({ type: 'setMode', mode: 'flight' })}
+          >
+            ✈ 비행기
+          </button>
+          <button
+            role="tab"
+            aria-selected={isSat}
+            className={'feed-tab' + (isSat ? ' on' : '')}
+            onClick={() => send({ type: 'setMode', mode: 'satellite' })}
+          >
+            🛰 위성
+          </button>
+        </div>
         {/* Data source tabs — live by default, simulation on demand. */}
-        <div className="feed-tabs" role="tablist" aria-label="데이터 소스">
+        <div className={'feed-tabs' + (isSat ? ' hidden' : '')} role="tablist" aria-label="데이터 소스">
           <button
             role="tab"
             aria-selected={feedMode === 'auto'}
@@ -96,6 +147,27 @@ export function ControlApp(): JSX.Element {
             🎮 시뮬레이션
           </button>
         </div>
+        {isSat ? (
+          <div className="legend">
+            {(
+              [
+                ['leo', '저궤도', '#5ce1e6'],
+                ['starlink', '스타링크', '#b48cff'],
+                ['meo', '중궤도', '#ffd166'],
+                ['geo', '정지궤도', '#ff7b6b']
+              ] as [OrbitClass, string, string][]
+            ).map(([key, label, color]) => (
+              <button
+                key={key}
+                className={'leg' + (hiddenOrbits.includes(key) ? ' off' : '')}
+                onClick={() => toggleOrbit(key)}
+              >
+                <i style={{ background: color }} />
+                {label} {perOrbit[key].toLocaleString()}개
+              </button>
+            ))}
+          </div>
+        ) : (
         <div className="legend">
           <button
             className={'leg' + (hidden.includes('passenger') ? ' off' : '')}
@@ -119,16 +191,23 @@ export function ControlApp(): JSX.Element {
             군용기 {perCategory.military.toLocaleString()}대
           </button>
         </div>
+        )}
       </div>
 
       {/* Bottom sheet: the card slides up on selection. Keyed by icao24 so it
           re-mounts and replays the pop-up animation on every new selection. */}
       <div className="sheet">
-        {sel && (
-          <div className="sheet-card" key={state.selected ?? ''}>
-            <FlightDetailCard aircraft={sel} detail={d} />
-          </div>
-        )}
+        {isSat
+          ? state.selected && (
+              <div className="sheet-card" key={state.selected}>
+                <SatelliteDetailCard detail={satDetail} />
+              </div>
+            )
+          : sel && (
+              <div className="sheet-card" key={state.selected ?? ''}>
+                <FlightDetailCard aircraft={sel} detail={d} />
+              </div>
+            )}
       </div>
 
       {/* Touch hint (bottom-center) — invites visitors to interact; hidden once

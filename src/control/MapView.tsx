@@ -3,11 +3,14 @@
 // on-screen +/− zoom, click selects the nearest aircraft. Map-anchored controls
 // (compass, zoom, reset) live here since this owns the renderer.
 import { useEffect, useRef } from 'react'
-import type { Aircraft, GeoPoint, ViewState } from '@shared/types'
+import type { Aircraft, GeoPoint, ViewState, ExhibitMode, Satellite } from '@shared/types'
 import { CompassRose } from '../common/CompassRose'
 import { Globe } from '../display/globe'
 
 interface Props {
+  /** Which layer to render; switching clears the other one's objects. */
+  mode?: ExhibitMode
+  satellites?: Satellite[]
   aircraft: Aircraft[]
   selected: string | null
   route: GeoPoint[] | null
@@ -23,6 +26,8 @@ interface Props {
 }
 
 export function MapView({
+  mode = 'flight',
+  satellites,
   aircraft,
   selected,
   route,
@@ -66,7 +71,14 @@ export function MapView({
     }
   }, [])
 
-  useEffect(() => globeRef.current?.setAircraft(aircraft), [aircraft])
+  // Wipe the previous layer's objects so they don't linger under the new one.
+  useEffect(() => globeRef.current?.clearObjects(), [mode])
+  useEffect(() => {
+    if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
+  }, [mode, aircraft])
+  useEffect(() => {
+    if (mode === 'satellite' && satellites) globeRef.current?.setSatellites(satellites)
+  }, [mode, satellites])
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
   useEffect(() => globeRef.current?.setRoute(route), [route])
   useEffect(

@@ -15,7 +15,7 @@ import * as THREE from 'three'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
-import type { Aircraft, GeoPoint, OverlayKey, ViewState } from '@shared/types'
+import type { Aircraft, GeoPoint, OverlayKey, Satellite, ViewState } from '@shared/types'
 import { projectNorm, wrapLon, nearestRouteIndex } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
@@ -26,10 +26,11 @@ import {
   pinTexture,
   textTexture,
   infoTexture,
-  categoryColor
+  categoryColor,
+  orbitColor
 } from './textures'
 
-const CAPACITY = 16000 // max aircraft instances
+const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 
 interface Eased {
@@ -759,6 +760,57 @@ export class Globe {
       }
     }
     this.order = this.order.filter((id) => this.eased.has(id))
+  }
+
+  /**
+   * Satellites, written into the same eased/order structures aircraft use — the
+   * renderer only ever needed position, heading, speed and colour, and a
+   * satellite supplies all four. Selection, zoom, day/night and dead reckoning
+   * therefore work unchanged; only the colour scale and the units differ.
+   */
+  setSatellites(list: Satellite[]): void {
+    const seen = new Set<string>()
+    for (const s of list) {
+      seen.add(s.id)
+      const color = orbitColor(s.orbit)
+      const h = (s.heading * Math.PI) / 180
+      const speed = s.speedKmS * 1000 // km/s → m/s, the unit dead reckoning uses
+      const cur = this.eased.get(s.id)
+      if (cur) {
+        cur.tLon = s.lon
+        cur.tLat = s.lat
+        cur.tHeading = h
+        cur.speed = speed
+        cur.color = color
+      } else {
+        this.eased.set(s.id, {
+          lon: s.lon,
+          lat: s.lat,
+          heading: h,
+          speed,
+          tLon: s.lon,
+          tLat: s.lat,
+          tHeading: h,
+          color
+        })
+        this.order.push(s.id)
+      }
+    }
+    // Every satellite has an orbit to draw, so auto-pick has no reason to prefer.
+    this.routed.clear()
+    for (const s of list) this.routed.add(s.id)
+    for (const id of [...this.eased.keys()]) if (!seen.has(id)) this.eased.delete(id)
+    this.order = this.order.filter((id) => this.eased.has(id))
+  }
+
+  /** Drop every tracked object — used when switching layers so the old one
+   * doesn't linger while the new one's first snapshot is in flight. */
+  clearObjects(): void {
+    this.eased.clear()
+    this.routed.clear()
+    this.order = []
+    this.selected = null
+    this.selectedPlane.visible = false
   }
 
   /** Set origin/destination place-name labels (null clears them). */

@@ -72,3 +72,36 @@ export const EARTH_TEXTURE_URL = 'earth_equirect.jpg'
  * Drop a 2:1 "Black Marble" image here; if absent, night just dims globally.
  */
 export const EARTH_NIGHT_URL = 'earth_night.jpg'
+
+// ---------------------------------------------------------------------------
+// Satellite mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Celestrak's general-perturbations catalogue of active satellites (~11,000
+ * objects, ~2MB as TLE). TLEs are regenerated roughly daily and Celestrak asks
+ * that clients not re-fetch more often than the data changes, so the app
+ * downloads once a day and keeps a copy on disk.
+ */
+export const TLE_URL =
+  readEnv('TLE_URL') ?? 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=TLE'
+/** How long a downloaded TLE set is considered current. */
+export const TLE_MAX_AGE_MS = Number(readEnv('TLE_MAX_AGE_MS') ?? 24 * 3600_000)
+
+/**
+ * Target period between satellite position updates. Propagating the whole
+ * catalogue takes a second or two, and at orbital speed a couple of seconds is
+ * ~0.15° of longitude — under a pixel at world view — so the renderer's existing
+ * easing and dead reckoning carry the motion between updates. Lower it for a
+ * smaller catalogue.
+ */
+export const SAT_TICK_MS = Number(readEnv('SAT_TICK_MS') ?? 2000)
+/**
+ * Propagation yields to the event loop whenever a slice has run this long, so a
+ * tick never blocks the main process long enough to stall WebSocket sends or
+ * make the windows stutter — however large the catalogue grows.
+ */
+export const SAT_SLICE_MS = Number(readEnv('SAT_SLICE_MS') ?? 8)
+/** Where the exhibit is, for "when does it pass over us?" (Seoul). */
+export const OBSERVER_LAT = Number(readEnv('OBSERVER_LAT') ?? 37.5665)
+export const OBSERVER_LON = Number(readEnv('OBSERVER_LON') ?? 126.978)

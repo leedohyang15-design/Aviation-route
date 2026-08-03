@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type {
   Aircraft,
   ClientMessage,
+  ExhibitMode,
   PresentationState,
   ServerMessage
 } from '../src/shared/types'
@@ -25,6 +26,13 @@ import {
   stopRouteResolver
 } from './routes'
 import { isKnownFlight } from '../src/common/flightClass'
+import {
+  initSatellites,
+  startSatellites,
+  stopSatellites,
+  snapshot as satSnapshot,
+  getDetail as satDetail
+} from './satellites'
 
 export interface Hub {
   close(): void
@@ -55,6 +63,8 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   loadRouteCache()
   // Lookups run on their own clock, independent of the OpenSky poll cycle.
   startRouteResolver()
+  // Orbital elements load in the background; satellite mode waits on nothing.
+  void initSatellites()
   // Bind explicitly to the IPv4 loopback so it always matches the windows'
   // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
   // firewall prompt that a 0.0.0.0 bind would trigger).
@@ -133,9 +143,35 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     return out
   }
 
+  // Satellites are propagated locally once a second; only broadcast them while
+  // that's the layer on screen, so flight mode carries no extra traffic.
+  const onSatellites = () => {
+    if (state.mode !== 'satellite') return
+    broadcast({ type: 'satellites', data: satSnapshot(), serverTime: Date.now() })
+    if (state.selected) broadcast({ type: 'satDetail', detail: satDetail(state.selected) })
+  }
+
+  function applyMode(next: ExhibitMode): void {
+    state.mode = next
+    state.selected = null // an icao24 means nothing to the other layer
+    if (next === 'satellite') {
+      feed.setPaused(true)
+      startSatellites(onSatellites)
+    } else {
+      stopSatellites()
+      feed.setPaused(false)
+    }
+    broadcast({ type: 'state', state })
+    // Clear the other layer's selection artefacts on both screens.
+    broadcast({ type: 'route', icao24: '', points: null })
+    broadcast({ type: 'detail', detail: null })
+    broadcast({ type: 'satDetail', detail: null })
+  }
+
   feed.start(
     (snapshot) => {
       aircraft = annotateRoutes(snapshot)
+      if (state.mode !== 'flight') return
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
       // Keep the selected plane's route/progress/ETA live (e.g. after a mock
@@ -151,9 +187,15 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     console.log(`[hub] window connected (${wss.clients.size} total)`)
     // Bring the new window fully up to date immediately.
     send(ws, { type: 'state', state })
-    send(ws, { type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
+    if (state.mode === 'satellite') {
+      const sats = satSnapshot()
+      send(ws, { type: 'satellites', data: sats, serverTime: Date.now() })
+      if (state.selected) send(ws, { type: 'satDetail', detail: satDetail(state.selected) })
+    } else {
+      send(ws, { type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
+      void sendDetail(ws)
+    }
     send(ws, { type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
-    void sendDetail(ws)
 
     ws.on('message', (raw) => {
       let msg: ClientMessage
@@ -173,7 +215,13 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
       case 'select':
         state.selected = msg.icao24
         broadcast({ type: 'state', state })
-        void sendDetail(null)
+        if (state.mode === 'satellite') {
+          const d = msg.icao24 ? satDetail(msg.icao24) : null
+          broadcast({ type: 'satDetail', detail: d })
+          broadcast({ type: 'route', icao24: msg.icao24 ?? '', points: d?.track ?? null })
+        } else {
+          void sendDetail(null)
+        }
         return
       case 'setFilter':
         state.filter = msg.filter
@@ -189,6 +237,13 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         return
       case 'toggleOverlay':
         state.overlays[msg.key] = msg.value ?? !state.overlays[msg.key]
+        broadcast({ type: 'state', state })
+        return
+      case 'setMode':
+        if (msg.mode !== state.mode) applyMode(msg.mode)
+        return
+      case 'setHiddenOrbits':
+        state.hiddenOrbits = msg.orbits
         broadcast({ type: 'state', state })
         return
       case 'setFeedMode':
@@ -207,6 +262,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   return {
     close() {
       feed.stop()
+      stopSatellites()
       stopRouteResolver()
       saveRouteCache()
       wss.close()

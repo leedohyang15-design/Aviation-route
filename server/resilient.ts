@@ -25,6 +25,9 @@ const STALE_MS = OPENSKY_POLL_INTERVAL_MS * 2 + 60_000
 export interface SwitchableFeed extends FlightFeed {
   /** Force simulation ('mock') or return to live data ('auto'). */
   setMode(mode: FeedMode): void
+  /** Stop/resume upstream polling entirely — used while the exhibit is showing
+   * satellites, so those minutes don't spend the daily OpenSky credit budget. */
+  setPaused(paused: boolean): void
 }
 
 export function createResilientFeed(): SwitchableFeed {
@@ -35,6 +38,8 @@ export function createResilientFeed(): SwitchableFeed {
   let lastReal = 0
   let mode: FeedMode = 'auto'
   let emit: ((a: Aircraft[]) => void) | null = null
+  let status: ((c: boolean) => void) | null = null
+  let paused = false
   let lastMock: Aircraft[] = []
   let lastRealData: Aircraft[] = []
 
@@ -58,8 +63,34 @@ export function createResilientFeed(): SwitchableFeed {
         emit?.(lastRealData)
       }
     },
+    setPaused(next: boolean) {
+      if (next === paused) return
+      paused = next
+      if (paused) {
+        opensky?.stop()
+        mock.stop()
+        opsLog('[feed] paused (satellite mode) — no OpenSky credits are being spent')
+      } else {
+        opsLog('[feed] resumed')
+        if (emit && status) startBoth(emit, status)
+      }
+    },
     start(onSnapshot: (a: Aircraft[]) => void, onStatus: (connected: boolean) => void) {
       emit = onSnapshot
+      status = onStatus
+      startBoth(onSnapshot, onStatus)
+    },
+    stop() {
+      opensky?.stop()
+      mock.stop()
+    },
+    getDetail(icao24: string) {
+      // Delegate to whichever source is currently on screen.
+      return isRealFresh() && opensky ? opensky.getDetail(icao24) : mock.getDetail(icao24)
+    }
+  }
+
+  function startBoth(onSnapshot: (a: Aircraft[]) => void, onStatus: (connected: boolean) => void) {
       opensky?.start(
         (data) => {
           lastReal = Date.now()
@@ -73,25 +104,16 @@ export function createResilientFeed(): SwitchableFeed {
           /* OpenSky connectivity is handled via staleness, not surfaced directly */
         }
       )
-      mock.start(
-        (data) => {
-          lastMock = data
-          // Only fill in when real data is stale or simulation is forced.
-          if (!isRealFresh()) {
-            onSnapshot(data)
-            onStatus(true)
-          }
-        },
-        () => {}
-      )
-    },
-    stop() {
-      opensky?.stop()
-      mock.stop()
-    },
-    getDetail(icao24: string) {
-      // Delegate to whichever source is currently on screen.
-      return isRealFresh() && opensky ? opensky.getDetail(icao24) : mock.getDetail(icao24)
-    }
+    mock.start(
+      (data) => {
+        lastMock = data
+        // Only fill in when real data is stale or simulation is forced.
+        if (!isRealFresh()) {
+          onSnapshot(data)
+          onStatus(true)
+        }
+      },
+      () => {}
+    )
   }
 }

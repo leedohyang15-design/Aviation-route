@@ -8,3 +8,6 @@ dist/
 
 # Route cache written next to a packaged build at runtime
 aviation-route-routes.json
+
+# Orbital elements cached next to a packaged build at runtime
+aviation-route-tle.txt

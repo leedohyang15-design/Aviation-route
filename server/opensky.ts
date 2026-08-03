@@ -163,6 +163,7 @@ export function createOpenSkyFeed(): FlightFeed {
   return {
     source: 'opensky',
     start(onSnapshot, onStatus) {
+      stopped = false // allow a restart after stop() (satellite mode pauses us)
       const loop = async () => {
         if (stopped) return
         const wait = await poll(onSnapshot, onStatus)

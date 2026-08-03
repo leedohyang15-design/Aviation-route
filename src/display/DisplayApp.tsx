@@ -10,7 +10,12 @@ const FRAME = { w: 1664, h: 838 }
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
-  const { aircraft, state, route, detail } = useHub('display')
+  const { aircraft, state, route, detail, satellites, satDetail } = useHub('display')
+  const isSat = state.mode === 'satellite'
+  const satVisible = useMemo(
+    () => satellites.filter((x) => !(state.hiddenOrbits ?? []).includes(x.orbit)),
+    [satellites, state.hiddenOrbits]
+  )
 
   const visible = useMemo(
     () => applyFilter(aircraft, state.filter, state.selected),
@@ -22,6 +27,21 @@ export function DisplayApp(): JSX.Element {
   // Compact info string shown next to the selected plane (instead of a big card):
   // flight no / origin→destination (or category · route unknown) / altitude·speed·type.
   const infoLines = useMemo(() => {
+    if (isSat) {
+      if (!state.selected) return null
+      const sd = satDetail && satDetail.id === state.selected ? satDetail : null
+      if (!sd) return ['위성을 찾는 중… 🛰']
+      const lines = [sd.name]
+      if (sd.overheadNow) lines.push('🛰 지금 우리 하늘 위!')
+      else if (sd.nextPassSec != null) {
+        const m = Math.round(sd.nextPassSec / 60)
+        lines.push(m >= 60 ? `🛰 ${Math.floor(m / 60)}시간 ${m % 60}분 뒤 머리 위` : `🛰 ${m}분 뒤 머리 위`)
+      } else lines.push('우리나라 위로는 안 지나가요')
+      lines.push(
+        `${Math.round(sd.altKm).toLocaleString()}km · ${sd.speedKmS.toFixed(1)}km/s · 한 바퀴 ${Math.round(sd.periodMin)}분`
+      )
+      return lines
+    }
     if (!sel) return null
     const flightNo = d?.flightNo ?? sel.callsign?.trim() ?? sel.icao24.toUpperCase()
     const lines = [flightNo]
@@ -50,7 +70,7 @@ export function DisplayApp(): JSX.Element {
     if (d?.aircraftType) bits.push(d.aircraftType)
     if (bits.length) lines.push(bits.join(' · '))
     return lines
-  }, [sel, d])
+  }, [isSat, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -66,7 +86,13 @@ export function DisplayApp(): JSX.Element {
     }
   }, [])
 
-  useEffect(() => globeRef.current?.setAircraft(visible), [visible])
+  useEffect(() => globeRef.current?.clearObjects(), [isSat])
+  useEffect(() => {
+    if (!isSat) globeRef.current?.setAircraft(visible)
+  }, [isSat, visible])
+  useEffect(() => {
+    if (isSat) globeRef.current?.setSatellites(satVisible)
+  }, [isSat, satVisible])
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])
