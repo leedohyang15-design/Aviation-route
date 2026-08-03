@@ -155,11 +155,12 @@ export interface FlightFilter {
   maxAltitude?: number
   /** Hide aircraft reporting on-ground. */
   airborneOnly?: boolean
-  /** Categories to hide (empty/absent = show all): 'passenger' | 'cargo' | 'military'. */
+  /** Categories to hide (empty/absent = show all): one of CategoryKey. */
   hiddenCategories?: string[]
-  /** Show only identifiable aircraft — passenger / cargo / military (a known
-   * operator callsign) — and hide the GA/private/unknown long tail. On by
-   * default; the operator can turn it off to reveal everything. */
+  /** Show only identifiable aircraft — those with a known operator callsign —
+   * and hide the GA/private/unknown long tail. Off by default; the operator can
+   * turn it on, or just hide the 기타 category chip, which does the same thing
+   * while still showing what it would add back. */
   scheduledOnly?: boolean
   /** Hide aircraft confirmed to have no published route, so visitors don't pick
    * a plane that can't show one. Aircraft not yet looked up stay visible. */
@@ -189,12 +190,13 @@ export interface PresentationState {
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
-  // Start with only identifiable aircraft (passenger/cargo/military) shown; the
-  // operator can turn the toggle off to reveal the unknown long tail.
-  // Route-less aircraft stay visible: only ~5% of identifiable callsigns
-  // genuinely lack a route, and hiding them meant waiting on a full lookup pass
-  // before the map settled. Lookups still run, so selecting one is instant.
-  filter: { airborneOnly: true, scheduledOnly: true, routeOnly: false },
+  // Show everything that is airborne. Both of the filters that used to hide
+  // aircraft are off: `scheduledOnly` was cutting roughly half of OpenSky's
+  // report (7,100 reported, 3,500 drawn) because general-aviation and private
+  // callsigns aren't recognisable as airlines, and `routeOnly` hid the ~5% with
+  // no published route. The unidentifiable ones are now their own 기타 category
+  // instead of being dropped, so the sky is full and the counts stay honest.
+  filter: { airborneOnly: true, scheduledOnly: false, routeOnly: false },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },

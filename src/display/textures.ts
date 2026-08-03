@@ -2,7 +2,7 @@
 // stateless (no scene/class dependencies), so they live apart from the main
 // engine file to keep globe.ts focused on rendering state.
 import * as THREE from 'three'
-import type { FlightCategory } from '../common/flightClass'
+import type { CategoryKey } from '../common/flightClass'
 
 /** Screen-space heading (radians) for the icon: on equirectangular a great
  * circle is curved, so the on-screen tangent differs from the geographic
@@ -516,14 +516,16 @@ export function cardTexture(card: InfoCard): {
   return { tex, aspect: W / H, screenH: H / DESIGN_FRAME_H }
 }
 
-// Icon color by flight category: passenger cyan, cargo amber, military green.
-const CAT_COLOR = {
+// Icon color by flight category: passenger cyan, cargo amber, military green,
+// unidentifiable grey.
+const CAT_COLOR: Record<CategoryKey, THREE.Color> = {
   passenger: new THREE.Color('#35c1ff'),
   cargo: new THREE.Color('#f5a623'),
-  military: new THREE.Color('#74d16a')
-} as const
-export function categoryColor(cat: FlightCategory): THREE.Color {
-  return cat === 'military' ? CAT_COLOR.military : cat === 'cargo' ? CAT_COLOR.cargo : CAT_COLOR.passenger
+  military: new THREE.Color('#74d16a'),
+  other: new THREE.Color('#93a4b8')
+}
+export function categoryColor(cat: CategoryKey): THREE.Color {
+  return CAT_COLOR[cat] ?? CAT_COLOR.passenger
 }
 
 /** Colour per orbit class, so the shells read apart at a glance: low orbit

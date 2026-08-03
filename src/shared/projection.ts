@@ -138,12 +138,21 @@ export function greatCircleDistanceKm(a: GeoPoint, b: GeoPoint): number {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-/** Index of the route point nearest a position (squared lon/lat distance). */
+/**
+ * Index of the route point nearest a position.
+ *
+ * Longitude is scaled by cos(latitude), because a degree of longitude is a
+ * degree of latitude's width only at the equator and nearly nothing near the
+ * poles. Comparing raw degrees made the metric wrong exactly where long-haul
+ * traffic flies — a polar route would match a point well down the line from
+ * where the aircraft actually was.
+ */
 export function nearestRouteIndex(route: GeoPoint[], pos: GeoPoint): number {
   let best = 0
   let bestD = Infinity
+  const cosLat = Math.max(0.05, Math.cos(pos.lat * DEG2RAD))
   for (let i = 0; i < route.length; i++) {
-    const dx = wrapLon(route[i].lon - pos.lon)
+    const dx = wrapLon(route[i].lon - pos.lon) * cosLat
     const dy = route[i].lat - pos.lat
     const d = dx * dx + dy * dy
     if (d < bestD) {

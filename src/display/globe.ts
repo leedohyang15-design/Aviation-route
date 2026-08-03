@@ -19,7 +19,7 @@ import type { Aircraft, GeoPoint, OverlayKey, Satellite, ViewState } from '@shar
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
-import { flightCategory } from '../common/flightClass'
+import { categoryKey } from '../common/flightClass'
 import {
   screenAngle,
   dotTexture,
@@ -881,7 +881,7 @@ export class Globe {
       // coordinate becomes a visible phantom, so it checks for itself.
       if (!isPlausibleCoord(a.lon, a.lat)) continue
       seen.add(a.icao24)
-      const color = categoryColor(flightCategory(a.callsign))
+      const color = categoryColor(categoryKey(a.callsign))
       const h = ((a.heading ?? 0) * Math.PI) / 180
       const speed = a.onGround ? 0 : a.velocity ?? 0
       const cur = this.eased.get(a.icao24)

@@ -35,7 +35,7 @@ export function ControlApp(): JSX.Element {
   // How many aircraft each category contributes, ignoring the category filter
   // itself — so a hidden category still shows what turning it back on would add.
   const perCategory = useMemo(() => {
-    const counts: Record<CategoryKey, number> = { passenger: 0, cargo: 0, military: 0 }
+    const counts: Record<CategoryKey, number> = { passenger: 0, cargo: 0, military: 0, other: 0 }
     for (const a of applyFilter(aircraft, { ...state.filter, hiddenCategories: [] }, state.selected)) {
       counts[categoryKey(a.callsign)]++
     }
@@ -189,6 +189,13 @@ export function ControlApp(): JSX.Element {
           >
             <i style={{ background: '#74d16a' }} />
             군용기 {perCategory.military.toLocaleString()}대
+          </button>
+          <button
+            className={'leg' + (hidden.includes('other') ? ' off' : '')}
+            onClick={() => toggleCat('other')}
+          >
+            <i style={{ background: '#93a4b8' }} />
+            기타 {perCategory.other.toLocaleString()}대
           </button>
         </div>
         )}

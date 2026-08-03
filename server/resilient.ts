@@ -40,15 +40,30 @@ export function createResilientFeed(): SwitchableFeed {
   let emit: ((a: Aircraft[]) => void) | null = null
   let status: ((c: boolean) => void) | null = null
   let paused = false
+  let pausedAt = 0
   let lastMock: Aircraft[] = []
   let lastRealData: Aircraft[] = []
+  /**
+   * Which feed produced the snapshot currently on screen.
+   *
+   * `source` and `getDetail` used to infer this from staleness, which is a
+   * proxy, not the fact. When the two disagreed — during a transition, or after
+   * a pause — the hub would ask the simulation for the detail of a real
+   * aircraft, get null, and the flight would draw with no route at all.
+   */
+  let live: 'opensky' | 'mock' = 'mock'
 
-  const isRealFresh = () => mode === 'auto' && lastReal > 0 && Date.now() - lastReal < STALE_MS
+  // Time since real data last arrived. Frozen while paused: pausing is a
+  // deliberate stop for satellite mode, not an outage, and counting those
+  // minutes as staleness made returning to flight mode look like an OpenSky
+  // failure.
+  const realAge = () => (paused && pausedAt ? pausedAt : Date.now()) - lastReal
+  const isRealFresh = () => mode === 'auto' && lastReal > 0 && realAge() < STALE_MS
 
   return {
-    // Dynamic: honest about which source is currently on screen.
+    // What is actually on screen, not what freshness suggests should be.
     get source() {
-      return isRealFresh() ? 'opensky' : 'mock'
+      return live
     },
     setMode(next: FeedMode) {
       if (next === mode) return
@@ -58,8 +73,12 @@ export function createResilientFeed(): SwitchableFeed {
       // keep the other source's planes until its next tick — and live polls can
       // be 90s apart, which would leave simulated traffic under a "live" label.
       if (next === 'mock') {
-        if (lastMock.length) emit?.(lastMock)
+        if (lastMock.length) {
+          live = 'mock'
+          emit?.(lastMock)
+        }
       } else if (isRealFresh() && lastRealData.length) {
+        live = 'opensky'
         emit?.(lastRealData)
       }
     },
@@ -67,10 +86,15 @@ export function createResilientFeed(): SwitchableFeed {
       if (next === paused) return
       paused = next
       if (paused) {
+        pausedAt = Date.now()
         opensky?.stop()
         mock.stop()
         opsLog('[feed] paused (satellite mode) — no OpenSky credits are being spent')
       } else {
+        // Carry the freshness clock over the pause, so the first poll after
+        // resuming isn't racing a fallback that shouldn't have armed.
+        if (pausedAt && lastReal) lastReal += Date.now() - pausedAt
+        pausedAt = 0
         opsLog('[feed] resumed')
         if (emit && status) startBoth(emit, status)
       }
@@ -85,8 +109,8 @@ export function createResilientFeed(): SwitchableFeed {
       mock.stop()
     },
     getDetail(icao24: string) {
-      // Delegate to whichever source is currently on screen.
-      return isRealFresh() && opensky ? opensky.getDetail(icao24) : mock.getDetail(icao24)
+      // Delegate to whichever source actually produced the aircraft on screen.
+      return live === 'opensky' && opensky ? opensky.getDetail(icao24) : mock.getDetail(icao24)
     }
   }
 
@@ -97,6 +121,7 @@ export function createResilientFeed(): SwitchableFeed {
           lastRealData = data
           // Ignore real data while the operator has pinned simulation.
           if (mode !== 'auto') return
+          live = 'opensky'
           onSnapshot(data)
           onStatus(true)
         },
@@ -109,6 +134,7 @@ export function createResilientFeed(): SwitchableFeed {
         lastMock = data
         // Only fill in when real data is stale or simulation is forced.
         if (!isRealFresh()) {
+          live = 'mock'
           onSnapshot(data)
           onStatus(true)
         }

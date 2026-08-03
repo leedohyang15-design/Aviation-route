@@ -333,14 +333,29 @@ async function buildDetail(
     const route = greatCirclePoints(o, d, 128)
     const here = ac ? { lon: ac.lon, lat: ac.lat } : null
     const idx = here ? nearestRouteIndex(route, here) : 0
-    // Sanity-check the route against where the plane actually is. The display
-    // snaps the selected plane onto this line, so we only need to reject clearly
-    // WRONG matches here (a callsign mapped to a different flight/leg on another
-    // continent) — not tolerate them. A plane on its real route stays within a
-    // few hundred km of the great circle; drop anything past 800km as a mismatch
-    // and show it as route-unknown instead of snapping onto a bogus line.
+    // Sanity-check the route against where the plane actually is: we only want
+    // to reject a callsign that has been mapped to a completely different flight
+    // (another continent), not a real one that isn't flying the exact great
+    // circle.
+    //
+    // The old fixed 800km budget rejected an enormous number of genuine
+    // long-haul flights. Aircraft do not fly great circles: North Atlantic
+    // tracks, ETOPS routing, weather, and above all the airspace closures that
+    // send Europe↔Asia traffic on long southern detours all put a perfectly
+    // normal flight one to two thousand kilometres off the direct line. Those
+    // were the flights showing "경로를 확인하는 중이에요" forever.
+    //
+    // Scale the budget with the length of the trip instead — a short hop really
+    // can't be 500km off course, a 10,000km one easily can.
+    const routeKm = greatCircleDistanceKm(o, d)
+    // A third of the trip, floored at 500km and capped at 3,000km. Measured
+    // against real cases: a Seoul–London southern routing sits ~2,400km off the
+    // direct line, while a callsign matched to the wrong flight is 8,000km or
+    // more out — so there is a wide margin between "detouring" and "not this
+    // flight at all".
+    const budgetKm = Math.min(3000, Math.max(500, routeKm * 0.32))
     const offRouteKm = here ? greatCircleDistanceKm(here, route[idx]) : 0
-    if (offRouteKm > 800) {
+    if (offRouteKm > budgetKm) {
       detail.origin = undefined
       detail.destination = undefined
       mismatch = true
@@ -364,7 +379,7 @@ async function buildDetail(
     detail.noRouteReason = !cs
       ? '정보가 없는 비행기예요'
       : mismatch
-        ? '경로를 확인하는 중이에요'
+        ? '지금은 경로를 알 수 없어요'
         : flightCategory(cs) === 'military'
           ? '비밀 비행기예요 🤫'
           : '경로 정보가 없어요'

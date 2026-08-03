@@ -100,11 +100,20 @@ export function isKnownFlight(callsign?: string | null): boolean {
   return airlineFromCallsign(callsign) != null || flightCategory(callsign) != null
 }
 
-/** A definite category key (unknown callsigns fall back to passenger). Used for
- * coloring and the category filter. */
-export type CategoryKey = 'passenger' | 'cargo' | 'military'
+/**
+ * The bucket an aircraft is counted and coloured in.
+ *
+ * `other` is its own category rather than a fallback to `passenger`. Unknown
+ * callsigns — general aviation, private, blank or bare-registration — are about
+ * half of everything OpenSky reports, and folding them into "여객기" made that
+ * count roughly double what it should be. They get their own chip and their own
+ * colour so the numbers mean what they say.
+ */
+export type CategoryKey = 'passenger' | 'cargo' | 'military' | 'other'
 export function categoryKey(callsign?: string | null, type?: string | null): CategoryKey {
-  return flightCategory(callsign, type) ?? 'passenger'
+  const cat = flightCategory(callsign, type)
+  if (cat) return cat
+  return isKnownFlight(callsign) ? 'passenger' : 'other'
 }
 
 /** Label for the info chip — only asserts a category we're confident about
@@ -114,7 +123,14 @@ export function categoryLabel(cat: FlightCategory): string | null {
   return cat === 'military' ? '군용기' : cat === 'cargo' ? '화물기' : null
 }
 
-/** Icon/dot color per category (passenger cyan, cargo amber, military green). */
+/** Icon/dot color per category (passenger cyan, cargo amber, military green,
+ * everything else a quiet grey so the long tail reads as background). */
 export function categoryColorHex(cat: CategoryKey): string {
-  return cat === 'military' ? '#74d16a' : cat === 'cargo' ? '#f5a623' : '#35c1ff'
+  return cat === 'military'
+    ? '#74d16a'
+    : cat === 'cargo'
+      ? '#f5a623'
+      : cat === 'other'
+        ? '#93a4b8'
+        : '#35c1ff'
 }

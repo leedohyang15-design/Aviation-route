@@ -41,39 +41,17 @@ function launchNote(d: SatelliteDetail): string | null {
   return `${d.launchYear}년에 올라가 ${years}년째 돌고 있어요`
 }
 
-function shapeNote(d: SatelliteDetail): string | null {
-  if (d.apogeeKm == null || d.perigeeKm == null) return null
-  const spread = d.apogeeKm - d.perigeeKm
-  if (spread < 100) return '거의 완벽한 동그라미를 그리며 돌아요'
-  return (
-    `높을 땐 ${Math.round(d.apogeeKm).toLocaleString()}km, ` +
-    `낮을 땐 ${Math.round(d.perigeeKm).toLocaleString()}km — 길쭉한 타원을 그려요`
-  )
-}
-
-/** A near-polar orbit at low altitude is almost always sun-synchronous, which
- * is why so many Earth-observation satellites share that 98° inclination. */
-function isSunSynchronous(d: SatelliteDetail): boolean {
-  return d.inclinationDeg >= 95 && d.inclinationDeg <= 104 && d.altKm < 1600
-}
-
-function pathNote(d: SatelliteDetail): string {
-  if (d.periodMin >= 1400) return '지구가 도는 속도와 똑같아서, 하늘에 멈춰 있는 것처럼 보여요'
-  if (isSunSynchronous(d)) return '태양동기궤도 — 늘 같은 시각에 같은 곳 위를 지나가요'
-  if (d.inclinationDeg > 80) return '북극과 남극 위를 지나며 돌아요'
-  if (d.inclinationDeg < 5) return '적도 바로 위를 따라 돌아요'
-  return `적도에서 ${Math.round(d.inclinationDeg)}° 기울어진 길을 돌아요`
-}
-
 function lapsNote(d: SatelliteDetail): string | null {
   if (!d.revNumber) return null
   return `지금까지 지구를 ${d.revNumber.toLocaleString()}바퀴 돌았어요`
 }
 
-function rangeNote(d: SatelliteDetail): string | null {
-  if (d.rangeKm == null) return null
-  return `지금 여기서 ${Math.round(d.rangeKm).toLocaleString()}km 떨어져 있어요`
-}
+// Three notes, not six. Orbit shape, distance and the inclination sentence used
+// to be here too, but the shape and the distance are already on the dome card
+// (as 원궤도/타원궤도 and the RANGE tile), and the inclination line was the last
+// of the bucketed ones — the number itself is right there in the INCLINATION
+// tile, which says it better than a sentence that reads the same for every
+// polar-orbiting satellite.
 
 interface Pass {
   big: string
@@ -156,14 +134,9 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
     )
   }
   const pass = passReadout(d)
-  const notes = [
-    launchNote(d),
-    altitudeNote(d.altKm),
-    shapeNote(d),
-    pathNote(d),
-    lapsNote(d),
-    rangeNote(d)
-  ].filter((n): n is string => n != null)
+  const notes = [launchNote(d), altitudeNote(d.altKm), lapsNote(d)].filter(
+    (n): n is string => n != null
+  )
   return (
     <div className="sat-panel">
       <div className="sat-head">
