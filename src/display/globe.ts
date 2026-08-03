@@ -30,7 +30,7 @@ import {
 } from './textures'
 
 const CAPACITY = 16000 // max aircraft instances
-const MIN_SPAN = 0.4 // most the control map may zoom in (≈2.5×) — a gentle range
+const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 
 interface Eased {
   lon: number // current rendered position
@@ -436,7 +436,6 @@ export class Globe {
 
   /** Programmatic zoom for the on-screen +/− buttons (factor <1 zooms in). */
   zoomBy(factor: number): void {
-    this.clearTarget() // zooming = exploring → drop the tracked target
     this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * factor))
     this.applyInteractiveView()
     this.emitView()
@@ -528,7 +527,6 @@ export class Globe {
         const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
         this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
         this.movedDuringDrag = true
-        this.clearTarget()
         this.applyInteractiveView()
         this.emitView()
         return
@@ -543,7 +541,6 @@ export class Globe {
       const dy = ev.clientY - this.lastPY
       if (Math.abs(dx) + Math.abs(dy) > 3) {
         this.movedDuringDrag = true
-        this.clearTarget() // a manual pan drops the tracked target
       }
       // Horizontal: keep the grabbed point under the cursor → centerLon shifts opposite.
       const du = (dx / W) * spanX
@@ -578,7 +575,6 @@ export class Globe {
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
       this.resetAttract() // operator is here — postpone the auto-demo
-      this.clearTarget() // zooming = exploring → drop the tracked target
       this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
       this.emitView()
@@ -592,7 +588,6 @@ export class Globe {
       if (panX || panY) {
         ev.preventDefault()
         this.resetAttract() // operator is here — postpone the auto-demo
-        this.clearTarget() // panning = exploring → drop the tracked plane
         // Step proportionally to the zoom so one press moves the same fraction
         // of the screen however far in the operator is.
         const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
@@ -715,16 +710,6 @@ export class Globe {
       this.applyViewTarget()
     }
     this.pendingRecenter = false
-  }
-
-  /** Turn the current target off. Called when the operator pans/zooms — a manual
-   * camera move means "I'm exploring, drop the tracked plane". */
-  private clearTarget(): void {
-    if (this.selected != null) {
-      this.selected = null
-      this.selectedPlane.visible = false
-      this.onSelectChange?.(null)
-    }
   }
 
   /** Update aircraft targets; new ids appear, missing ids fade out (removed). */
