@@ -91,45 +91,53 @@ export function glowTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Navigation lights at the wingtips, for the night side.
+ * Two lights out at the tips of whatever the icon's wings are — an aircraft's
+ * wingtips, a satellite's solar panels.
  *
- * Drawn white and tinted per instance, so one texture serves every aircraft and
- * the brightness can follow that aircraft's own local night. The positions come
- * from the plane silhouette itself (PLANE_SVG, a 64-unit box): its wings run out
- * to x=5 and x=59 at about y=42. The quad this lands on is drawn larger than the
- * aircraft icon, because a light seen at distance is bigger than the thing
- * carrying it — at world zoom the icon is barely a dozen pixels and lights
- * confined inside it would be invisible.
+ * Drawn white and tinted where it's used, and only ever for the selected
+ * object: this marks what the operator has targeted, so it says "this one"
+ * rather than decorating the whole swarm.
+ *
+ * `x` and `y` place the pair in icon-relative coordinates, where the icon spans
+ * -1..1 in both axes (y down, since that is how the silhouettes are drawn). The
+ * quad is larger than the icon by WING_LIGHT_SCALE so the glow can bloom past
+ * the tips the way a real light does; the icon still maps to the middle of it,
+ * so the lights sit exactly on the tips whatever that scale is.
  */
-export function wingLightTexture(): THREE.CanvasTexture {
-  const S = 128
+export function wingLightTexture(x: number, y: number): THREE.CanvasTexture {
+  const S = 160
   const c = document.createElement('canvas')
   c.width = c.height = S
   const g = c.getContext('2d')!
-  // The icon occupies the middle 1/WING_LIGHT_SCALE of this quad, so map the
-  // silhouette's 64-unit box into that centred region.
-  const inner = S / WING_LIGHT_SCALE
-  const off = (S - inner) / 2
-  const at = (sx: number, sy: number) => [off + (sx / 64) * inner, off + (sy / 64) * inner]
-  for (const [sx, sy] of [
-    [5.5, 42],
-    [58.5, 42]
-  ]) {
-    const [x, y] = at(sx, sy)
-    const r = S * 0.115
-    const grad = g.createRadialGradient(x, y, 0, x, y, r)
+  const half = S / 2 / WING_LIGHT_SCALE // half-width of the icon inside this quad
+  for (const sign of [-1, 1]) {
+    const cx = S / 2 + sign * x * half
+    const cy = S / 2 + y * half
+    const r = S * 0.13
+    const grad = g.createRadialGradient(cx, cy, 0, cx, cy, r)
     grad.addColorStop(0, 'rgba(255,255,255,1)')
-    grad.addColorStop(0.35, 'rgba(255,255,255,0.55)')
+    grad.addColorStop(0.3, 'rgba(255,255,255,0.6)')
     grad.addColorStop(1, 'rgba(255,255,255,0)')
     g.fillStyle = grad
     g.beginPath()
-    g.arc(x, y, r, 0, Math.PI * 2)
+    g.arc(cx, cy, r, 0, Math.PI * 2)
     g.fill()
   }
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
 }
+
+/**
+ * Where the lights sit on each icon, in those icon-relative coordinates.
+ * From the silhouettes themselves: PLANE_SVG's wings reach x=5.5 and 58.5 of a
+ * 64 box at y=42, and satelliteTexture's panels run out to x=±56 of 128, level
+ * with the body.
+ */
+export const LIGHT_POS = {
+  aircraft: { x: (32 - 5.5) / 32, y: (42 - 32) / 32 },
+  satellite: { x: 56 / 64, y: 0 }
+} as const
 
 /** How much larger the wing-light quad is than the aircraft icon. */
 export const WING_LIGHT_SCALE = 1.7

@@ -28,6 +28,7 @@ import {
   glowTexture,
   wingLightTexture,
   WING_LIGHT_SCALE,
+  LIGHT_POS,
   calloutTexture,
   categoryColor,
   orbitColor,
@@ -112,8 +113,11 @@ export class Globe {
   private bgUniforms: Record<string, THREE.IUniform>
   private planes: THREE.InstancedMesh
   private selectedPlane: THREE.Mesh
-  /** Navigation lights at every aircraft's wingtips, lit on the night side. */
-  private wingLights!: THREE.InstancedMesh
+  /** Pulsing red lights on the selected object's wingtips (or solar panels) —
+   * the marker for "this is the one you picked". */
+  private selectedLights!: THREE.Mesh
+  private planeLightTex!: THREE.CanvasTexture
+  private satLightTex!: THREE.CanvasTexture
   /** Halo behind the selection, which lights up as the map goes dark. */
   private selectedGlow!: THREE.Mesh
   // Sun position for this frame, shared by the background shader and the
@@ -380,23 +384,6 @@ export class Globe {
     this.planes.count = 0
     this.scene.add(this.planes)
 
-    // Additive, so a light adds to whatever is under it rather than pasting a
-    // grey disc over it, and so an unlit one (instance colour black) simply
-    // isn't there — which is what daylight should look like.
-    this.wingLights = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({
-        map: this.tuneSprite(wingLightTexture()),
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      }),
-      CAPACITY
-    )
-    this.wingLights.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    this.wingLights.frustumCulled = false
-    this.wingLights.count = 0
-    this.scene.add(this.wingLights)
 
     // --- Selected aircraft: a larger, bright airplane icon ---
     // Additive so it brightens the map beneath rather than pasting a grey disc
@@ -415,6 +402,28 @@ export class Globe {
     this.selectedGlow.matrixAutoUpdate = false
     this.selectedGlow.frustumCulled = false
     this.scene.add(this.selectedGlow)
+
+    // Additive, so the lights add to the icon under them rather than pasting a
+    // disc over it, and so turning them down turns them off completely.
+    this.planeLightTex = this.tuneSprite(
+      wingLightTexture(LIGHT_POS.aircraft.x, LIGHT_POS.aircraft.y)
+    )
+    this.satLightTex = this.tuneSprite(
+      wingLightTexture(LIGHT_POS.satellite.x, LIGHT_POS.satellite.y)
+    )
+    this.selectedLights = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        map: this.planeLightTex,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    )
+    this.selectedLights.visible = false
+    this.selectedLights.matrixAutoUpdate = false
+    this.selectedLights.frustumCulled = false
+    this.scene.add(this.selectedLights)
 
     this.selectedPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -981,6 +990,7 @@ export class Globe {
     this.selected = icao24
     this.selectedPlane.visible = false
     this.selectedGlow.visible = false
+    this.selectedLights.visible = false
     if (icao24) {
       // Request a one-shot camera align on the plane — done in frame() the moment
       // the selected plane is rendered, so it works with OR without a route and
@@ -1116,6 +1126,12 @@ export class Globe {
     selMat.map = kind === 'satellite' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
+    // The lights sit at the wingtips of a plane and at the ends of a
+    // satellite's panels, which are nowhere near each other in icon space, so
+    // each kind gets its own texture rather than one shared pair of dots.
+    const litMat = this.selectedLights.material as THREE.MeshBasicMaterial
+    litMat.map = kind === 'satellite' ? this.satLightTex : this.planeLightTex
+    litMat.needsUpdate = true
     if (kind === 'satellite') {
       for (const m of [
         this.originMarker,
@@ -1139,6 +1155,7 @@ export class Globe {
     this.selected = null
     this.selectedPlane.visible = false
     this.selectedGlow.visible = false
+    this.selectedLights.visible = false
   }
 
   /** Set origin/destination place-name labels (null clears them). */
@@ -1441,18 +1458,6 @@ export class Globe {
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
 
-      // Wing lights: on over the night side, breathing with everything else,
-      // absent in daylight. Same position and heading as the icon, on a larger
-      // quad so the lights bloom past the wingtips the way a strobe does.
-      if (this.kind === 'aircraft') {
-        this.wingLights.setMatrixAt(
-          i,
-          this.setSpriteMatrix(u, 1 - v, 0.05, ICON_H * this.iconScale * WING_LIGHT_SCALE, angle, e.lat)
-        )
-        const lit = localNight * (0.35 + 0.65 * this.pulse) * (selVisible && !isSel ? 0.3 : 1)
-        this.scratchColor.setRGB(lit, lit * 0.08, lit * 0.05)
-        this.wingLights.setColorAt(i, this.scratchColor)
-      }
       if (isSel) {
         // First frame the selected plane is rendered → center the camera on it.
         if (this.pendingRecenter) this.recenterOnPlane(e.lon, e.lat)
@@ -1469,6 +1474,20 @@ export class Globe {
           const glowMat = this.selectedGlow.material as THREE.MeshBasicMaterial
           glowMat.opacity = 0.1 + this.nightAt(e.lon, e.lat) * (0.25 + 0.6 * this.pulse)
           this.selectedGlow.visible = true
+          // Navigation lights on the wingtips (or on the ends of a satellite's
+          // panels), red and blinking. Only on the targeted object: every plane
+          // carrying them turned the night side into a field of red specks and
+          // hid the one thing the visitor is meant to be following. Additive on
+          // top of the icon, so at the bottom of the pulse they vanish
+          // completely and the icon reads normally.
+          this.selectedLights.matrix.copy(
+            this.setSpriteMatrix(au, ay, 0.72, SEL_H * ps * WING_LIGHT_SCALE, ang, alat)
+          )
+          this.selectedLights.matrixWorldNeedsUpdate = true
+          const litMat = this.selectedLights.material as THREE.MeshBasicMaterial
+          const lit = 0.25 + 0.75 * this.pulse
+          litMat.color.setRGB(lit, lit * 0.06, lit * 0.04)
+          this.selectedLights.visible = true
         }
         // A satellite icon is drawn upright; turning it to the ground track just
         // makes the solar panels point at nothing.
@@ -1645,14 +1664,11 @@ export class Globe {
     this.planes.count = i
     this.planes.instanceMatrix.needsUpdate = true
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
-    // Satellites have no wings to light.
-    this.wingLights.count = this.kind === 'aircraft' ? i : 0
-    this.wingLights.instanceMatrix.needsUpdate = true
-    if (this.wingLights.instanceColor) this.wingLights.instanceColor.needsUpdate = true
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
       this.selectedPlane.visible = false
       this.selectedGlow.visible = false
+      this.selectedLights.visible = false
       this.originMarker.visible = false
       this.destMarker.visible = false
       this.originLabel.visible = false
