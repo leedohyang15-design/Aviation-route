@@ -39,6 +39,23 @@ export const MOCK_POLL_INTERVAL_MS = Number(readEnv('MOCK_POLL_INTERVAL_MS') ?? 
  */
 export const MOCK_AIRCRAFT_COUNT = Number(readEnv('MOCK_AIRCRAFT_COUNT') ?? 6000)
 
+/**
+ * Route lookup (adsbdb). OpenSky's snapshot has no origin/destination, so routes
+ * are resolved by callsign and cached; aircraft confirmed to have no route are
+ * hidden. adsbdb answers one callsign per request, so a background loop makes one
+ * request every this many milliseconds — a steady, low load on a free service,
+ * deliberately independent of the poll interval. 400ms ≈ 2.5/s clears a typical
+ * ~4,000-callsign backlog in under half an hour, and the disk cache means that
+ * cost is paid roughly once a day. Lower it to converge faster.
+ */
+export const ROUTE_LOOKUP_INTERVAL_MS = Number(readEnv('ROUTE_LOOKUP_INTERVAL_MS') ?? 300)
+/** Cap on cached callsigns; the oldest are dropped when the file is written. */
+export const ROUTE_CACHE_MAX = Number(readEnv('ROUTE_CACHE_MAX') ?? 20000)
+/** How long a resolved route stays cached (routes rarely change mid-day). */
+export const ROUTE_CACHE_TTL_MS = Number(readEnv('ROUTE_CACHE_TTL_MS') ?? 24 * 3600_000)
+/** How long a "no route" answer sticks before we try that callsign again. */
+export const ROUTE_NEGATIVE_TTL_MS = Number(readEnv('ROUTE_NEGATIVE_TTL_MS') ?? 6 * 3600_000)
+
 /** Equirectangular render target. Must stay exactly 2:1 for sphere projection. */
 export const EQUIRECT_WIDTH = Number(readEnv('EQUIRECT_WIDTH') ?? 4096)
 export const EQUIRECT_HEIGHT = EQUIRECT_WIDTH / 2

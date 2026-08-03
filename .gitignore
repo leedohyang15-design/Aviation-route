@@ -5,3 +5,6 @@ dist/
 *.log
 .env
 .env.local
+
+# Route cache written next to a packaged build at runtime
+aviation-route-routes.json

@@ -25,6 +25,12 @@ export interface Aircraft {
   originCountry: string
   /** Epoch millis of the last position update from the source. */
   lastContact: number
+  /**
+   * Whether a published route (origin + destination) exists for this callsign.
+   * `undefined` means "not looked up yet" — filters must treat that as visible,
+   * so a slow or unreachable route API never empties the sky.
+   */
+  hasRoute?: boolean
 }
 
 /** A single point of a rendered route, in geographic coordinates. */
@@ -93,6 +99,9 @@ export interface FlightFilter {
    * operator callsign) — and hide the GA/private/unknown long tail. On by
    * default; the operator can turn it off to reveal everything. */
   scheduledOnly?: boolean
+  /** Hide aircraft confirmed to have no published route, so visitors don't pick
+   * a plane that can't show one. Aircraft not yet looked up stay visible. */
+  routeOnly?: boolean
 }
 
 /**
@@ -116,7 +125,7 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   selected: null,
   // Start with only identifiable aircraft (passenger/cargo/military) shown; the
   // operator can turn the toggle off to reveal the unknown long tail.
-  filter: { airborneOnly: true, scheduledOnly: true },
+  filter: { airborneOnly: true, scheduledOnly: true, routeOnly: true },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },
