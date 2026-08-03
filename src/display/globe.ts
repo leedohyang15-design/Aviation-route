@@ -1196,6 +1196,10 @@ export class Globe {
       const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
       const angle = screenAngle(e.heading, e.lat) // align icon to on-screen motion
       const isSel = id === this.selected
+      // The selected object is drawn separately, larger and brighter — and for
+      // an aircraft, snapped onto its route line. Leaving its instance in as
+      // well drew it twice, in two different places, both highlighted. Collapse
+      // it to nothing instead of removing it, so instance order stays stable.
       // A dot has no nose to point, and rotating one only makes it shimmer.
       this.planes.setMatrixAt(
         i,
@@ -1203,7 +1207,7 @@ export class Globe {
           u,
           1 - v,
           0,
-          ICON_H * this.iconScale,
+          isSel ? 0 : ICON_H * this.iconScale,
           this.kind === 'satellite' ? 0 : angle
         )
       )
