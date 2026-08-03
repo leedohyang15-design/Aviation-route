@@ -174,7 +174,12 @@ const RATE_LIMIT_PAUSE_MS = 20_000
 // succeeding and backs off when the API pushes back. A first fill then takes as
 // long as the API allows, not as long as a guess allowed.
 let interval = ROUTE_LOOKUP_INTERVAL_MS
-const FLOOR_MS = 80 // never faster than ~12/s, however happy the API seems
+// Never faster than 5/s. adsbdb is a free community service with no published
+// limit, and the previous 12/s floor meant a single kiosk would wind itself all
+// the way up until it started getting 429s — which then leaked into every
+// on-demand lookup a visitor triggered. Five a second clears a day's worth of
+// new callsigns in a few minutes and leaves the API alone the rest of the time.
+const FLOOR_MS = 200
 const CEIL_MS = 2000 // never slower than one every 2s
 const SPEED_UP_AFTER = 20 // consecutive successes before trying faster
 const SPEED_UP = 0.8 // -20% each time
@@ -192,12 +197,25 @@ const LOG_EVERY = 100
  * the hub calls this on every snapshot and the loop drains it in the background.
  */
 export function resolveRoutes(planes: { callsign: string }[]): void {
-  for (const p of planes) {
-    const cs = norm(p.callsign)
-    if (!cs || queued.has(cs) || fresh(cache.get(cs))) continue
-    queued.add(cs)
-    queue.push(cs)
-  }
+  for (const p of planes) enqueue(p.callsign, false)
+}
+
+/**
+ * Queue one callsign at the FRONT. Used by the per-selection lookup when it
+ * can't get an answer itself, so the aircraft a visitor is looking at right now
+ * is resolved next by the paced loop, rather than being retried hard against an
+ * API that has already pushed back.
+ */
+export function queueRoute(callsign: string | undefined): void {
+  enqueue(callsign, true)
+}
+
+function enqueue(callsign: string | undefined, front: boolean): void {
+  const cs = norm(callsign ?? '')
+  if (!cs || queued.has(cs) || fresh(cache.get(cs))) return
+  queued.add(cs)
+  if (front) queue.unshift(cs)
+  else queue.push(cs)
 }
 
 function logProgress(): void {

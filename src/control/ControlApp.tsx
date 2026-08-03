@@ -195,7 +195,7 @@ export function ControlApp(): JSX.Element {
             onClick={() => toggleCat('other')}
           >
             <i style={{ background: '#93a4b8' }} />
-            기타 {perCategory.other.toLocaleString()}대
+            자가용·기타 {perCategory.other.toLocaleString()}대
           </button>
         </div>
         )}

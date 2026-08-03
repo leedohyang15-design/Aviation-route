@@ -17,7 +17,7 @@ import {
   nearestRouteIndex
 } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
-import { cityKo } from '../src/common/airports'
+import { cachedRoute, cacheRoute, lookupRoute, queueRoute } from './routes'
 import { opsLog } from './log'
 
 const TOKEN_URL =
@@ -193,91 +193,6 @@ export function createOpenSkyFeed(): FlightFeed {
 // best-effort from public APIs and cache. Failures degrade to partial detail.
 // ---------------------------------------------------------------------------
 
-// Korean city for an airport code, logging codes we don't have a translation for
-// (once each) so the operator can collect them and we can add them in a batch —
-// instead of hunting for them one screenshot at a time.
-const missingCity = new Set<string>()
-function koCity(code: string | undefined, english: string | undefined): string | undefined {
-  const ko = cityKo(code)
-  if (ko) return ko
-  if (code && !missingCity.has(code)) {
-    missingCity.add(code)
-    console.log(`[city] no Korean for ${code}${english ? ` (${english})` : ''} — add to airports.ts`)
-  }
-  return english
-}
-
-interface RoutePorts {
-  airline?: string
-  origin?: { code: string; city?: string; lon: number; lat: number }
-  destination?: { code: string; city?: string; lon: number; lat: number }
-}
-
-/** Try adsbdb first, then adsb.lol as a fallback (a different community route
- * DB, so it fills gaps where adsbdb has no entry for the flight number). */
-async function fetchRoute(
-  callsign: string,
-  pos: { lat: number; lon: number } | null
-): Promise<RoutePorts | null> {
-  if (!callsign) return null
-  return (await fetchRouteAdsbdb(callsign)) ?? (await fetchRouteAdsbLol(callsign, pos))
-}
-
-async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
-  try {
-    const res = await fetch(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`)
-    if (!res.ok) return null
-    const j = (await res.json()) as any
-    const fr = j?.response?.flightroute
-    if (!fr) return null
-    const port = (p: any) =>
-      p && p.longitude != null && p.latitude != null
-        ? {
-            code: p.iata_code || p.icao_code || '',
-            city: koCity(p.iata_code, p.municipality),
-            countryCode: (p.country_iso_name || '').toLowerCase() || undefined,
-            lon: p.longitude,
-            lat: p.latitude
-          }
-        : undefined
-    return { airline: fr.airline?.name, origin: port(fr.origin), destination: port(fr.destination) }
-  } catch {
-    return null
-  }
-}
-
-/** adsb.lol routeset: POST the callsign + current position, get back the
- * airports (first = origin, last = destination) with coordinates. */
-async function fetchRouteAdsbLol(
-  callsign: string,
-  pos: { lat: number; lon: number } | null
-): Promise<RoutePorts | null> {
-  try {
-    const res = await fetch('https://api.adsb.lol/api/0/routeset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planes: [{ callsign, lat: pos?.lat ?? 0, lng: pos?.lon ?? 0 }] })
-    })
-    if (!res.ok) return null
-    const arr = (await res.json()) as any[]
-    const aps = Array.isArray(arr) ? arr[0]?._airports : null
-    if (!Array.isArray(aps) || aps.length < 2) return null
-    const port = (p: any) =>
-      p && p.lon != null && p.lat != null
-        ? {
-            code: p.iata || p.icao || '',
-            city: koCity(p.iata, p.location),
-            countryCode: (p.countryiso2 || '').toLowerCase() || undefined,
-            lon: p.lon,
-            lat: p.lat
-          }
-        : undefined
-    return { origin: port(aps[0]), destination: port(aps[aps.length - 1]) }
-  } catch {
-    return null
-  }
-}
-
 async function fetchType(icao24: string): Promise<string | undefined> {
   try {
     const res = await fetch(`https://hexdb.io/api/v1/aircraft/${encodeURIComponent(icao24)}`)
@@ -295,35 +210,51 @@ async function buildDetail(
   cache: Map<string, FlightDetail>
 ): Promise<FlightDetail | null> {
   const ac = latest.get(icao24)
+  const callsign = ac?.callsign?.trim() ?? ''
   // Key by icao24 + callsign so a new leg (new callsign) re-enriches instead of
   // reusing the previous leg's origin/destination.
-  const key = `${icao24}|${ac?.callsign ?? ''}`
+  const key = `${icao24}|${callsign}`
   const prev = cache.get(key) as (FlightDetail & { _ts?: number }) | undefined
-  // Reuse the cache when the route already resolved, or when a failed lookup is
-  // still recent — otherwise the hub's per-snapshot refresh would re-hit adsbdb
-  // every few seconds for un-routable flights and get everything rate-limited.
-  // Retry a negative result only after 60s so adsbdb can recover.
-  const reuse = prev && (prev.origin != null || Date.now() - (prev._ts ?? 0) < 60_000)
-  let enrich: FlightDetail & { _ts?: number }
-  if (reuse) {
-    enrich = prev as FlightDetail & { _ts?: number }
-  } else {
-    const [ports, type] = await Promise.all([
-      fetchRoute(ac?.callsign ?? '', ac ? { lat: ac.lat, lon: ac.lon } : null),
-      fetchType(icao24)
-    ])
-    enrich = {
-      icao24,
-      airline: ports?.airline,
-      flightNo: ac?.callsign,
-      origin: ports?.origin,
-      destination: ports?.destination,
-      aircraftType: type,
-      route: null,
-      _ts: Date.now()
+
+  // The route comes from the SHARED cache in routes.ts — the same one the
+  // background resolver fills and writes to disk. This module used to keep its
+  // own duplicate adsbdb client, which meant every selection made a fresh
+  // network request even though the answer was already cached, competing with
+  // the resolver for the same free API. Worse, that client swallowed every error
+  // — including 429 — as "no route", so once the resolver had wound itself up to
+  // several lookups a second, every aircraft a visitor tapped came back with no
+  // route at all. It also still called adsb.lol, an endpoint proven not to exist.
+  let ports = cachedRoute(callsign)
+  let rateLimited = false
+  if (ports === undefined && callsign) {
+    try {
+      ports = await lookupRoute(callsign)
+      cacheRoute(callsign, ports) // the resolver benefits from this answer too
+    } catch {
+      // Rate-limited or unreachable. Leave it UNKNOWN rather than caching a
+      // negative — and hand it to the resolver, which paces itself and backs off.
+      ports = undefined
+      rateLimited = true
+      queueRoute(callsign)
     }
-    cache.set(key, enrich) // cache positive AND negative to stop re-fetch storms
   }
+
+  // The aircraft type is separate (hexdb, keyed by airframe) and rarely changes,
+  // so it is worth keeping on the per-selection cache.
+  let type = prev?.aircraftType
+  if (type === undefined && !prev) type = await fetchType(icao24)
+
+  const enrich: FlightDetail & { _ts?: number } = {
+    icao24,
+    airline: ports?.airline,
+    flightNo: callsign || undefined,
+    origin: ports?.origin,
+    destination: ports?.destination,
+    aircraftType: type,
+    route: null,
+    _ts: Date.now()
+  }
+  cache.set(key, enrich)
 
   const detail: FlightDetail = { ...(enrich as FlightDetail), route: null }
   const o = detail.origin
@@ -373,16 +304,19 @@ async function buildDetail(
     }
   }
 
-  // No route line? Explain why on both screens.
+  // No route line? Explain why on both screens — and be honest about the
+  // difference between "we asked and there is none" and "we haven't been able
+  // to ask yet", which used to read identically.
   if (!detail.route) {
-    const cs = ac?.callsign?.trim()
-    detail.noRouteReason = !cs
+    detail.noRouteReason = !callsign
       ? '정보가 없는 비행기예요'
-      : mismatch
-        ? '지금은 경로를 알 수 없어요'
-        : flightCategory(cs) === 'military'
-          ? '비밀 비행기예요 🤫'
-          : '경로 정보가 없어요'
+      : rateLimited || ports === undefined
+        ? '경로를 찾는 중이에요'
+        : mismatch
+          ? '지금은 경로를 알 수 없어요'
+          : flightCategory(callsign) === 'military'
+            ? '비밀 비행기예요 🤫'
+            : '경로 정보가 없어요'
   }
   return detail
 }

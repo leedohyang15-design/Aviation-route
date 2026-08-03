@@ -103,11 +103,16 @@ export function isKnownFlight(callsign?: string | null): boolean {
 /**
  * The bucket an aircraft is counted and coloured in.
  *
- * `other` is its own category rather than a fallback to `passenger`. Unknown
- * callsigns — general aviation, private, blank or bare-registration — are about
- * half of everything OpenSky reports, and folding them into "여객기" made that
- * count roughly double what it should be. They get their own chip and their own
- * colour so the numbers mean what they say.
+ * `other` is its own category rather than a fallback to `passenger`. It holds
+ * every aircraft whose callsign matches no known airline, cargo or military
+ * operator: business jets and private aircraft (which broadcast a registration
+ * like "N172SP" rather than a flight number), training flights, helicopters,
+ * survey and medical aircraft, and anything transmitting a blank callsign.
+ * These have no published route because they are not scheduled services.
+ *
+ * They are about half of everything OpenSky reports, so folding them into
+ * "여객기" made that count roughly double what it should be. Their own chip and
+ * their own colour keeps the numbers meaning what they say.
  */
 export type CategoryKey = 'passenger' | 'cargo' | 'military' | 'other'
 export function categoryKey(callsign?: string | null, type?: string | null): CategoryKey {
