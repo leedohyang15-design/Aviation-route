@@ -7,21 +7,30 @@
 // many aircraft up front so route-less flights can be filtered out before anyone
 // sees them.
 //
-// adsb.lol's routeset endpoint takes a LIST of planes per request, which is what
-// makes this affordable: one request covers a whole chunk. It is a free
-// community service, so requests are chunked, sent sequentially, capped per poll
-// cycle, and every answer (including "no route") is cached so a callsign is
-// asked about once, not once per poll.
+// Routes come from adsbdb, which answers one callsign per request. There is no
+// batch endpoint, so instead of bursting we spread the requests evenly across
+// the poll interval — a steady trickle rather than a flood on a free service —
+// and cache every answer, including "no route", so each callsign is asked about
+// once rather than once per poll. The cache is also written to disk, so a kiosk
+// restarted the next morning starts warm instead of re-asking for everything.
+//
+// (An earlier version used adsb.lol's routeset endpoint, which takes a list of
+// planes per request. It was removed: that endpoint answers every request —
+// including a plain GET — with "201 Created" and an empty body, i.e. it does not
+// exist in the form we assumed, so no batch was ever resolved.)
 //
 // Everything here fails open: an unreachable API leaves routes "unknown", and
 // unknown aircraft are shown, never hidden.
 
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
 import { cityKo } from '../src/common/airports'
 import {
-  ROUTE_LOOKUP_CHUNK,
-  ROUTE_LOOKUP_CHUNKS_PER_POLL,
+  ROUTE_LOOKUP_PER_POLL,
   ROUTE_CACHE_TTL_MS,
-  ROUTE_NEGATIVE_TTL_MS
+  ROUTE_NEGATIVE_TTL_MS,
+  ROUTE_CACHE_MAX,
+  OPENSKY_POLL_INTERVAL_MS
 } from '../src/shared/config'
 import { opsLog } from './log'
 
@@ -85,159 +94,204 @@ export function hasRoute(callsign: string | undefined): boolean | undefined {
   return r === undefined ? undefined : r !== null
 }
 
+let dirty = false
+
 export function cacheRoute(callsign: string, ports: RoutePorts | null): void {
-  if (callsign) cache.set(norm(callsign), { ports, ts: Date.now() })
+  if (!callsign) return
+  cache.set(norm(callsign), { ports, ts: Date.now() })
+  dirty = true
 }
 
-/** True when a route has both endpoints — the only case we can draw a line for. */
-function complete(p: RoutePorts | null): boolean {
-  return !!p && !!p.origin && !!p.destination
-}
+// ---------------------------------------------------------------------------
+// adsbdb lookup
+// ---------------------------------------------------------------------------
 
-const port = (p: Record<string, unknown> | null | undefined): RoutePort | undefined => {
-  if (!p || p.lon == null || p.lat == null) return undefined
-  const iata = (p.iata as string) || undefined
-  return {
-    code: iata || (p.icao as string) || '',
-    city: koCity(iata, p.location as string | undefined),
-    countryCode: ((p.countryiso2 as string) || '').toLowerCase() || undefined,
-    lon: p.lon as number,
-    lat: p.lat as number
-  }
-}
-
-export interface PlaneQuery {
-  callsign: string
-  lat: number
-  lon: number
-}
+/** Thrown for 429 so the caller can back off rather than treat it as "no route". */
+class RateLimited extends Error {}
 
 /**
- * One adsb.lol routeset request for a batch of planes. Returns a map of
- * callsign → route (only entries the API actually answered for).
- *
- * The response is an array; each element carries its own `callsign`, so results
- * are matched by name rather than by position. Index matching is only used as a
- * fallback when the API omits the callsign AND the array lines up 1:1 — matching
- * by position on a short/reordered response would attach one flight's route to
- * another, which is exactly the mismatch the display already has to guard
- * against.
+ * Look up one callsign. Returns the route, or null when adsbdb has no entry for
+ * it (a real answer worth caching). Throws on transport/API failure so the
+ * caller leaves the callsign unknown instead of hiding the plane.
  */
-export async function lookupRoutes(batch: PlaneQuery[]): Promise<Map<string, RoutePorts>> {
-  const out = new Map<string, RoutePorts>()
-  if (!batch.length) return out
-  const res = await fetch('https://api.adsb.lol/api/0/routeset', {
-    method: 'POST',
+export async function lookupRoute(callsign: string): Promise<RoutePorts | null> {
+  const res = await fetch(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`, {
     headers: {
-      'Content-Type': 'application/json',
       Accept: 'application/json',
-      // Some public APIs reject or silently drop requests from the default
-      // runtime agent — identify the exhibit instead.
       'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)'
-    },
-    body: JSON.stringify({
-      planes: batch.map((p) => ({ callsign: p.callsign, lat: p.lat, lng: p.lon }))
-    })
+    }
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${batch.length} planes`)
-  // Read as text first: an empty 200 body (what an over-large batch returns)
-  // would otherwise surface as a bare "Unexpected end of JSON input" with no
-  // clue about the status, the batch size, or what came back.
-  const text = await res.text()
-  if (!text.trim()) throw new Error(`empty 200 body for ${batch.length} planes`)
-  let arr: Record<string, unknown>[]
-  try {
-    arr = JSON.parse(text) as Record<string, unknown>[]
-  } catch {
-    throw new Error(`bad JSON for ${batch.length} planes: ${text.slice(0, 120)}`)
+  if (res.status === 429) throw new RateLimited('rate limited (429)')
+  // 404 is adsbdb's "unknown callsign" — a definite answer, not a failure.
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const j = (await res.json()) as {
+    response?: { flightroute?: Record<string, Record<string, unknown> & { name?: string }> }
   }
-  if (!Array.isArray(arr)) throw new Error(`not an array for ${batch.length} planes`)
-
-  arr.forEach((row, i) => {
-    const named = typeof row?.callsign === 'string' ? norm(row.callsign as string) : null
-    const cs = named ?? (arr.length === batch.length ? norm(batch[i].callsign) : null)
-    if (!cs) return
-    const aps = row?._airports as Record<string, unknown>[] | undefined
-    if (!Array.isArray(aps) || aps.length < 2) return
-    const ports: RoutePorts = { origin: port(aps[0]), destination: port(aps[aps.length - 1]) }
-    if (complete(ports)) out.set(cs, ports)
-  })
-  return out
+  const fr = j?.response?.flightroute
+  if (!fr) return null
+  const port = (p: Record<string, unknown> | undefined): RoutePort | undefined => {
+    if (!p || p.longitude == null || p.latitude == null) return undefined
+    const iata = (p.iata_code as string) || undefined
+    return {
+      code: iata || (p.icao_code as string) || '',
+      city: koCity(iata, p.municipality as string | undefined),
+      countryCode: ((p.country_iso_name as string) || '').toLowerCase() || undefined,
+      lon: p.longitude as number,
+      lat: p.latitude as number
+    }
+  }
+  const origin = port(fr.origin)
+  const destination = port(fr.destination)
+  // Only a route with BOTH endpoints can be drawn; treat a half-answer as none.
+  if (!origin || !destination) return null
+  return { airline: fr.airline?.name, origin, destination }
 }
 
 // Only one resolution pass runs at a time; a poll arriving mid-pass is skipped
 // rather than stacking requests on a free API.
 let running = false
+/** Poll cycles to sit out after a 429, decremented once per pass. */
+let cooldown = 0
 
-// The API's real per-request limit isn't documented, and exceeding it comes back
-// as an empty 200 body rather than an error. Start at the configured size and
-// halve on failure until requests go through, then stay there — so the exhibit
-// finds a working batch size by itself instead of failing every cycle.
-const MIN_CHUNK = 5
-let chunkSize = Math.max(MIN_CHUNK, ROUTE_LOOKUP_CHUNK)
-/** Failures tolerated per pass before giving up until the next poll. */
-const MAX_FAILURES = 4
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * Resolve routes for any of these planes we haven't asked about yet, in chunks,
- * sequentially, up to the per-poll cap. Callsigns the API doesn't answer for are
- * cached as "no route" so they aren't retried every cycle.
+ * Resolve routes for any of these planes we haven't asked about yet, pacing the
+ * requests evenly across one poll interval. Callsigns adsbdb has no entry for
+ * are cached as "no route" so they aren't retried every cycle.
  */
-export async function resolveRoutes(planes: PlaneQuery[]): Promise<void> {
+export async function resolveRoutes(planes: { callsign: string }[]): Promise<void> {
   if (running) return
-  const pending: PlaneQuery[] = []
+  if (cooldown > 0) {
+    cooldown--
+    return
+  }
+  const pending: string[] = []
   const seen = new Set<string>()
   for (const p of planes) {
     const cs = norm(p.callsign)
     if (!cs || seen.has(cs) || fresh(cache.get(cs))) continue
     seen.add(cs)
-    pending.push({ ...p, callsign: cs })
+    pending.push(cs)
   }
   if (!pending.length) return
 
   running = true
-  const budget = ROUTE_LOOKUP_CHUNKS_PER_POLL * ROUTE_LOOKUP_CHUNK
-  const work = pending.slice(0, budget)
+  const work = pending.slice(0, ROUTE_LOOKUP_PER_POLL)
+  // Spread the budget across the poll interval instead of bursting: a steady
+  // ~1 request/second rather than hundreds at once.
+  const gap = Math.max(0, Math.floor(OPENSKY_POLL_INTERVAL_MS / Math.max(1, ROUTE_LOOKUP_PER_POLL)))
   let found = 0
   let none = 0
-  let i = 0
-  let failures = 0
+  let failed = 0
   try {
-    while (i < work.length && failures < MAX_FAILURES) {
-      const chunk = work.slice(i, i + chunkSize)
-      let answers: Map<string, RoutePorts>
+    for (const cs of work) {
       try {
-        answers = await lookupRoutes(chunk)
-      } catch (err) {
-        failures++
-        if (chunkSize > MIN_CHUNK) {
-          // Probably too many planes per request — shrink and retry the same
-          // planes. The smaller size sticks, so later cycles start there.
-          chunkSize = Math.max(MIN_CHUNK, Math.floor(chunkSize / 2))
-          opsLog(`[routes] ${(err as Error).message} — retrying with batches of ${chunkSize}`)
-          continue
-        }
-        // Even the smallest batch failed: the API is down or has changed. Fail
-        // open (these planes stay visible) and wait for the next poll.
-        opsLog(`[routes] lookup failed: ${(err as Error).message} — leaving the rest unknown`)
-        break
-      }
-      for (const p of chunk) {
-        const ports = answers.get(p.callsign) ?? null
-        cacheRoute(p.callsign, ports)
+        const ports = await lookupRoute(cs)
+        cacheRoute(cs, ports)
         if (ports) found++
         else none++
+      } catch (err) {
+        if (err instanceof RateLimited) {
+          cooldown = 2 // sit out a couple of cycles before trying again
+          opsLog(`[routes] adsbdb rate-limited — pausing lookups for ${cooldown} poll cycles`)
+          break
+        }
+        // Transport error: leave this callsign unknown (plane stays visible).
+        if (++failed >= 10) {
+          opsLog(`[routes] adsbdb unreachable (${(err as Error).message}) — retrying next poll`)
+          break
+        }
       }
-      i += chunk.length
+      if (gap) await sleep(gap)
     }
   } finally {
     running = false
   }
-  if (found || none) {
-    const skipped = pending.length - work.length
+  if (found || none || failed) {
+    const left = pending.length - found - none
     opsLog(
-      `[routes] resolved ${found + none} callsigns — route ${found} / none ${none}; ` +
-        `cache ${cache.size}${skipped ? `, ${skipped} queued for next poll` : ''}`
+      `[routes] adsbdb ${found + none} lookups — route ${found} / none ${none}` +
+        `${failed ? ` / failed ${failed}` : ''}; cache ${cache.size}, ${left} queued`
     )
   }
+  saveIfDue()
+}
+
+// ---------------------------------------------------------------------------
+// Disk persistence
+// ---------------------------------------------------------------------------
+//
+// Flight numbers fly the same route day after day, so yesterday's answers are
+// almost all still valid this morning. Persisting the cache next to the
+// executable means a kiosk restarted daily starts already filtered instead of
+// spending the first hour re-asking adsbdb for the same callsigns.
+
+const CACHE_PATH = join(dirname(process.execPath), 'aviation-route-routes.json')
+const SAVE_INTERVAL_MS = 5 * 60_000
+let lastSave = 0
+
+interface Persisted {
+  version: number
+  saved: number
+  entries: Record<string, { p: RoutePorts | null; t: number }>
+}
+
+export function loadRouteCache(path = CACHE_PATH): void {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return // no cache yet — normal on first run
+  }
+  try {
+    const data = JSON.parse(text) as Persisted
+    if (data?.version !== 1 || !data.entries) return
+    let loaded = 0
+    for (const [cs, e] of Object.entries(data.entries)) {
+      const entry: Entry = { ports: e.p, ts: e.t }
+      if (!fresh(entry)) continue // expired while the exhibit was off
+      cache.set(cs, entry)
+      loaded++
+    }
+    opsLog(`[routes] loaded ${loaded} cached routes from ${path}`)
+  } catch (err) {
+    // A truncated or corrupt file must never stop the exhibit starting.
+    opsLog(`[routes] ignoring unreadable route cache: ${(err as Error).message}`)
+  }
+}
+
+export function saveRouteCache(path = CACHE_PATH): void {
+  if (!dirty) return
+  // Cap the file: drop the oldest entries first so it can't grow without bound.
+  let entries = [...cache.entries()]
+  if (entries.length > ROUTE_CACHE_MAX) {
+    entries.sort((a, b) => b[1].ts - a[1].ts)
+    entries = entries.slice(0, ROUTE_CACHE_MAX)
+    cache.clear()
+    for (const [cs, e] of entries) cache.set(cs, e)
+  }
+  const data: Persisted = {
+    version: 1,
+    saved: Date.now(),
+    entries: Object.fromEntries(entries.map(([cs, e]) => [cs, { p: e.ports, t: e.ts }]))
+  }
+  try {
+    writeFileSync(path, JSON.stringify(data))
+    dirty = false
+    lastSave = Date.now()
+  } catch (err) {
+    opsLog(`[routes] could not save route cache: ${(err as Error).message}`)
+  }
+}
+
+/** Save at most every few minutes — the cache is an optimisation, not a log. */
+function saveIfDue(): void {
+  if (dirty && Date.now() - lastSave > SAVE_INTERVAL_MS) saveRouteCache()
+}
+
+/** Test seam: number of cached callsigns. */
+export function routeCacheSize(): number {
+  return cache.size
 }

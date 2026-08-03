@@ -13,7 +13,7 @@ import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
 import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
 import { opsLog } from './log'
-import { koCity, cachedRoute, cacheRoute, lookupRoutes, type RoutePorts } from './routes'
+import { cachedRoute, cacheRoute, lookupRoute, type RoutePorts } from './routes'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
@@ -185,55 +185,19 @@ export function createOpenSkyFeed(): FlightFeed {
 // best-effort from public APIs and cache. Failures degrade to partial detail.
 // ---------------------------------------------------------------------------
 
-/** Try adsbdb first, then adsb.lol as a fallback (a different community route
- * DB, so it fills gaps where adsbdb has no entry for the flight number). */
-async function fetchRoute(
-  callsign: string,
-  pos: { lat: number; lon: number } | null
-): Promise<RoutePorts | null> {
+/** Route for a callsign, preferring the shared cache the bulk resolver fills. */
+async function fetchRoute(callsign: string): Promise<RoutePorts | null> {
   if (!callsign) return null
   // The bulk resolver has usually already answered for this callsign, so a
   // selection normally costs no network round-trip at all.
   const known = cachedRoute(callsign)
   if (known !== undefined) return known
-  const found = (await fetchRouteAdsbdb(callsign)) ?? (await fetchRouteAdsbLol(callsign, pos))
-  cacheRoute(callsign, found)
-  return found
-}
-
-async function fetchRouteAdsbdb(callsign: string): Promise<RoutePorts | null> {
   try {
-    const res = await fetch(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`)
-    if (!res.ok) return null
-    const j = (await res.json()) as any
-    const fr = j?.response?.flightroute
-    if (!fr) return null
-    const port = (p: any) =>
-      p && p.longitude != null && p.latitude != null
-        ? {
-            code: p.iata_code || p.icao_code || '',
-            city: koCity(p.iata_code, p.municipality),
-            countryCode: (p.country_iso_name || '').toLowerCase() || undefined,
-            lon: p.longitude,
-            lat: p.latitude
-          }
-        : undefined
-    return { airline: fr.airline?.name, origin: port(fr.origin), destination: port(fr.destination) }
+    const found = await lookupRoute(callsign)
+    cacheRoute(callsign, found)
+    return found
   } catch {
-    return null
-  }
-}
-
-/** Single-plane adsb.lol lookup — a one-item call to the shared batch helper,
- * used only when adsbdb has no entry and the bulk pass hasn't covered it yet. */
-async function fetchRouteAdsbLol(
-  callsign: string,
-  pos: { lat: number; lon: number } | null
-): Promise<RoutePorts | null> {
-  try {
-    const found = await lookupRoutes([{ callsign, lat: pos?.lat ?? 0, lon: pos?.lon ?? 0 }])
-    return found.get(callsign.trim().toUpperCase()) ?? null
-  } catch {
+    // Leave it unknown rather than caching a network blip as "no route".
     return null
   }
 }
@@ -269,7 +233,7 @@ async function buildDetail(
     enrich = prev as FlightDetail & { _ts?: number }
   } else {
     const [ports, type] = await Promise.all([
-      fetchRoute(ac?.callsign ?? '', ac ? { lat: ac.lat, lon: ac.lon } : null),
+      fetchRoute(ac?.callsign ?? ''),
       fetchType(icao24)
     ])
     enrich = {

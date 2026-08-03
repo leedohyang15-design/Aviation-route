@@ -40,17 +40,15 @@ export const MOCK_POLL_INTERVAL_MS = Number(readEnv('MOCK_POLL_INTERVAL_MS') ?? 
 export const MOCK_AIRCRAFT_COUNT = Number(readEnv('MOCK_AIRCRAFT_COUNT') ?? 6000)
 
 /**
- * Bulk route lookup (adsb.lol). OpenSky's snapshot has no origin/destination, so
- * routes are resolved by callsign and cached; aircraft confirmed to have no
- * route are hidden. adsb.lol is a free community API, so the defaults are
- * deliberately gentle: chunked, sequential, and capped per poll cycle. Raise
- * CHUNKS_PER_POLL to fill the cache faster, lower it to be lighter on the API.
+ * Route lookup (adsbdb). OpenSky's snapshot has no origin/destination, so routes
+ * are resolved by callsign and cached; aircraft confirmed to have no route are
+ * hidden. adsbdb answers one callsign per request, so this budget is spread
+ * evenly across each poll interval (90s / 120 ≈ one request per 750ms) to keep a
+ * steady, low load on a free service. Raise it to fill the cache faster.
  */
-// 100 per request came back as an empty 200 from adsb.lol, so start well under
-// that. The resolver halves this by itself if requests still fail, so this is a
-// starting point rather than a hard limit.
-export const ROUTE_LOOKUP_CHUNK = Number(readEnv('ROUTE_LOOKUP_CHUNK') ?? 25)
-export const ROUTE_LOOKUP_CHUNKS_PER_POLL = Number(readEnv('ROUTE_LOOKUP_CHUNKS_PER_POLL') ?? 20)
+export const ROUTE_LOOKUP_PER_POLL = Number(readEnv('ROUTE_LOOKUP_PER_POLL') ?? 120)
+/** Cap on cached callsigns; the oldest are dropped when the file is written. */
+export const ROUTE_CACHE_MAX = Number(readEnv('ROUTE_CACHE_MAX') ?? 20000)
 /** How long a resolved route stays cached (routes rarely change mid-day). */
 export const ROUTE_CACHE_TTL_MS = Number(readEnv('ROUTE_CACHE_TTL_MS') ?? 24 * 3600_000)
 /** How long a "no route" answer sticks before we try that callsign again. */

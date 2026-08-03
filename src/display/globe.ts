@@ -78,6 +78,8 @@ export class Globe {
   private lastFrame = 0
 
   private eased = new Map<string, Eased>()
+  /** Aircraft with a confirmed route, so auto-pick can favour them. */
+  private routed = new Set<string>()
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
   private dummy = new THREE.Object3D()
@@ -483,10 +485,16 @@ export class Globe {
   }
 
   /** A random aircraft, never the one already selected (so every pick visibly
-   * changes something). Shared by the attract cycle and Tab. */
+   * changes something). Shared by the attract cycle and Tab.
+   *
+   * Prefers planes with a confirmed route: while the route cache is still
+   * filling, most aircraft are merely "unknown" rather than route-less, and
+   * landing on one of those shows a card with no route at all. */
   private randomPick(): string | null {
-    const ids = [...this.eased.keys()]
-    if (!ids.length) return null
+    const all = [...this.eased.keys()]
+    if (!all.length) return null
+    const routed = all.filter((id) => this.routed.has(id))
+    const ids = routed.length ? routed : all
     if (ids.length === 1) return ids[0]
     let id = ids[Math.floor(Math.random() * ids.length)]
     while (id === this.selected) id = ids[Math.floor(Math.random() * ids.length)]
@@ -741,6 +749,9 @@ export class Globe {
         this.order.push(a.icao24)
       }
     }
+    // Track which aircraft have a confirmed route (for auto-pick preference).
+    this.routed.clear()
+    for (const a of list) if (a.hasRoute) this.routed.add(a.icao24)
     // Drop aircraft no longer reported.
     for (const id of [...this.eased.keys()]) {
       if (!seen.has(id)) {
