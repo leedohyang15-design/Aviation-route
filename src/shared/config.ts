@@ -46,8 +46,11 @@ export const MOCK_AIRCRAFT_COUNT = Number(readEnv('MOCK_AIRCRAFT_COUNT') ?? 6000
  * deliberately gentle: chunked, sequential, and capped per poll cycle. Raise
  * CHUNKS_PER_POLL to fill the cache faster, lower it to be lighter on the API.
  */
-export const ROUTE_LOOKUP_CHUNK = Number(readEnv('ROUTE_LOOKUP_CHUNK') ?? 100)
-export const ROUTE_LOOKUP_CHUNKS_PER_POLL = Number(readEnv('ROUTE_LOOKUP_CHUNKS_PER_POLL') ?? 10)
+// 100 per request came back as an empty 200 from adsb.lol, so start well under
+// that. The resolver halves this by itself if requests still fail, so this is a
+// starting point rather than a hard limit.
+export const ROUTE_LOOKUP_CHUNK = Number(readEnv('ROUTE_LOOKUP_CHUNK') ?? 25)
+export const ROUTE_LOOKUP_CHUNKS_PER_POLL = Number(readEnv('ROUTE_LOOKUP_CHUNKS_PER_POLL') ?? 20)
 /** How long a resolved route stays cached (routes rarely change mid-day). */
 export const ROUTE_CACHE_TTL_MS = Number(readEnv('ROUTE_CACHE_TTL_MS') ?? 24 * 3600_000)
 /** How long a "no route" answer sticks before we try that callsign again. */

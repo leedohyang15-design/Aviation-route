@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
+import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { MapView } from './MapView'
 
@@ -12,11 +13,15 @@ export function ControlApp(): JSX.Element {
   )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
-  // Total aircraft actually airborne worldwide (before the category/known filter).
-  const airborne = useMemo(
-    () => aircraft.reduce((n, a) => (a.onGround ? n : n + 1), 0),
-    [aircraft]
-  )
+  // How many aircraft each category contributes, ignoring the category filter
+  // itself — so a hidden category still shows what turning it back on would add.
+  const perCategory = useMemo(() => {
+    const counts: Record<CategoryKey, number> = { passenger: 0, cargo: 0, military: 0 }
+    for (const a of applyFilter(aircraft, { ...state.filter, hiddenCategories: [] }, state.selected)) {
+      counts[categoryKey(a.callsign)]++
+    }
+    return counts
+  }, [aircraft, state.filter, state.selected])
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
@@ -27,21 +32,6 @@ export function ControlApp(): JSX.Element {
   const toggleCat = (cat: string) => {
     const next = hidden.includes(cat) ? hidden.filter((c) => c !== cat) : [...hidden, cat]
     send({ type: 'setFilter', filter: { ...state.filter, hiddenCategories: next } })
-  }
-
-  // "Scheduled only" toggle: off by default (everything shows, including
-  // route-unknown planes); on → keep only scheduled airline/cargo callsigns,
-  // which is what actually resolves a route.
-  const scheduledOnly = state.filter.scheduledOnly ?? false
-  const toggleScheduled = () => {
-    send({ type: 'setFilter', filter: { ...state.filter, scheduledOnly: !scheduledOnly } })
-  }
-
-  // "Route known only": hides aircraft confirmed to have no published route, so
-  // visitors don't land on a plane that can't draw one. On by default.
-  const routeOnly = state.filter.routeOnly ?? false
-  const toggleRouteOnly = () => {
-    send({ type: 'setFilter', filter: { ...state.filter, routeOnly: !routeOnly } })
   }
 
   // Live data vs. forced simulation. Live is the default; simulation is there
@@ -82,7 +72,7 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          지금 하늘에 ✈ <b>{airborne.toLocaleString()}</b>대
+          지금 하늘에 ✈ <b>{visible.length.toLocaleString()}</b>대
         </div>
         <div className={'src ' + (live ? 'ok' : 'warn')}>{statusText}</div>
         {/* Data source tabs — live by default, simulation on demand. */}
@@ -112,37 +102,21 @@ export function ControlApp(): JSX.Element {
             onClick={() => toggleCat('passenger')}
           >
             <i style={{ background: '#35c1ff' }} />
-            여객기
+            여객기 {perCategory.passenger.toLocaleString()}대
           </button>
           <button
             className={'leg' + (hidden.includes('cargo') ? ' off' : '')}
             onClick={() => toggleCat('cargo')}
           >
             <i style={{ background: '#f5a623' }} />
-            화물기
+            화물기 {perCategory.cargo.toLocaleString()}대
           </button>
           <button
             className={'leg' + (hidden.includes('military') ? ' off' : '')}
             onClick={() => toggleCat('military')}
           >
             <i style={{ background: '#74d16a' }} />
-            군용기
-          </button>
-        </div>
-        <div className="legend">
-          <button
-            className={'leg toggle' + (scheduledOnly ? ' on' : '')}
-            onClick={toggleScheduled}
-            title="식별되는 항공기(여객·화물·군용)만 표시 / 끄면 전체"
-          >
-            {scheduledOnly ? '✓ 여객·화물·군용만' : '전체 표시'}
-          </button>
-          <button
-            className={'leg toggle' + (routeOnly ? ' on' : '')}
-            onClick={toggleRouteOnly}
-            title="경로가 확인된 항공기만 표시 / 끄면 경로 없는 것도 보임"
-          >
-            {routeOnly ? '✓ 경로 있는 것만' : '경로 없어도 표시'}
+            군용기 {perCategory.military.toLocaleString()}대
           </button>
         </div>
       </div>

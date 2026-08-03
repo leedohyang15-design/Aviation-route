@@ -128,14 +128,30 @@ export async function lookupRoutes(batch: PlaneQuery[]): Promise<Map<string, Rou
   if (!batch.length) return out
   const res = await fetch('https://api.adsb.lol/api/0/routeset', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      // Some public APIs reject or silently drop requests from the default
+      // runtime agent — identify the exhibit instead.
+      'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)'
+    },
     body: JSON.stringify({
       planes: batch.map((p) => ({ callsign: p.callsign, lat: p.lat, lng: p.lon }))
     })
   })
-  if (!res.ok) throw new Error(`adsb.lol routeset ${res.status}`)
-  const arr = (await res.json()) as Record<string, unknown>[]
-  if (!Array.isArray(arr)) throw new Error('adsb.lol routeset: unexpected response shape')
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${batch.length} planes`)
+  // Read as text first: an empty 200 body (what an over-large batch returns)
+  // would otherwise surface as a bare "Unexpected end of JSON input" with no
+  // clue about the status, the batch size, or what came back.
+  const text = await res.text()
+  if (!text.trim()) throw new Error(`empty 200 body for ${batch.length} planes`)
+  let arr: Record<string, unknown>[]
+  try {
+    arr = JSON.parse(text) as Record<string, unknown>[]
+  } catch {
+    throw new Error(`bad JSON for ${batch.length} planes: ${text.slice(0, 120)}`)
+  }
+  if (!Array.isArray(arr)) throw new Error(`not an array for ${batch.length} planes`)
 
   arr.forEach((row, i) => {
     const named = typeof row?.callsign === 'string' ? norm(row.callsign as string) : null
@@ -152,6 +168,15 @@ export async function lookupRoutes(batch: PlaneQuery[]): Promise<Map<string, Rou
 // Only one resolution pass runs at a time; a poll arriving mid-pass is skipped
 // rather than stacking requests on a free API.
 let running = false
+
+// The API's real per-request limit isn't documented, and exceeding it comes back
+// as an empty 200 body rather than an error. Start at the configured size and
+// halve on failure until requests go through, then stay there — so the exhibit
+// finds a working batch size by itself instead of failing every cycle.
+const MIN_CHUNK = 5
+let chunkSize = Math.max(MIN_CHUNK, ROUTE_LOOKUP_CHUNK)
+/** Failures tolerated per pass before giving up until the next poll. */
+const MAX_FAILURES = 4
 
 /**
  * Resolve routes for any of these planes we haven't asked about yet, in chunks,
@@ -175,16 +200,26 @@ export async function resolveRoutes(planes: PlaneQuery[]): Promise<void> {
   const work = pending.slice(0, budget)
   let found = 0
   let none = 0
+  let i = 0
+  let failures = 0
   try {
-    for (let i = 0; i < work.length; i += ROUTE_LOOKUP_CHUNK) {
-      const chunk = work.slice(i, i + ROUTE_LOOKUP_CHUNK)
+    while (i < work.length && failures < MAX_FAILURES) {
+      const chunk = work.slice(i, i + chunkSize)
       let answers: Map<string, RoutePorts>
       try {
         answers = await lookupRoutes(chunk)
       } catch (err) {
-        // Fail open: leave this chunk unknown (so its planes stay visible) and
-        // stop for this cycle instead of hammering an API that just failed.
-        opsLog(`[routes] lookup failed: ${(err as Error).message} — leaving ${chunk.length} unknown`)
+        failures++
+        if (chunkSize > MIN_CHUNK) {
+          // Probably too many planes per request — shrink and retry the same
+          // planes. The smaller size sticks, so later cycles start there.
+          chunkSize = Math.max(MIN_CHUNK, Math.floor(chunkSize / 2))
+          opsLog(`[routes] ${(err as Error).message} — retrying with batches of ${chunkSize}`)
+          continue
+        }
+        // Even the smallest batch failed: the API is down or has changed. Fail
+        // open (these planes stay visible) and wait for the next poll.
+        opsLog(`[routes] lookup failed: ${(err as Error).message} — leaving the rest unknown`)
         break
       }
       for (const p of chunk) {
@@ -193,6 +228,7 @@ export async function resolveRoutes(planes: PlaneQuery[]): Promise<void> {
         if (ports) found++
         else none++
       }
+      i += chunk.length
     }
   } finally {
     running = false
