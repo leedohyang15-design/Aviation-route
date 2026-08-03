@@ -4,8 +4,9 @@ import { applyFilter } from '../common/filter'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
-import type { OrbitClass } from '@shared/types'
+import type { OrbitClass, Satellite } from '@shared/types'
 import { MapView } from './MapView'
+import { SatelliteSearch } from './SatelliteSearch'
 
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
@@ -25,6 +26,15 @@ export function ControlApp(): JSX.Element {
   const toggleOrbit = (o: OrbitClass) => {
     const next = hiddenOrbits.includes(o) ? hiddenOrbits.filter((x) => x !== o) : [...hiddenOrbits, o]
     send({ type: 'setHiddenOrbits', orbits: next })
+  }
+  /** Jump to a searched satellite. Starlink is hidden by default (it is two
+   * thirds of the sky), so a search that lands in a hidden class has to unhide
+   * it — otherwise the selection would point at something not on screen. */
+  const pickSatellite = (s: Satellite) => {
+    if (hiddenOrbits.includes(s.orbit)) {
+      send({ type: 'setHiddenOrbits', orbits: hiddenOrbits.filter((x) => x !== s.orbit) })
+    }
+    send({ type: 'select', icao24: s.id })
   }
   const visible = useMemo(
     () => applyFilter(aircraft, state.filter, state.selected),
@@ -170,6 +180,11 @@ export function ControlApp(): JSX.Element {
                 {label} {perOrbit[key].toLocaleString()}개
               </button>
             ))}
+            <SatelliteSearch
+              satellites={satellites}
+              hiddenOrbits={hiddenOrbits}
+              onPick={pickSatellite}
+            />
           </div>
         ) : (
         <div className="legend">
