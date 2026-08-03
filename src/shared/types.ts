@@ -196,7 +196,15 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   // callsigns aren't recognisable as airlines, and `routeOnly` hid the ~5% with
   // no published route. The unidentifiable ones are now their own 기타 category
   // instead of being dropped, so the sky is full and the counts stay honest.
-  filter: { airborneOnly: true, scheduledOnly: false, routeOnly: false },
+  filter: {
+    airborneOnly: true,
+    scheduledOnly: false,
+    routeOnly: false,
+    // Private and general-aviation traffic is about half of everything reported
+    // and has no route to show, so it starts hidden — the chip says how many it
+    // would add, and one tap brings them back.
+    hiddenCategories: ['other']
+  },
   view: { centerLon: 0, centerLat: 0, span: 1 }, // whole world
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },

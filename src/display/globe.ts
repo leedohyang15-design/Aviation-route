@@ -26,8 +26,7 @@ import {
   pinTexture,
   textTexture,
   glowTexture,
-  cardTexture,
-  type InfoCard,
+  calloutTexture,
   categoryColor,
   orbitColor,
   plainDotTexture,
@@ -48,7 +47,7 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
 //
 // Satellites get the smaller constant: they are drawn as dots, there are twice
 // as many, and a dot needs far fewer pixels than a silhouette to read.
-const ICON_K = { aircraft: 0.62, satellite: 0.42 } as const
+const ICON_K = { aircraft: 0.62, satellite: 0.3 } as const
 /** Exponent below 1 = icons shrink when zoomed out. 0.7 doubles them between
  * world view and full zoom, which is enough to matter without ballooning. */
 const ICON_ZOOM_P = 0.7
@@ -74,6 +73,22 @@ const FLAG_H = 0.03 // country flag
 const GLOW_COLOR = { aircraft: '#ffcf8a', satellite: '#9be8ff' } as const
 const GLOW_SCALE = 3.4
 
+/** One full turn of the earth, compressed. At the real fifteen degrees an hour
+ * the terminator would not visibly move during a visit. */
+const DAY_PERIOD_MS = 6 * 60 * 1000
+/** How long one breath of the night-time lights takes. Slow on purpose: a short
+ * cycle across thousands of icons reads as flicker, not as lights coming on. */
+const PULSE_MS = 4200
+
+/**
+ * Widest an icon may be stretched near the poles on the projected sphere.
+ *
+ * The correction is 1/cos(latitude), which runs away at the pole — 11x at 85°.
+ * Five is already generous, and past it the shape is doing more harm than the
+ * squashing it fixes.
+ */
+const MAX_POLE_STRETCH = 5
+
 interface Eased {
   lon: number // current rendered position
   lat: number
@@ -97,8 +112,15 @@ export class Globe {
   private selectedPlane: THREE.Mesh
   /** Halo behind the selection, which lights up as the map goes dark. */
   private selectedGlow!: THREE.Mesh
-  /** 0 = full day, 1 = full night. Mirrors the background's uNight. */
-  private night = 0
+  // Sun position for this frame, shared by the background shader and the
+  // per-object lighting so an aircraft's lights agree with the ground below it.
+  private sunLon = 0
+  private sunDecl = 0
+  private sunLonRad = 0
+  private sinDecl = 0
+  private cosDecl = 1
+  /** 0..1 breathing cycle for the night-time lights. */
+  private pulse = 0
   private originMarker!: THREE.Mesh
   private destMarker!: THREE.Mesh
   private originLabel!: THREE.Mesh
@@ -175,6 +197,9 @@ export class Globe {
   // Interactive (control) mode: the operator drives the camera locally with
   // drag/wheel and clicks to select, emitting view/selection back to the hub.
   private interactive = false
+  /** True on the projected frame, where icons must be corrected for the
+   * sphere's curvature. False on the flat control screen. */
+  private sphereIcons = false
   onViewChange: ((v: ViewState) => void) | null = null
   onSelectChange: ((icao24: string | null) => void) | null = null
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
@@ -205,9 +230,10 @@ export class Globe {
 
   constructor(
     private canvas: HTMLCanvasElement,
-    opts: { interactive?: boolean; fixedSize?: { w: number; h: number } } = {}
+    opts: { interactive?: boolean; sphere?: boolean; fixedSize?: { w: number; h: number } } = {}
   ) {
     this.interactive = !!opts.interactive
+    this.sphereIcons = !!opts.sphere
     this.fixedSize = opts.fixedSize ?? null
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setClearColor(0x000000, 1)
@@ -220,7 +246,10 @@ export class Globe {
       uNightMap: { value: null },
       uHasNight: { value: 0 },
       uLonOffset: { value: 0 },
-      uNight: { value: 0 }, // 0 = full day, 1 = full night (from Korea time)
+      // Sun position, in degrees. Night is computed per pixel from these, so
+      // the frame really is half lit and half dark with a terminator between.
+      uSunLon: { value: 0 },
+      uSunDecl: { value: 0 },
       uNightFloor: { value: 0.34 }, // how much of the day map survives at night
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
@@ -236,8 +265,8 @@ export class Globe {
         precision highp float;
         varying vec2 vUv;
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
-        uniform sampler2D uNightMap; uniform float uHasNight; uniform float uNight;
-        uniform float uNightFloor;
+        uniform sampler2D uNightMap; uniform float uHasNight;
+        uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
@@ -258,8 +287,26 @@ export class Globe {
             day = mix(day, vec3(0.4, 0.6, 0.85), grid * 0.3);
           }
 
-          // Whole-screen day↔night by Korea time. Night = moonlit earth + city
-          // lights (from the night texture) glowing.
+          // Day and night as they actually are: the half of the world facing the
+          // sun is lit, the other half isn't, and the terminator between them
+          // sweeps west as the earth turns. This replaces a single global dim
+          // that darkened the whole map at once — which is not what anyone has
+          // ever seen the earth do.
+          //
+          // Standard solar geometry: the cosine of the sun's zenith angle at a
+          // point is sin(lat)sin(decl) + cos(lat)cos(decl)cos(lon - sunLon).
+          // Positive means the sun is up. The smoothstep widens the crossing
+          // into the soft band of twilight rather than a hard edge.
+          float rad = 3.14159265 / 180.0;
+          float plat = (vUv.y * 180.0 - 90.0) * rad;
+          float plon = (uv.x * 360.0 - 180.0) * rad;
+          float sdecl = uSunDecl * rad;
+          float slon = uSunLon * rad;
+          float cosZenith =
+            sin(plat) * sin(sdecl) + cos(plat) * cos(sdecl) * cos(plon - slon);
+          float uNight = smoothstep(0.10, -0.10, cosZenith);
+
+          // Night = moonlit earth + city lights (from the night texture) glowing.
           //
           // The floor used to be 0.10, which left the land indistinguishable
           // from the sea — the city lights ended up floating in black with no
@@ -401,10 +448,27 @@ export class Globe {
    * back into world x afterwards: M = diag(1/aspect, 1) · R(angle) · size.
    * `size` is therefore a height, as a fraction of the frame.
    */
-  private setSpriteMatrix(u: number, y: number, z: number, size: number, angle: number): THREE.Matrix4 {
+  private setSpriteMatrix(
+    u: number,
+    y: number,
+    z: number,
+    size: number,
+    angle: number,
+    latDeg?: number
+  ): THREE.Matrix4 {
     const c = Math.cos(angle) * size
     const s = Math.sin(angle) * size
-    const ax = this.frameAspect
+    // On the projected sphere the frame is squeezed horizontally toward the
+    // poles — a whole 360° of longitude collapses into a point — so an icon
+    // that is square in the frame comes out pinched on the dome, more and more
+    // the further from the equator it is. Widening it by 1/cos(latitude) undoes
+    // exactly that, and only on the dome: the control screen shows the flat
+    // frame, where nothing is squeezed and the correction would be the bug.
+    const ax =
+      this.sphereIcons && latDeg != null
+        ? this.frameAspect *
+          Math.max(1 / MAX_POLE_STRETCH, Math.cos((latDeg * Math.PI) / 180))
+        : this.frameAspect
     // prettier-ignore
     this.spriteMat.set(
       c / ax, -s / ax, 0, u,
@@ -413,6 +477,22 @@ export class Globe {
       0,       0,      0, 1
     )
     return this.spriteMat
+  }
+
+  /**
+   * Which way the icon points.
+   *
+   * On the flat frame a great circle is a curve, so an icon has to follow the
+   * frame's tangent (screenAngle) to look like it is going where it is going.
+   * On the sphere that curvature is gone — the shape correction above has
+   * already turned the local frame back into a square patch of ground — so the
+   * plain geographic heading is the right one, and using the flat correction
+   * there would twist every icon away from its track.
+   */
+  private iconAngle(headingRad: number, latDeg: number): number {
+    return this.sphereIcons
+      ? Math.atan2(-Math.sin(headingRad), Math.cos(headingRad))
+      : screenAngle(headingRad, latDeg)
   }
 
   /** Width in world units for an axis-aligned quad of screen height `h` whose
@@ -1080,12 +1160,13 @@ export class Globe {
     img.src = `flags/${code}.svg`
   }
 
-  /** The info card shown next to the selected object (null clears it). */
-  setInfoCard(card: InfoCard | null): void {
+  /** The single line of text the dome carries — how long until the aircraft
+   * lands, or until the satellite passes overhead. Null clears it. */
+  setCallout(lead: string, rest: string): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
     mat.map?.dispose()
-    if (card) {
-      const { tex, aspect, screenH } = cardTexture(card)
+    if (rest || lead) {
+      const { tex, aspect, screenH } = calloutTexture(lead, rest)
       mat.map = this.tuneSprite(tex)
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
@@ -1180,20 +1261,51 @@ export class Globe {
     this.nightHourOverride = hour
   }
 
-  private updateNight(): void {
-    if (this.nightHourOverride != null) {
-      // Manual override (hour 0–24): 1 at midnight, 0 at noon.
-      this.night = 0.5 + 0.5 * Math.cos((this.nightHourOverride / 24) * 2 * Math.PI)
-      this.bgUniforms.uNight.value = this.night
-      return
-    }
-    // Exhibit auto-cycle: a full day↔night sweep every ~6 minutes (≈3 min day,
-    // ≈3 min night). Both windows read the same wall clock, so they stay in sync
-    // without any hub traffic. phase 0 = day, 0.5 = night.
-    const PERIOD_MS = 6 * 60 * 1000
-    const phase = (Date.now() % PERIOD_MS) / PERIOD_MS
-    this.night = 0.5 - 0.5 * Math.cos(phase * 2 * Math.PI)
-    this.bgUniforms.uNight.value = this.night
+  /**
+   * Where the sun is overhead, for this frame.
+   *
+   * The declination is the real one for today's date, so the terminator leans
+   * the way it actually does this time of year and the polar day/night is
+   * right. The longitude is driven by the exhibit's own clock rather than the
+   * real one: at fifteen degrees an hour nothing would visibly move during a
+   * visit, so a full turn is compressed into DAY_PERIOD_MS. Both windows read
+   * the same wall clock, so they stay in step with no hub traffic.
+   */
+  private updateSun(): void {
+    const now = new Date()
+    const start = Date.UTC(now.getUTCFullYear(), 0, 0)
+    const dayOfYear = (now.getTime() - start) / 86_400_000
+    this.sunDecl = -23.44 * Math.cos((2 * Math.PI * (dayOfYear + 10)) / 365.24)
+
+    const phase =
+      this.nightHourOverride != null
+        ? this.nightHourOverride / 24
+        : (Date.now() % DAY_PERIOD_MS) / DAY_PERIOD_MS
+    // Subsolar longitude runs west as the earth turns east.
+    this.sunLon = wrapLon(180 - phase * 360)
+    this.bgUniforms.uSunLon.value = this.sunLon
+    this.bgUniforms.uSunDecl.value = this.sunDecl
+
+    const d = (this.sunDecl * Math.PI) / 180
+    this.sinDecl = Math.sin(d)
+    this.cosDecl = Math.cos(d)
+    this.sunLonRad = (this.sunLon * Math.PI) / 180
+
+    // A slow breath rather than a blink: bright, dim, bright, over PULSE_MS.
+    this.pulse = 0.5 - 0.5 * Math.cos((2 * Math.PI * (Date.now() % PULSE_MS)) / PULSE_MS)
+  }
+
+  /** How dark it is where this object is: 0 in daylight, 1 in full night.
+   * Same solar geometry the background shader uses, so the lights an aircraft
+   * shows agree with the ground beneath it. */
+  private nightAt(lonDeg: number, latDeg: number): number {
+    const la = (latDeg * Math.PI) / 180
+    const lo = (lonDeg * Math.PI) / 180
+    const cosZenith =
+      Math.sin(la) * this.sinDecl + Math.cos(la) * this.cosDecl * Math.cos(lo - this.sunLonRad)
+    // Matches the shader's smoothstep(0.10, -0.10, cosZenith).
+    const t = Math.max(0, Math.min(1, (0.1 - cosZenith) / 0.2))
+    return t * t * (3 - 2 * t)
   }
 
   private frame = (now: number): void => {
@@ -1244,7 +1356,7 @@ export class Globe {
         Math.PI) *
         0.1
       const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
-      const angle = screenAngle(e.heading, e.lat) // align icon to on-screen motion
+      const angle = this.iconAngle(e.heading, e.lat) // align icon to its track
       const isSel = id === this.selected
       // The selected object is drawn separately, larger and brighter — and for
       // an aircraft, snapped onto its route line. Leaving its instance in as
@@ -1258,35 +1370,41 @@ export class Globe {
           1 - v,
           0,
           isSel ? 0 : ICON_H * this.iconScale,
-          this.kind === 'satellite' ? 0 : angle
+          this.kind === 'satellite' ? 0 : angle,
+          e.lat
         )
       )
-      // Lift every icon as the map darkens — the same aircraft that reads well
-      // over a daylit ocean disappears into a night one — then dim the
-      // unselected ones so the selection still stands out.
-      this.scratchColor.copy(e.color).multiplyScalar(1 + 0.6 * this.night)
+      // Light up over the night side, and breathe while there. The lift is
+      // per-object now, from that object's own local night, so aircraft cross
+      // into the dark and out again as the terminator sweeps past them rather
+      // than the whole map brightening at once. Then dim the unselected ones so
+      // the selection still stands out.
+      const localNight = this.nightAt(e.lon, e.lat)
+      this.scratchColor
+        .copy(e.color)
+        .multiplyScalar(1 + localNight * (0.35 + 0.55 * this.pulse))
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
       if (isSel) {
         // First frame the selected plane is rendered → center the camera on it.
         if (this.pendingRecenter) this.recenterOnPlane(e.lon, e.lat)
         const ps = this.uiScale
-        const placeSelected = (au: number, ay: number, ang: number): void => {
-          this.selectedPlane.matrix.copy(this.setSpriteMatrix(au, ay, 0.7, SEL_H * ps, ang))
+        const placeSelected = (au: number, ay: number, ang: number, alat: number): void => {
+          this.selectedPlane.matrix.copy(this.setSpriteMatrix(au, ay, 0.7, SEL_H * ps, ang, alat))
           this.selectedPlane.matrixWorldNeedsUpdate = true
           // The halo sits under the icon, unrotated (a glow has no heading) and
           // fades up as the map darkens, so the selection reads as lit at night.
           this.selectedGlow.matrix.copy(
-            this.setSpriteMatrix(au, ay, 0.66, SEL_H * ps * GLOW_SCALE, 0)
+            this.setSpriteMatrix(au, ay, 0.66, SEL_H * ps * GLOW_SCALE, 0, alat)
           )
           this.selectedGlow.matrixWorldNeedsUpdate = true
           const glowMat = this.selectedGlow.material as THREE.MeshBasicMaterial
-          glowMat.opacity = 0.1 + 0.8 * this.night
+          glowMat.opacity = 0.1 + this.nightAt(e.lon, e.lat) * (0.25 + 0.6 * this.pulse)
           this.selectedGlow.visible = true
         }
         // A satellite icon is drawn upright; turning it to the ground track just
         // makes the solar panels point at nothing.
-        placeSelected(u, 1 - v, this.kind === 'satellite' ? 0 : angle)
+        placeSelected(u, 1 - v, this.kind === 'satellite' ? 0 : angle, e.lat)
         this.selectedPlane.visible = true
         // Place the info chip. Centered on the plane, offset either to the side
         // (no route) or PERPENDICULAR to the route (routed) so it clears the
@@ -1427,7 +1545,7 @@ export class Globe {
             Math.sin(Δλ) * Math.cos(φ2),
             Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
           )
-          placeSelected(sp.u, 1 - sp.v, screenAngle(bearing, snap.lat))
+          placeSelected(sp.u, 1 - sp.v, this.iconAngle(bearing, snap.lat), snap.lat)
           // Info chip offset PERPENDICULAR to the route so it never lands on the
           // origin/destination flags & names (which run along the route axis).
           const pa1 = projectNorm(a1.lon, a1.lat, this.lonOffset)
@@ -1485,7 +1603,7 @@ export class Globe {
     this.camera.bottom = this.viewRect.bottom
     this.camera.updateProjectionMatrix()
 
-    this.updateNight()
+    this.updateSun()
     this.renderer.render(this.scene, this.camera)
     this.raf = requestAnimationFrame(this.frame)
   }
