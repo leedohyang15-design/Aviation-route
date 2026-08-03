@@ -1,23 +1,33 @@
-// Diagnostic: does OpenSky's /flights/all endpoint give us usable
-// origin/destination data in bulk?
+// Diagnostic: could OpenSky's /flights endpoint replace per-callsign route
+// lookups?
 //
-// The exhibit currently resolves routes one callsign at a time from adsbdb,
-// which takes ~25 minutes to work through a day's traffic. OpenSky's state
-// vectors carry no origin/destination, but its /flights endpoints do — and in
-// bulk. Before building on that, this script checks what actually comes back:
-// whether the request succeeds, how many flights it returns, how many carry BOTH
-// airports, and what it costs in credits.
+// A first probe showed one 2-hour window returning ~210 usable callsigns, but
+// that number alone doesn't decide anything. What matters is COVERAGE: of the
+// aircraft actually flying right now, how many would we already have a route
+// for? OpenSky can only estimate departure/arrival where its ground receivers
+// saw the takeoff and landing, so coverage is uneven by region — and the exhibit
+// is in Korea.
 //
-// Deliberately makes ONE small request so it can't eat the daily budget.
+// So this sweeps a day of history, then compares it against a live snapshot and
+// reports the one number that settles it. It also counts how many distinct
+// airports would need coordinates, since OpenSky returns ICAO codes only.
 //
-//   npx tsx scripts/test-opensky-flights.ts
+//   npx tsx scripts/test-opensky-flights.ts [hours]      (default 24)
 //
-// Reads OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET from .env, same as the app.
+// Costs roughly one credit-charge per 2-hour window plus one snapshot — about
+// 13 requests for the default sweep, out of a 4,000/day budget.
 
 import { loadEnv } from '../server/env'
+import { isKnownFlight } from '../src/common/flightClass'
 
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
+
+interface Flight {
+  callsign?: string | null
+  estDepartureAirport?: string | null
+  estArrivalAirport?: string | null
+}
 
 async function token(): Promise<string> {
   const res = await fetch(TOKEN_URL, {
@@ -33,74 +43,106 @@ async function token(): Promise<string> {
   return ((await res.json()) as { access_token: string }).access_token
 }
 
+const norm = (cs: string) => cs.trim().toUpperCase()
+
 async function main(): Promise<void> {
   loadEnv()
   if (!process.env.OPENSKY_CLIENT_ID || !process.env.OPENSKY_CLIENT_SECRET) {
     console.error('No OpenSky credentials found — put .env next to this project first.')
     process.exit(1)
   }
-
+  const hours = Number(process.argv[2] ?? 24)
   const bearer = await token()
-  console.log('token OK\n')
+  console.log(`token OK — sweeping the last ${hours}h in 2h windows\n`)
 
-  // A 2-hour window that ended an hour ago: flights need to have LANDED before
-  // OpenSky can estimate an arrival airport, so a live window would be empty.
-  const end = Math.floor(Date.now() / 1000) - 3600
-  const begin = end - 2 * 3600
-  const url = `https://opensky-network.org/api/flights/all?begin=${begin}&end=${end}`
-  console.log(`GET ${url}`)
-  console.log(`(window: ${new Date(begin * 1000).toISOString()} → ${new Date(end * 1000).toISOString()})\n`)
+  // callsign -> "DEP→ARR", plus the set of airports we'd need coordinates for.
+  const routes = new Map<string, string>()
+  const airports = new Set<string>()
+  let rawFlights = 0
+  let sameAirport = 0
+  let credits = ''
 
-  const t0 = Date.now()
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } })
-  const ms = Date.now() - t0
-  console.log(`status         : ${res.status} ${res.statusText}  (${ms}ms)`)
-  console.log(`credits left   : ${res.headers.get('X-Rate-Limit-Remaining') ?? '(not reported)'}`)
+  // Flights need to have LANDED before OpenSky can estimate an arrival airport,
+  // so the sweep stops an hour short of now.
+  const newest = Math.floor(Date.now() / 1000) - 3600
+  for (let w = 0; w < Math.ceil(hours / 2); w++) {
+    const end = newest - w * 2 * 3600
+    const begin = end - 2 * 3600
+    const url = `https://opensky-network.org/api/flights/all?begin=${begin}&end=${end}`
+    let res: Response
+    try {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } })
+    } catch (err) {
+      console.log(`  window -${w * 2}h: request failed (${(err as Error).message})`)
+      continue
+    }
+    credits = res.headers.get('X-Rate-Limit-Remaining') ?? credits
+    if (!res.ok) {
+      console.log(`  window -${w * 2}h: HTTP ${res.status}`)
+      continue
+    }
+    const rows = (await res.json().catch(() => null)) as Flight[] | null
+    if (!Array.isArray(rows)) {
+      console.log(`  window -${w * 2}h: unexpected body`)
+      continue
+    }
+    rawFlights += rows.length
+    let added = 0
+    for (const f of rows) {
+      const cs = f.callsign ? norm(f.callsign) : ''
+      const dep = f.estDepartureAirport ?? ''
+      const arr = f.estArrivalAirport ?? ''
+      if (!cs || !dep || !arr) continue
+      if (dep === arr) {
+        sameAirport++ // local/training flight — no route line to draw
+        continue
+      }
+      if (!routes.has(cs)) added++
+      routes.set(cs, `${dep}→${arr}`) // newest window wins
+      airports.add(dep)
+      airports.add(arr)
+    }
+    console.log(`  window -${w * 2}h: ${rows.length} flights, +${added} new callsigns`)
+  }
 
-  const text = await res.text()
-  console.log(`body size      : ${text.length.toLocaleString()} bytes`)
-  if (!res.ok) {
-    console.log(`body           : ${text.slice(0, 300)}`)
-    console.log('\n=> /flights/all is NOT usable with this account/window.')
+  console.log(`\n--- what a ${hours}h sweep yields ---`)
+  console.log(`flights seen        : ${rawFlights.toLocaleString()}`)
+  console.log(`usable routes       : ${routes.size.toLocaleString()} callsigns`)
+  console.log(`dropped (dep==arr)  : ${sameAirport.toLocaleString()}`)
+  console.log(`airports needing xy : ${airports.size.toLocaleString()}   <-- coordinate table size`)
+  console.log(`credits left        : ${credits || '(not reported)'}`)
+
+  // The decisive test: how much of what's flying RIGHT NOW would this cover?
+  console.log('\n--- coverage against live traffic ---')
+  const sres = await fetch('https://opensky-network.org/api/states/all', {
+    headers: { Authorization: `Bearer ${bearer}` }
+  })
+  if (!sres.ok) {
+    console.log(`could not fetch live states (HTTP ${sres.status}) — skipping coverage check`)
     return
   }
+  const snap = (await sres.json()) as { states: (string | number | boolean | null)[][] | null }
+  const live = (snap.states ?? [])
+    .map((s) => ((s[1] as string) ?? '').trim().toUpperCase())
+    .filter(Boolean)
+  // The exhibit only ever looks up identifiable airline/cargo/military callsigns.
+  const known = [...new Set(live.filter((cs) => isKnownFlight(cs)))]
+  const covered = known.filter((cs) => routes.has(cs))
+  const pct = known.length ? Math.round((covered.length / known.length) * 100) : 0
 
-  let rows: Record<string, unknown>[]
-  try {
-    rows = JSON.parse(text)
-  } catch {
-    console.log(`body           : ${text.slice(0, 300)}`)
-    console.log('\n=> response is not JSON — not usable.')
-    return
-  }
-  if (!Array.isArray(rows)) {
-    console.log('\n=> response is not an array — not usable.')
-    return
-  }
-
-  const withBoth = rows.filter((r) => r.estDepartureAirport && r.estArrivalAirport)
-  const withCallsign = withBoth.filter((r) => (r.callsign as string)?.trim())
-  const uniqueCallsigns = new Set(withCallsign.map((r) => (r.callsign as string).trim().toUpperCase()))
-
-  console.log(`\nflights        : ${rows.length.toLocaleString()}`)
-  console.log(`  with BOTH airports  : ${withBoth.length.toLocaleString()}`)
-  console.log(`  …and a callsign     : ${withCallsign.length.toLocaleString()}`)
-  console.log(`  unique callsigns    : ${uniqueCallsigns.size.toLocaleString()}   <-- routes we could seed`)
-  console.log('\nsample rows:')
-  for (const r of withCallsign.slice(0, 5)) {
-    console.log(
-      `  ${String(r.callsign).trim().padEnd(8)} ${r.estDepartureAirport} → ${r.estArrivalAirport}`
-    )
-  }
+  console.log(`airborne now        : ${live.length.toLocaleString()}`)
+  console.log(`identifiable        : ${known.length.toLocaleString()}  (what we'd need routes for)`)
+  console.log(`covered by sweep    : ${covered.length.toLocaleString()}  = ${pct}%`)
 
   console.log('\n--- verdict ---')
-  if (uniqueCallsigns.size > 200) {
-    console.log(`One request seeded ${uniqueCallsigns.size} callsigns. Bulk seeding is worth building.`)
-    console.log('Note: airports come back as ICAO codes with NO coordinates, so the app would')
-    console.log('also need a bundled ICAO -> lat/lon table to draw the route lines.')
+  if (pct >= 70) {
+    console.log(`${pct}% coverage from ~${Math.ceil(hours / 2)} requests. Worth building.`)
+  } else if (pct >= 35) {
+    console.log(`${pct}% coverage — a useful head start, but ${100 - pct}% would still be unknown.`)
   } else {
-    console.log(`Only ${uniqueCallsigns.size} usable callsigns — not enough to beat adsbdb.`)
+    console.log(`Only ${pct}% coverage — OpenSky history alone can't carry this.`)
   }
+  console.log(`A coordinate table of ~${airports.size.toLocaleString()} ICAO airports is required either way.`)
 }
 
 main().catch((err) => {
