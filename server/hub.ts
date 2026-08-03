@@ -16,6 +16,7 @@ import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
 import { hasOpenSkyCredentials } from './opensky'
 import { createResilientFeed, type SwitchableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
+import { withDeadline } from './http'
 import { opsLog } from './log'
 import {
   hasRoute,
@@ -37,6 +38,11 @@ import {
 export interface Hub {
   close(): void
 }
+
+/** Longest a selection may wait for enrichment before the windows are answered
+ * anyway. Comfortably above the individual call timeouts, so it only fires when
+ * something has gone wrong in a way those didn't catch. */
+const DETAIL_DEADLINE_MS = 8000
 
 /**
  * The feed is always the switchable resilient one: it polls OpenSky when
@@ -108,7 +114,16 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   const sendDetail = async (ws: WebSocket | null) => {
     const icao24 = state.selected
     try {
-      const detail = icao24 ? await feed.getDetail(icao24) : null
+      // Hard deadline. The enrichment calls have their own timeouts now, but a
+      // selection is a visitor-facing action and must never be able to hang on
+      // anything: if it does, send what we have and let the next poll's refresh
+      // fill it in. This is the last line of defence, not the first.
+      const detail = icao24
+        ? await withDeadline(feed.getDetail(icao24), DETAIL_DEADLINE_MS, () => {
+            opsLog(`[detail] ${icao24} timed out after ${DETAIL_DEADLINE_MS}ms — sending without detail`)
+            return null
+          })
+        : null
       // Which feed answered. If a real aircraft is on screen but this says
       // "mock", the detail came from the simulation and can never have a route.
       if (icao24) opsLog(`[detail] feed=${feed.source} points=${detail?.route?.length ?? 0}`)

@@ -31,6 +31,7 @@ import {
   ROUTE_NEGATIVE_TTL_MS,
   ROUTE_CACHE_MAX
 } from '../src/shared/config'
+import { fetchWithTimeout } from './http'
 import { opsLog } from './log'
 
 export interface RoutePort {
@@ -108,18 +109,28 @@ export function cacheRoute(callsign: string, ports: RoutePorts | null): void {
 /** Thrown for 429 so the caller can back off rather than treat it as "no route". */
 class RateLimited extends Error {}
 
+/** A visitor is waiting on this when it runs on demand, so the deadline is
+ * short: better to say "still looking" and let the paced resolver finish the
+ * job than to leave the card blank while a stalled connection times out on the
+ * operating system's schedule (minutes, on Windows). */
+const ADSBDB_TIMEOUT_MS = 6000
+
 /**
  * Look up one callsign. Returns the route, or null when adsbdb has no entry for
  * it (a real answer worth caching). Throws on transport/API failure so the
  * caller leaves the callsign unknown instead of hiding the plane.
  */
 export async function lookupRoute(callsign: string): Promise<RoutePorts | null> {
-  const res = await fetch(`https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)'
+  const res = await fetchWithTimeout(
+    `https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`,
+    ADSBDB_TIMEOUT_MS,
+    {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)'
+      }
     }
-  })
+  )
   if (res.status === 429) throw new RateLimited('rate limited (429)')
   // 404 is adsbdb's "unknown callsign" — a definite answer, not a failure.
   if (res.status === 404) return null

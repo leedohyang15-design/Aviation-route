@@ -18,6 +18,7 @@ import {
 } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
 import { cachedRoute, cacheRoute, lookupRoute, queueRoute } from './routes'
+import { fetchWithTimeout } from './http'
 import { opsLog } from './log'
 
 const TOKEN_URL =
@@ -193,9 +194,15 @@ export function createOpenSkyFeed(): FlightFeed {
 // best-effort from public APIs and cache. Failures degrade to partial detail.
 // ---------------------------------------------------------------------------
 
+/** The aircraft type is a nice-to-have; never let it hold up the card. */
+const HEXDB_TIMEOUT_MS = 5000
+
 async function fetchType(icao24: string): Promise<string | undefined> {
   try {
-    const res = await fetch(`https://hexdb.io/api/v1/aircraft/${encodeURIComponent(icao24)}`)
+    const res = await fetchWithTimeout(
+      `https://hexdb.io/api/v1/aircraft/${encodeURIComponent(icao24)}`,
+      HEXDB_TIMEOUT_MS
+    )
     if (!res.ok) return undefined
     const j = (await res.json()) as any
     return j?.Type || j?.ICAOTypeCode || undefined
