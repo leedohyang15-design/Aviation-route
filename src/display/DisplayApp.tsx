@@ -1,11 +1,61 @@
 import { useEffect, useMemo, useRef } from 'react'
+import type { FlightDetail, OrbitClass, SatelliteDetail } from '@shared/types'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { Globe } from './globe'
+import type { InfoCard, InfoTile } from './textures'
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
 // top-left; the rest of the output stays black.
 const FRAME = { w: 1664, h: 838 }
+
+/** The class shown on the card's side tab. */
+const ORBIT_TAB: Record<OrbitClass, string> = {
+  leo: 'LEO',
+  starlink: 'STARLINK',
+  meo: 'MEO',
+  geo: 'GEO'
+}
+
+/** How wide the countdown scale reads — an hour for a pass, six for a flight.
+ * Past that the bar sits near empty and stops reading as progress. */
+const PASS_SCALE_SEC = 3600
+
+/** A duration split into the big mono number and the words after it: `h:mm`
+ * needs no unit, bare minutes do. */
+function duration(sec: number, tail: string): { value: string; caption: string } {
+  const m = Math.round(sec / 60)
+  return m >= 60
+    ? { value: `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`, caption: tail }
+    : { value: String(m), caption: `분 ${tail}` }
+}
+
+function satPassHero(sd: SatelliteDetail): InfoCard['hero'] {
+  if (sd.overheadNow) {
+    return { label: 'T−', value: 'NOW', caption: '지금 우리 하늘 위에 있어요', fill: 1 }
+  }
+  if (sd.nextPassSec == null) {
+    return { label: 'T−', value: '—', caption: '우리나라 위로는 안 지나가요', fill: null }
+  }
+  return {
+    label: 'T−',
+    ...duration(sd.nextPassSec, '뒤 머리 위를 지나가요'),
+    fill: Math.max(0, Math.min(1, 1 - sd.nextPassSec / PASS_SCALE_SEC))
+  }
+}
+
+function etaHero(d: FlightDetail): InfoCard['hero'] {
+  if (d.etaRemainingSec == null || d.etaRemainingSec <= 0) {
+    return { label: 'ETA', value: '—', caption: '곧 도착해요', fill: d.progress ?? null }
+  }
+  return { label: 'ETA', ...duration(d.etaRemainingSec, '뒤 도착해요'), fill: d.progress ?? null }
+}
+
+/** Why there's no route — or that we're still asking. */
+function noRouteText(d: FlightDetail | null): string {
+  if (!d) return '경로를 찾는 중이에요'
+  return d.noRouteReason ?? '공개된 경로 정보가 없어요'
+}
 
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -24,52 +74,69 @@ export function DisplayApp(): JSX.Element {
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
 
-  // Compact info string shown next to the selected plane (instead of a big card):
-  // flight no / origin→destination (or category · route unknown) / altitude·speed·type.
-  const infoLines = useMemo(() => {
+  // The instrument card shown next to the selected object on the dome.
+  const infoCard = useMemo<InfoCard | null>(() => {
     if (isSat) {
       if (!state.selected) return null
       const sd = satDetail && satDetail.id === state.selected ? satDetail : null
-      if (!sd) return ['위성을 찾는 중… 🛰']
-      const lines = [sd.name]
-      if (sd.overheadNow) lines.push('🛰 지금 우리 하늘 위!')
-      else if (sd.nextPassSec != null) {
-        const m = Math.round(sd.nextPassSec / 60)
-        lines.push(m >= 60 ? `🛰 ${Math.floor(m / 60)}시간 ${m % 60}분 뒤 머리 위` : `🛰 ${m}분 뒤 머리 위`)
-      } else lines.push('우리나라 위로는 안 지나가요')
-      lines.push(
-        `${Math.round(sd.altKm).toLocaleString()}km · ${sd.speedKmS.toFixed(1)}km/s · 한 바퀴 ${Math.round(sd.periodMin)}분`
-      )
-      return lines
+      if (!sd) {
+        return {
+          kind: 'satellite',
+          heading: 'SATELLITE — 위성',
+          tab: '',
+          title: '· · ·',
+          status: 'ACQUIRING',
+          tiles: [{ label: 'STATUS', value: '위성을 찾는 중' }]
+        }
+      }
+      return {
+        kind: 'satellite',
+        heading: 'SATELLITE — 위성',
+        tab: ORBIT_TAB[sd.orbit],
+        title: sd.name,
+        status: 'TRACKING',
+        hero: satPassHero(sd),
+        tiles: [
+          { label: 'ALT', value: Math.round(sd.altKm).toLocaleString(), unit: 'km' },
+          { label: 'VEL', value: sd.speedKmS.toFixed(1), unit: 'km/s' },
+          { label: 'ORBIT', value: String(Math.round(sd.periodMin)), unit: 'min' }
+        ]
+      }
     }
     if (!sel) return null
     const flightNo = d?.flightNo ?? sel.callsign?.trim() ?? sel.icao24.toUpperCase()
-    const lines = [flightNo]
-    if (!d) {
-      // Detail still loading (lookup in flight) — transient placeholder.
-      lines.push('여행 중… ✈')
-    } else if (d.origin?.code || d.destination?.code) {
-      // City names (Korean when known) read better than airport codes for kids.
-      const o = d.origin?.city ?? d.origin?.code ?? '—'
-      const de = d.destination?.city ?? d.destination?.code ?? '—'
-      lines.push(`${o} → ${de}`)
-      // Fun countdown to arrival.
-      if (d.etaRemainingSec != null && d.etaRemainingSec > 0) {
-        const h = Math.floor(d.etaRemainingSec / 3600)
-        const m = Math.round((d.etaRemainingSec % 3600) / 60)
-        lines.push(`🛬 도착까지 ${h > 0 ? `${h}시간 ` : ''}${m}분`)
-      }
-    } else {
-      // Detail resolved but no route: show WHY (the control auto-advances after
-      // ~10s). Don't keep saying "여행 중" once the lookup has actually failed.
-      lines.push(d.noRouteReason ?? '경로 미확인')
+    const tiles: InfoTile[] = [
+      {
+        label: 'ALT',
+        value: sel.altitude != null ? Math.round(sel.altitude).toLocaleString() : '—',
+        unit: sel.altitude != null ? 'm' : undefined
+      },
+      {
+        label: 'GS',
+        value: sel.velocity != null ? String(Math.round(sel.velocity * 3.6)) : '—',
+        unit: sel.velocity != null ? 'km/h' : undefined
+      },
+      { label: 'TYPE', value: d?.aircraftType ?? '—' }
+    ]
+    const routed = !!(d && (d.origin?.code || d.destination?.code))
+    return {
+      kind: 'aircraft',
+      heading: 'AIRCRAFT — 비행기',
+      // Flight level: the altitude in hundreds of feet, as air traffic says it.
+      tab: sel.altitude != null ? `FL${Math.round((sel.altitude * 3.28084) / 100)}` : '',
+      title: flightNo,
+      status: routed ? 'EN ROUTE' : d ? 'NO ROUTE' : 'QUERYING',
+      leg: routed
+        ? {
+            // City names (Korean when known) read better than airport codes.
+            from: d!.origin?.city ?? d!.origin?.code ?? '—',
+            to: d!.destination?.city ?? d!.destination?.code ?? '—',
+            progress: d!.progress ?? null
+          }
+        : undefined,
+      hero: routed ? etaHero(d!) : { label: '', value: '—', caption: noRouteText(d), fill: null },
+      tiles
     }
-    const bits: string[] = []
-    if (sel.altitude != null) bits.push(`${Math.round(sel.altitude).toLocaleString()}m`)
-    if (sel.velocity != null) bits.push(`${Math.round(sel.velocity * 3.6)}km/h`)
-    if (d?.aircraftType) bits.push(d.aircraftType)
-    if (bits.length) lines.push(bits.join(' · '))
-    return lines
   }, [isSat, state.selected, satDetail, sel, d])
 
   useEffect(() => {
@@ -115,7 +182,7 @@ export function DisplayApp(): JSX.Element {
       d?.destination?.countryCode ?? null
     )
   }, [isSat, d])
-  useEffect(() => globeRef.current?.setInfoLabel(infoLines), [infoLines])
+  useEffect(() => globeRef.current?.setInfoCard(infoCard), [infoCard])
 
   return (
     <div className="display-root">

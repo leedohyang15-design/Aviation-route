@@ -16,7 +16,7 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import type { Aircraft, GeoPoint, OverlayKey, Satellite, ViewState } from '@shared/types'
-import { projectNorm, wrapLon, nearestRouteIndex } from '@shared/projection'
+import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 import { flightCategory } from '../common/flightClass'
@@ -25,7 +25,8 @@ import {
   dotTexture,
   pinTexture,
   textTexture,
-  infoTexture,
+  cardTexture,
+  type InfoCard,
   categoryColor,
   orbitColor,
   plainDotTexture,
@@ -34,6 +35,38 @@ import {
 
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
+
+// How big an object is drawn, as a fraction of the frame, at a given zoom.
+//
+// Holding the on-screen size constant across zoom (which is what a plain
+// `scale = span` does) is wrong at both ends: zoomed out, seven thousand
+// full-size icons merge into a single textured mat with no map underneath;
+// zoomed into one city, the handful left over look lost. Sizing by the square
+// root of the span shrinks them ~40% at world view and grows them ~2× at full
+// zoom, so density stays roughly readable throughout.
+//
+// Satellites get the smaller constant: they are drawn as dots, there are twice
+// as many, and a dot needs far fewer pixels than a silhouette to read.
+const ICON_K = { aircraft: 0.62, satellite: 0.42 } as const
+/** Exponent below 1 = icons shrink when zoomed out. 0.7 doubles them between
+ * world view and full zoom, which is enough to matter without ballooning. */
+const ICON_ZOOM_P = 0.7
+function iconScaleFor(kind: 'aircraft' | 'satellite', span: number): number {
+  return ICON_K[kind] * Math.pow(Math.max(MIN_SPAN, Math.min(1, span)), ICON_ZOOM_P)
+}
+
+// Sizes below are HEIGHTS as a fraction of the frame; widths are derived from
+// each texture's aspect and the frame aspect (see quadSize). The display frame
+// is projected onto a dome, which throws away a lot of effective resolution, so
+// anything carrying text is deliberately generous — text that reads fine on a
+// monitor disappears there.
+const ICON_H = 0.025 // unselected aircraft icon / satellite dot
+const SEL_H = 0.05 // the selected object
+const MARKER_H = 0.022 // origin dot
+const PIN_H = 0.036 // destination pin
+const PIN_ASPECT = 64 / 96 // matches pinTexture's canvas
+const LABEL_H = 0.028 // origin/destination place name
+const FLAG_H = 0.03 // country flag
 
 interface Eased {
   lon: number // current rendered position
@@ -64,8 +97,12 @@ export class Globe {
   private originFlag!: THREE.Mesh
   private destFlag!: THREE.Mesh
   private flagCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>()
-  /** Base on-screen size of the airplane sprite (world units), scaled by zoom. */
-  private planeBaseScale = 1
+  /** Size of the selection furniture (world units) — tracks the view span, so
+   * markers, labels and the info chip keep a constant on-screen size. */
+  private uiScale = 1
+  /** Size of the instanced icons/dots (world units). Deliberately NOT constant
+   * on screen — see ICON_K. */
+  private iconScale = ICON_K.aircraft
   private routeGroup = new THREE.Group()
   private routePoints: GeoPoint[] | null = null
   private lastRouteIdx = -1
@@ -101,8 +138,11 @@ export class Globe {
   private routed = new Set<string>()
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
-  private dummy = new THREE.Object3D()
+  private spriteMat = new THREE.Matrix4()
   private scratchColor = new THREE.Color()
+  /** Rendered pixel width ÷ height (2:1 by construction). The world is [0,1]²,
+   * so this is how much a world-space square is stretched horizontally. */
+  private frameAspect = 2
   // Camera view rect in normalized [0,1] coords: current (eased) + target.
   // Horizontal pan is done via lonOffset (so it wraps seamlessly); the camera x
   // stays centered on 0.5. The camera y handles vertical pan + zoom.
@@ -222,10 +262,12 @@ export class Globe {
     // --- Aircraft: every plane is a small airplane icon, colored by altitude ---
     const planeTex = new THREE.TextureLoader().load(PLANE_DATA_URI)
     planeTex.colorSpace = THREE.SRGBColorSpace
-    this.planeTex = planeTex
-    this.dotTex = plainDotTexture()
-    this.satTex = satelliteTexture()
-    const quad = new THREE.PlaneGeometry(0.011, 0.011)
+    this.planeTex = this.tuneSprite(planeTex)
+    this.dotTex = this.tuneSprite(plainDotTexture())
+    this.satTex = this.tuneSprite(satelliteTexture())
+    // Unit quad: every sprite's real size lives in its instance matrix, because
+    // width has to be derived from the frame aspect (see setSpriteMatrix).
+    const quad = new THREE.PlaneGeometry(1, 1)
     this.planes = new THREE.InstancedMesh(
       quad,
       new THREE.MeshBasicMaterial({ map: planeTex, transparent: true, alphaTest: 0.35 }),
@@ -240,28 +282,30 @@ export class Globe {
 
     // --- Selected aircraft: a larger, bright airplane icon ---
     this.selectedPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.032, 0.032),
+      new THREE.PlaneGeometry(1, 1),
       new THREE.MeshBasicMaterial({ map: planeTex, transparent: true })
     )
     this.selectedPlane.visible = false
-    this.selectedPlane.position.z = 0.7
+    // Its transform is written directly (rotation has to happen in screen space).
+    this.selectedPlane.matrixAutoUpdate = false
     this.selectedPlane.frustumCulled = false
     this.scene.add(this.selectedPlane)
 
     // --- Origin (dot) / destination (pin) markers on the selected route ---
-    const mkMarker = (tex: THREE.Texture, w: number, h: number): THREE.Mesh => {
+    const mkMarker = (tex: THREE.Texture, aspect: number): THREE.Mesh => {
       const m = new THREE.Mesh(
-        new THREE.PlaneGeometry(w, h),
+        new THREE.PlaneGeometry(1, 1),
         new THREE.MeshBasicMaterial({ map: tex, transparent: true })
       )
       m.visible = false
       m.position.z = 0.65
+      m.userData.aspect = aspect
       m.frustumCulled = false
       this.scene.add(m)
       return m
     }
-    this.originMarker = mkMarker(dotTexture('#33c1ff'), 0.016, 0.016)
-    this.destMarker = mkMarker(pinTexture('#ff3b30'), 0.02, 0.03)
+    this.originMarker = mkMarker(this.tuneSprite(dotTexture('#33c1ff')), 1)
+    this.destMarker = mkMarker(this.tuneSprite(pinTexture('#ff3b30')), PIN_ASPECT)
 
     // Origin / destination place-name labels (created empty; text set on select).
     const label = (): THREE.Mesh => {
@@ -288,6 +332,56 @@ export class Globe {
       this.applyInteractiveView()
       this.startAttractTimer()
     }
+  }
+
+  /**
+   * Filtering for a sprite (icon, dot, marker). Same anisotropy + mipmap chain
+   * as the earth, but clamped rather than repeating: a sprite that wraps samples
+   * the opposite edge of its own texture and smears colour across its outline.
+   * Without this the icons were minified with a plain bilinear filter, which is
+   * what made them look chewed-up once they were only a dozen pixels across.
+   */
+  private tuneSprite<T extends THREE.Texture>(tex: T): T {
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping
+    tex.generateMipmaps = true
+    tex.minFilter = THREE.LinearMipmapLinearFilter
+    tex.magFilter = THREE.LinearFilter
+    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
+    tex.needsUpdate = true
+    return tex
+  }
+
+  /**
+   * Transform for a rotatable sprite (aircraft icon, satellite dot, selection).
+   *
+   * The world is the unit square but the frame is 2:1, so a world-space square
+   * lands on screen twice as wide as it is tall — which is why the dots were
+   * ellipses — and a world-space rotation comes out sheared, because rotating
+   * and then stretching unequally are not the same operation in either order.
+   *
+   * Both go away if the sprite is built square in SCREEN space and squashed
+   * back into world x afterwards: M = diag(1/aspect, 1) · R(angle) · size.
+   * `size` is therefore a height, as a fraction of the frame.
+   */
+  private setSpriteMatrix(u: number, y: number, z: number, size: number, angle: number): THREE.Matrix4 {
+    const c = Math.cos(angle) * size
+    const s = Math.sin(angle) * size
+    const ax = this.frameAspect
+    // prettier-ignore
+    this.spriteMat.set(
+      c / ax, -s / ax, 0, u,
+      s,       c,      0, y,
+      0,       0,      1, z,
+      0,       0,      0, 1
+    )
+    return this.spriteMat
+  }
+
+  /** Width in world units for an axis-aligned quad of screen height `h` whose
+   * texture has the given width/height ratio. */
+  private quadWidth(h: number, texAspect: number): number {
+    return (h * texAspect) / this.frameAspect
   }
 
   /** Apply crisp filtering (mipmaps + anisotropy) to reduce shimmer/blur. */
@@ -746,6 +840,9 @@ export class Globe {
   setAircraft(list: Aircraft[]): void {
     const seen = new Set<string>()
     for (const a of list) {
+      // The feeds already drop these, but the renderer is where a bad
+      // coordinate becomes a visible phantom, so it checks for itself.
+      if (!isPlausibleCoord(a.lon, a.lat)) continue
       seen.add(a.icao24)
       const color = categoryColor(flightCategory(a.callsign))
       const h = ((a.heading ?? 0) * Math.PI) / 180
@@ -792,6 +889,7 @@ export class Globe {
   setSatellites(list: Satellite[]): void {
     const seen = new Set<string>()
     for (const s of list) {
+      if (!isPlausibleCoord(s.lon, s.lat)) continue
       seen.add(s.id)
       const color = orbitColor(s.orbit)
       const h = (s.heading * Math.PI) / 180
@@ -871,7 +969,7 @@ export class Globe {
       mat.map?.dispose()
       if (text) {
         const { tex, aspect } = textTexture(text)
-        mat.map = tex
+        mat.map = this.tuneSprite(tex)
         mat.needsUpdate = true
         mesh.userData.aspect = aspect
         mesh.visible = true
@@ -923,8 +1021,7 @@ export class Globe {
       ctx.strokeStyle = 'rgba(255,255,255,0.9)'
       ctx.lineWidth = 5
       ctx.strokeRect(2.5, 2.5, w - 5, h - 5)
-      const tex = new THREE.CanvasTexture(c)
-      tex.colorSpace = THREE.SRGBColorSpace
+      const tex = this.tuneSprite(new THREE.CanvasTexture(c))
       const entry = { tex, aspect: w / h }
       this.flagCache.set(code, entry)
       apply(tex, entry.aspect)
@@ -935,16 +1032,16 @@ export class Globe {
     img.src = `flags/${code}.svg`
   }
 
-  /** Compact info chip shown next to the selected plane (null clears it). */
-  setInfoLabel(lines: string[] | null): void {
+  /** The info card shown next to the selected object (null clears it). */
+  setInfoCard(card: InfoCard | null): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
     mat.map?.dispose()
-    if (lines && lines.length) {
-      const { tex, aspect } = infoTexture(lines)
-      mat.map = tex
+    if (card) {
+      const { tex, aspect, screenH } = cardTexture(card)
+      mat.map = this.tuneSprite(tex)
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
-      this.infoLabel.userData.lines = lines.length
+      this.infoLabel.userData.screenH = screenH
     } else {
       mat.map = null
       this.infoLabel.visible = false
@@ -1054,8 +1151,10 @@ export class Globe {
     const dt = this.lastFrame ? Math.min(0.5, (now - this.lastFrame) / 1000) : 0
     this.lastFrame = now
 
-    // Keep dot/icon on-screen size roughly constant across zoom levels.
-    this.planeBaseScale += (this.targetSpan - this.planeBaseScale) * 0.28
+    // Selection furniture holds a constant on-screen size; the icons shrink at
+    // world view and grow when zoomed in so the swarm stays readable.
+    this.uiScale += (this.targetSpan - this.uiScale) * 0.28
+    this.iconScale += (iconScaleFor(this.kind, this.targetSpan) - this.iconScale) * 0.28
 
     // Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
     this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.28
@@ -1097,12 +1196,17 @@ export class Globe {
       const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
       const angle = screenAngle(e.heading, e.lat) // align icon to on-screen motion
       const isSel = id === this.selected
-      this.dummy.position.set(u, 1 - v, 0)
       // A dot has no nose to point, and rotating one only makes it shimmer.
-      this.dummy.rotation.z = this.kind === 'satellite' ? 0 : angle
-      this.dummy.scale.set(this.planeBaseScale, this.planeBaseScale, 1)
-      this.dummy.updateMatrix()
-      this.planes.setMatrixAt(i, this.dummy.matrix)
+      this.planes.setMatrixAt(
+        i,
+        this.setSpriteMatrix(
+          u,
+          1 - v,
+          0,
+          ICON_H * this.iconScale,
+          this.kind === 'satellite' ? 0 : angle
+        )
+      )
       // Dim every other plane while one is selected so it stands out.
       this.scratchColor.copy(e.color)
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
@@ -1110,10 +1214,14 @@ export class Globe {
       if (isSel) {
         // First frame the selected plane is rendered → center the camera on it.
         if (this.pendingRecenter) this.recenterOnPlane(e.lon, e.lat)
-        this.selectedPlane.position.set(u, 1 - v, 0.7)
-        this.selectedPlane.rotation.z = angle
-        const ps = this.planeBaseScale
-        this.selectedPlane.scale.set(ps, ps, 1)
+        const ps = this.uiScale
+        const placeSelected = (au: number, ay: number, ang: number): void => {
+          this.selectedPlane.matrix.copy(this.setSpriteMatrix(au, ay, 0.7, SEL_H * ps, ang))
+          this.selectedPlane.matrixWorldNeedsUpdate = true
+        }
+        // A satellite icon is drawn upright; turning it to the ground track just
+        // makes the solar panels point at nothing.
+        placeSelected(u, 1 - v, this.kind === 'satellite' ? 0 : angle)
         this.selectedPlane.visible = true
         // Place the info chip. Centered on the plane, offset either to the side
         // (no route) or PERPENDICULAR to the route (routed) so it clears the
@@ -1121,13 +1229,11 @@ export class Globe {
         const placeInfoChip = (au: number, ay: number, offX: number, offY: number): void => {
           const infoMat = this.infoLabel.material as THREE.MeshBasicMaterial
           if (!infoMat.map) return
-          // Height scales with line count so each line keeps a constant on-screen
-          // size — adding the arrival countdown grows the chip instead of shrinking
-          // the text.
-          const nLines = (this.infoLabel.userData.lines as number) || 3
-          const lh = 0.02 * nLines * ps
+          // The card reports the on-screen height its layout wants, so adding a
+          // row grows the card instead of shrinking the text inside it.
+          const lh = (this.infoLabel.userData.screenH as number) * ps
           const asp = (this.infoLabel.userData.aspect as number) || 3
-          const lw = lh * asp
+          const lw = this.quadWidth(lh, asp)
           // Push the chip a full plane-width off the anchor so it never covers the
           // aircraft icon, and clamp it to stay on the 2:1 frame.
           const clr = 0.045 * ps
@@ -1136,6 +1242,15 @@ export class Globe {
           this.infoLabel.scale.set(lw, lh, 1)
           this.infoLabel.position.set(cx, cy, 0.75)
           this.infoLabel.visible = true
+        }
+        // Place the card beside the object, flipping to the other side near the
+        // frame edge. Used whenever there's no route axis to work around.
+        const placeChipBeside = (au: number, ay: number): void => {
+          const lw = this.quadWidth(
+            (this.infoLabel.userData.screenH as number) * ps,
+            (this.infoLabel.userData.aspect as number) || 3
+          )
+          placeInfoChip(au, ay, au + lw + 0.02 < 1 ? 1 : -1, 0)
         }
         // Reposition origin/destination markers (they move with the pan offset).
         // Orbits have no endpoints — an orbit is a loop, so a "from" marker and a
@@ -1151,16 +1266,26 @@ export class Globe {
           ]) {
             m.visible = false
           }
+          // The orbit still has to be built. Rebuilding on offset change keeps it
+          // locked to the earth as the map pans, exactly as routes do.
+          if (this.lonOffset !== this.lastRouteOffset) {
+            this.buildRoute(0)
+            this.lastRouteIdx = 0
+            this.lastRouteOffset = this.lonOffset
+          }
+          placeChipBeside(u, 1 - v)
         } else if (this.routePoints) {
           const o = this.routePoints[0]
           const de = this.routePoints[this.routePoints.length - 1]
           const op = projectNorm(o.lon, o.lat, this.lonOffset)
           const dp = projectNorm(de.lon, de.lat, this.lonOffset)
+          const markH = MARKER_H * ps
+          const pinH = PIN_H * ps
+          this.originMarker.scale.set(this.quadWidth(markH, 1), markH, 1)
+          this.destMarker.scale.set(this.quadWidth(pinH, PIN_ASPECT), pinH, 1)
           this.originMarker.position.set(op.u, 1 - op.v, 0.65)
           // Lift the pin so its bottom tip (not center) sits on the coordinate.
-          this.destMarker.position.set(dp.u, 1 - dp.v + 0.015 * ps, 0.65)
-          this.originMarker.scale.set(ps, ps, 1)
-          this.destMarker.scale.set(ps, ps, 1)
+          this.destMarker.position.set(dp.u, 1 - dp.v + pinH / 2, 0.65)
           this.originMarker.visible = true
           this.destMarker.visible = true
           // Lay out each endpoint's name + flag as a stack that extends OUTWARD
@@ -1184,8 +1309,8 @@ export class Globe {
           }
           dirX /= dlen
           dirY /= dlen
-          const lblH = 0.018 * ps
-          const fh = 0.02 * ps
+          const lblH = LABEL_H * ps
+          const fh = FLAG_H * ps
           const margin = 0.01 * ps
           // Distance a box (w×h) must sit out along the route so its inner edge
           // just clears the centre — its half-extent PROJECTED on the outward
@@ -1195,7 +1320,7 @@ export class Globe {
             Math.abs(dirX) * (w / 2) + Math.abs(dirY) * (h / 2)
           const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number): number => {
             const asp = (lbl.userData.aspect as number) || 4
-            const w = lblH * asp
+            const w = this.quadWidth(lblH, asp)
             lbl.scale.set(w, lblH, 1)
             const half = halfAlong(w, lblH)
             const g = margin + half
@@ -1210,7 +1335,7 @@ export class Globe {
               return
             }
             const asp = (flag.userData.aspect as number) || 1.33
-            const w = fh * asp
+            const w = this.quadWidth(fh, asp)
             flag.scale.set(w, fh, 1)
             const g = outer + halfAlong(w, fh)
             flag.position.set(mu + sign * dirX * g, my + sign * dirY * g, 0.66)
@@ -1237,8 +1362,7 @@ export class Globe {
             Math.sin(Δλ) * Math.cos(φ2),
             Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
           )
-          this.selectedPlane.position.set(sp.u, 1 - sp.v, 0.7)
-          this.selectedPlane.rotation.z = screenAngle(bearing, snap.lat)
+          placeSelected(sp.u, 1 - sp.v, screenAngle(bearing, snap.lat))
           // Info chip offset PERPENDICULAR to the route so it never lands on the
           // origin/destination flags & names (which run along the route axis).
           const pa1 = projectNorm(a1.lon, a1.lat, this.lonOffset)
@@ -1262,11 +1386,7 @@ export class Globe {
             this.lastRouteOffset = this.lonOffset
           }
         } else {
-          // No route: place the chip to the side of the plane (flip near the edge).
-          const lw =
-            0.02 * ((this.infoLabel.userData.lines as number) || 2) * ps *
-            ((this.infoLabel.userData.aspect as number) || 3)
-          placeInfoChip(u, 1 - v, u + lw + 0.02 < 1 ? 1 : -1, 0)
+          placeChipBeside(u, 1 - v)
         }
       }
       i++
@@ -1334,6 +1454,7 @@ export class Globe {
         rw = h * 2
       }
     }
+    this.frameAspect = rh > 0 ? rw / rh : 2
     const pr = Math.min(window.devicePixelRatio, 3) // higher cap → sharper output
     this.renderer.setPixelRatio(pr)
     this.renderer.setSize(rw, rh, true)

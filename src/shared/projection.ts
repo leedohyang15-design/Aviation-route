@@ -33,6 +33,22 @@ export function projectNorm(lon: number, lat: number, lonOffset = 0): { u: numbe
   return { u, v }
 }
 
+/**
+ * Whether a reported position is worth drawing.
+ *
+ * Rejects anything that isn't a finite in-range number, and also the exact point
+ * (0, 0) — "null island" in the Gulf of Guinea, where every feed's
+ * missing-coordinate default lands. Genuine traffic crosses it for a few seconds
+ * a day; a placeholder sits there forever, and a pile of them draws as a hard
+ * dot or streak on the equator that looks like data but isn't.
+ */
+export function isPlausibleCoord(lon: unknown, lat: unknown): boolean {
+  if (typeof lon !== 'number' || typeof lat !== 'number') return false
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return false
+  if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return false
+  return !(lon === 0 && lat === 0)
+}
+
 /** Project to pixel coordinates for a width×(width/2) target. */
 export function project(
   lon: number,

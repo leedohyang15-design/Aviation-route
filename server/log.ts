@@ -3,9 +3,9 @@
 // found, whether OpenSky credentials loaded, which feed is live, why a poll
 // failed) on a museum kiosk. In dev it also prints to the real console.
 import { appendFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { dataPath } from './datadir'
 
-export const LOG_PATH = join(dirname(process.execPath), 'aviation-route.log')
+export const LOG_PATH = dataPath('aviation-route.log')
 
 export function opsLog(msg: string): void {
   try {

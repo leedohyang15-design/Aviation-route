@@ -1,8 +1,8 @@
-// The satellite readout. Deliberately NOT the boarding-pass card reused with
-// different words: a boarding pass is about a journey with two ends, and an
-// orbit has neither. This reads like a console instead — fixed-width labels,
-// instrument tiles, corner brackets — so the two modes feel like two different
-// instruments rather than one dressed up twice.
+// The satellite readout on the control screen. Deliberately NOT the
+// boarding-pass card reused with different words: a boarding pass is about a
+// journey with two ends, and an orbit has neither. This reads like a printed
+// telemetry sheet — fixed-width labels, ruled sections, a ticked countdown
+// scale — so the two modes feel like two different instruments.
 //
 // The overhead pass is the hero. Everything else on screen is a number a child
 // can't picture; "it flies over us in 42 minutes" is the one they can.
@@ -42,7 +42,13 @@ interface Pass {
   unit: string
   caption: string
   soon: boolean
+  /** 0..1 for the tick scale — how close the pass is (1 = now). */
+  fill: number
 }
+
+/** An hour is the widest countdown worth drawing on the scale; past that the
+ * bar would sit near empty for hours and stop reading as progress. */
+const PASS_SCALE_SEC = 3600
 
 function passReadout(d: SatelliteDetail): Pass {
   if (d.overheadNow) {
@@ -53,11 +59,12 @@ function passReadout(d: SatelliteDetail): Pass {
         d.passMaxElevationDeg != null
           ? `지금 우리 하늘 위 · ${Math.round(d.passMaxElevationDeg)}° 높이`
           : '지금 우리 하늘 위에 있어요',
-      soon: true
+      soon: true,
+      fill: 1
     }
   }
   if (d.nextPassSec == null) {
-    return { big: '—', unit: '', caption: '우리나라 위로는 지나가지 않아요', soon: false }
+    return { big: '—', unit: '', caption: '우리나라 위로는 지나가지 않아요', soon: false, fill: 0 }
   }
   const min = Math.round(d.nextPassSec / 60)
   const big = min >= 60 ? `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}` : String(min)
@@ -68,8 +75,23 @@ function passReadout(d: SatelliteDetail): Pass {
       d.passMaxElevationDeg != null
         ? `뒤에 머리 위를 지나가요 · 하늘 ${Math.round(d.passMaxElevationDeg)}° 높이까지`
         : '뒤에 머리 위를 지나가요',
-    soon: min <= 30
+    soon: min <= 30,
+    fill: Math.max(0, Math.min(1, 1 - d.nextPassSec / PASS_SCALE_SEC))
   }
+}
+
+const TICKS = 34
+
+/** The ruled countdown scale. Ticks left of the marker are lit. */
+function TickScale({ fill }: { fill: number }): JSX.Element {
+  const lit = Math.round(fill * (TICKS - 1))
+  return (
+    <div className="sat-scale" aria-hidden>
+      {Array.from({ length: TICKS }, (_, i) => (
+        <span key={i} className={'sat-tick' + (i === lit ? ' now' : i < lit ? ' lit' : '')} />
+      ))}
+    </div>
+  )
 }
 
 function Tile({ label, value, unit }: { label: string; value: string; unit: string }): JSX.Element {
@@ -89,49 +111,63 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
     return (
       <div className="sat-panel">
         <div className="sat-head">
-          <span className="sat-head-title">◈ ORBITAL TELEMETRY</span>
+          <span className="sat-head-title">◆ ORBITAL TELEMETRY</span>
         </div>
         <div className="sat-loading">위성 정보를 불러오는 중…</div>
       </div>
     )
   }
   const pass = passReadout(d)
+  const notes = [altitudeStory(d.altKm), periodStory(d.periodMin), inclinationStory(d.inclinationDeg)]
   return (
     <div className="sat-panel">
-      <span className="sat-bracket tl" />
-      <span className="sat-bracket tr" />
-      <span className="sat-bracket bl" />
-      <span className="sat-bracket br" />
-
       <div className="sat-head">
-        <span className="sat-head-title">◈ ORBITAL TELEMETRY</span>
+        <span className="sat-head-title">◆ ORBITAL TELEMETRY</span>
         <span className="sat-head-id">NORAD {d.id}</span>
       </div>
 
-      <div className="sat-name">{d.name}</div>
-      <div className="sat-class">{ORBIT_LABEL[d.orbit]}</div>
-
-      <div className={'sat-pass' + (pass.soon ? ' soon' : '')}>
-        <div className="sat-pass-label">우리 머리 위까지</div>
-        <div className="sat-pass-big">
-          {pass.big}
-          {pass.unit && <span className="sat-pass-unit">{pass.unit}</span>}
+      <div className="sat-body">
+        <div className="sat-section">
+          <div className="sat-label">OBJECT DESIGNATION</div>
+          <div className="sat-name">{d.name}</div>
+          <div className="sat-classline">
+            <span className="sat-class">{ORBIT_LABEL[d.orbit]}</span>
+            <span className="sat-rule" />
+            <span className="sat-status">▲ TRACKING</span>
+          </div>
         </div>
-        <div className="sat-pass-caption">{pass.caption}</div>
+
+        <div className={'sat-section sat-pass' + (pass.soon ? ' soon' : '')}>
+          <div className="sat-label">T-MINUS · 우리 머리 위까지</div>
+          <div className="sat-pass-big">
+            {pass.big}
+            {pass.unit && <span className="sat-pass-unit">{pass.unit}</span>}
+          </div>
+          <TickScale fill={pass.fill} />
+          <div className="sat-pass-caption">{pass.caption}</div>
+        </div>
+
+        <div className="sat-tiles">
+          <Tile label="ALTITUDE" value={Math.round(d.altKm).toLocaleString()} unit="km" />
+          <Tile label="SPEED" value={d.speedKmS.toFixed(1)} unit="km/s" />
+          <Tile label="PERIOD" value={String(Math.round(d.periodMin))} unit="min" />
+          <Tile label="INCLINATION" value={String(Math.round(d.inclinationDeg))} unit="°" />
+        </div>
+
+        <ol className="sat-story">
+          {notes.map((n, i) => (
+            <li key={i}>
+              <span className="sat-story-no">{String(i + 1).padStart(2, '0')}</span>
+              <span>{n}</span>
+            </li>
+          ))}
+        </ol>
       </div>
 
-      <div className="sat-tiles">
-        <Tile label="ALTITUDE" value={Math.round(d.altKm).toLocaleString()} unit="km" />
-        <Tile label="SPEED" value={d.speedKmS.toFixed(1)} unit="km/s" />
-        <Tile label="PERIOD" value={String(Math.round(d.periodMin))} unit="min" />
-        <Tile label="INCLINATION" value={String(Math.round(d.inclinationDeg))} unit="°" />
+      <div className="sat-foot">
+        <span>TLE EPOCH {d.tleEpoch ?? '—'}</span>
+        <span>REV {d.revNumber != null ? d.revNumber.toLocaleString() : '—'}</span>
       </div>
-
-      <ul className="sat-story">
-        <li>{altitudeStory(d.altKm)}</li>
-        <li>{periodStory(d.periodMin)}</li>
-        <li>{inclinationStory(d.inclinationDeg)}</li>
-      </ul>
     </div>
   )
 }

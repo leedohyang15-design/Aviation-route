@@ -75,6 +75,12 @@ export interface SatelliteDetail {
   passMaxElevationDeg?: number
   /** True when it is above the horizon right now. */
   overheadNow?: boolean
+  /** Epoch of the elements this is propagated from, in the TLE's own
+   * YYDDD.DDDDDDDD notation. Shown as provenance: it is how old the numbers on
+   * screen actually are. */
+  tleEpoch?: string
+  /** Revolution number at epoch — how many times it has been round. */
+  revNumber?: number
 }
 
 /** A single point of a rendered route, in geographic coordinates. */

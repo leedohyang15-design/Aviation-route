@@ -10,6 +10,7 @@
 import * as sat from 'satellite.js'
 import type { Satellite, SatelliteDetail, GeoPoint } from '../src/shared/types'
 import { SAT_TICK_MS, SAT_SLICE_MS, OBSERVER_LAT, OBSERVER_LON } from '../src/shared/config'
+import { isPlausibleCoord } from '../src/shared/projection'
 import { loadTles, type TleRecord } from './tle'
 import { opsLog } from './log'
 
@@ -24,6 +25,10 @@ interface Entry {
   periodMin: number
   /** Inclination in degrees. */
   inclination: number
+  /** The elements' epoch, verbatim from the TLE (YYDDD.DDDDDDDD). */
+  epoch: string
+  /** Revolution number at epoch. */
+  revNumber: number
 }
 
 const observer = {
@@ -121,7 +126,11 @@ export async function initSatellites(path?: string): Promise<number> {
         id: t.noradId,
         name: t.name,
         periodMin: (2 * Math.PI) / rec.no,
-        inclination: rec.inclo * DEG
+        inclination: rec.inclo * DEG,
+        // Fixed columns, per the TLE format: epoch in line 1, revolution count
+        // in line 2. satellite.js keeps neither in a form we can show.
+        epoch: t.line1.slice(18, 32).trim(),
+        revNumber: Number(t.line2.slice(63, 68).trim()) || 0
       })
     } catch {
       /* one unusable satellite shouldn't cost us the catalogue */
@@ -145,7 +154,9 @@ async function propagateAll(): Promise<Satellite[]> {
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]
     const fix = fixAt(e.rec, when)
-    if (fix) {
+    // A decayed or garbage element set can propagate to a nonsense sub-point;
+    // (0, 0) in particular would plot as a phantom on the equator.
+    if (fix && isPlausibleCoord(fix.lon, fix.lat)) {
       out.push({
         id: e.id,
         name: e.name,
@@ -280,6 +291,8 @@ export function getDetail(id: string): SatelliteDetail | null {
     track: orbitTrack(id),
     nextPassSec: pass && !pass.alwaysUp && pass.inSec > 0 ? pass.inSec : undefined,
     passMaxElevationDeg: pass?.maxElevationDeg,
-    overheadNow: pass ? pass.inSec === 0 : undefined
+    overheadNow: pass ? pass.inSec === 0 : undefined,
+    tleEpoch: e.epoch || undefined,
+    revNumber: e.revNumber || undefined
   }
 }

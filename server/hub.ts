@@ -190,7 +190,13 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     if (state.mode === 'satellite') {
       const sats = satSnapshot()
       send(ws, { type: 'satellites', data: sats, serverTime: Date.now() })
-      if (state.selected) send(ws, { type: 'satDetail', detail: satDetail(state.selected) })
+      if (state.selected) {
+        const d = satDetail(state.selected)
+        send(ws, { type: 'satDetail', detail: d })
+        // The orbit line too — it only goes out on select, so a window that
+        // connects (or reconnects) afterwards would otherwise never get it.
+        send(ws, { type: 'route', icao24: state.selected, points: d?.track ?? null })
+      }
     } else {
       send(ws, { type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       void sendDetail(ws)

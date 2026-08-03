@@ -3,13 +3,13 @@
 // command line and out of git. Looks in the working directory AND next to the
 // executable / resources, so a packaged build finds a .env dropped beside the exe.
 import { readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
+import { resolve } from 'node:path'
 import { opsLog } from './log'
+import { dataPathCandidates } from './datadir'
 
 export function loadEnv(file = '.env'): void {
   const dirs = [
-    process.cwd(), // dev / launched-from-here
-    dirname(process.execPath), // next to the .exe (packaged)
+    ...dataPathCandidates('').map((p) => p.replace(/[\\/]$/, '')), // cwd + exe dir
     (process as { resourcesPath?: string }).resourcesPath ?? '' // app resources dir
   ].filter(Boolean) as string[]
   // Windows Notepad silently saves ".env" as ".env.txt" (hidden extension), so

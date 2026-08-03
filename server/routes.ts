@@ -23,7 +23,7 @@
 // unknown aircraft are shown, never hidden.
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { dataPath, dataPathCandidates } from './datadir'
 import { cityKo } from '../src/common/airports'
 import {
   ROUTE_LOOKUP_INTERVAL_MS,
@@ -297,7 +297,8 @@ export function routeLookupRate(): number {
 // executable means a kiosk restarted daily starts already filtered instead of
 // spending the first hour re-asking adsbdb for the same callsigns.
 
-const CACHE_PATH = join(dirname(process.execPath), 'aviation-route-routes.json')
+const CACHE_NAME = 'aviation-route-routes.json'
+const CACHE_PATH = dataPath(CACHE_NAME)
 const SAVE_INTERVAL_MS = 5 * 60_000
 let lastSave = 0
 
@@ -307,13 +308,21 @@ interface Persisted {
   entries: Record<string, { p: RoutePorts | null; t: number }>
 }
 
-export function loadRouteCache(path = CACHE_PATH): void {
-  let text: string
-  try {
-    text = readFileSync(path, 'utf8')
-  } catch {
-    return // no cache yet — normal on first run
+export function loadRouteCache(explicitPath?: string): void {
+  let text: string | null = null
+  let path = CACHE_PATH
+  // Look in every plausible location, so a cache written by an earlier build
+  // (which used the Electron binary's directory) is still picked up.
+  for (const p of explicitPath ? [explicitPath] : dataPathCandidates(CACHE_NAME)) {
+    try {
+      text = readFileSync(p, 'utf8')
+      path = p
+      break
+    } catch {
+      /* try the next location */
+    }
   }
+  if (text == null) return // no cache yet — normal on first run
   try {
     const data = JSON.parse(text) as Persisted
     if (data?.version !== 1 || !data.entries) return

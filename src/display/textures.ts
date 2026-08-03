@@ -93,60 +93,295 @@ export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: n
   return { tex, aspect: w / h }
 }
 
-/** A compact multi-line info chip (dark rounded background) shown next to the
- * selected aircraft: line0 = flight no (amber), line1 = route, line2 = metrics. */
-export function infoTexture(lines: string[]): { tex: THREE.CanvasTexture; aspect: number } {
-  const styles = [
-    { size: 46, color: '#ffb020', weight: '800' }, // 0: flight no (amber)
-    { size: 32, color: '#ffffff', weight: '700' }, // 1: route (city → city)
-    { size: 34, color: '#8fe3a0', weight: '800' }, // 2: arrival countdown (bright green)
-    { size: 24, color: '#cfe0f5', weight: '600' } // 3: metrics (small)
-  ]
-  const st = (i: number) => styles[Math.min(i, styles.length - 1)]
-  const padX = 22
-  const padY = 16
-  const gap = 8
+// ---------------------------------------------------------------------------
+// The dome info card.
+//
+// A printed instrument slip: warm paper, a dark header strip, a dark tab down
+// the left edge, and ruled rows. It replaces a stack of coloured text lines,
+// which on the projected dome came out as illegible smudges — the contrast
+// between dark paper and bright text is what survives the projection, and the
+// fixed structure is what makes it readable at a glance from across a room.
+//
+// Everything below is laid out in DESIGN UNITS and rasterized at SS× that, so
+// the card stays sharp however large it's drawn. `screenH` converts the design
+// height into a fraction of the display frame.
+// ---------------------------------------------------------------------------
+
+export interface InfoTile {
+  label: string
+  value: string
+  unit?: string
+}
+
+export interface InfoCard {
+  kind: 'aircraft' | 'satellite'
+  /** Header strip, e.g. "AIRCRAFT — 비행기". */
+  heading: string
+  /** Vertical tab down the left edge, e.g. "FL340" / "LEO". */
+  tab: string
+  /** The big identifier: flight number or satellite name. */
+  title: string
+  /** Right-aligned state word, e.g. "EN ROUTE" / "TRACKING". */
+  status: string
+  /** Aircraft only: origin → destination with the plane's place along it. */
+  leg?: { from: string; to: string; progress: number | null }
+  /** The countdown that gives the numbers meaning. */
+  hero?: { label: string; value: string; caption: string; fill: number | null }
+  tiles: InfoTile[]
+}
+
+const PAPER = '#f4f1ea'
+const INK = '#14120f'
+const MUTED = '#8d887e'
+const RULE = '#d8d3c8'
+const ACCENT = '#e8590c'
+
+const MONO = `'Consolas','SFMono-Regular',ui-monospace,monospace`
+const SANS = `'Pretendard',system-ui,-apple-system,'Segoe UI',sans-serif`
+
+const SS = 3 // supersample: canvas pixels per design unit
+/** Design units that span the full height of the display frame. Sets how large
+ * the card lands on the dome — smaller number, bigger card. */
+const DESIGN_FRAME_H = 660
+
+const HEAD_H = 20
+const TAB_W = 24
+const PAD = 14
+const MIN_CONTENT = 230
+const MAX_CONTENT = 430
+
+/** `letterSpacing` is a Chromium canvas property that TypeScript's DOM lib
+ * doesn't know about yet; it is what gives the labels their tracked-out look. */
+type Ctx = CanvasRenderingContext2D & { letterSpacing?: string }
+
+function setFont(g: Ctx, family: string, size: number, weight = '400', spacing = 0): void {
+  g.font = `${weight} ${size * SS}px ${family}`
+  g.letterSpacing = `${spacing * SS}px`
+}
+
+function measure(g: Ctx, text: string, family: string, size: number, weight = '400', spacing = 0): number {
+  setFont(g, family, size, weight, spacing)
+  return g.measureText(text).width / SS
+}
+
+function roundRect(g: Ctx, x: number, y: number, w: number, h: number, r: number): void {
+  g.beginPath()
+  g.moveTo(x + r, y)
+  g.arcTo(x + w, y, x + w, y + h, r)
+  g.arcTo(x + w, y + h, x, y + h, r)
+  g.arcTo(x, y + h, x, y, r)
+  g.arcTo(x, y, x + w, y, r)
+  g.closePath()
+}
+
+/** A small right-pointing aeroplane, for the position marker on the leg line. */
+function planeGlyph(g: Ctx, x: number, y: number, s: number, color: string): void {
+  g.save()
+  g.translate(x * SS, y * SS)
+  g.scale(s * SS, s * SS)
+  g.fillStyle = color
+  g.beginPath()
+  g.moveTo(1, 0)
+  g.lineTo(-0.5, 0.75)
+  g.lineTo(-0.15, 0)
+  g.lineTo(-0.5, -0.75)
+  g.closePath()
+  g.fill()
+  g.restore()
+}
+
+export function cardTexture(card: InfoCard): {
+  tex: THREE.CanvasTexture
+  aspect: number
+  screenH: number
+} {
+  const accent = card.kind === 'aircraft' ? ACCENT : INK
+  const measuring = document.createElement('canvas').getContext('2d') as Ctx
+
+  // --- Measure: the card is only as wide as its widest row ---
+  const titleW =
+    measure(measuring, card.title, MONO, 21, '700', 0.4) +
+    18 +
+    measure(measuring, card.status, MONO, 9, '600', 1.6)
+  const legW = card.leg
+    ? measure(measuring, card.leg.from, SANS, 12, '600') +
+      110 +
+      measure(measuring, card.leg.to, SANS, 12, '600')
+    : 0
+  const heroW = card.hero
+    ? measure(measuring, card.hero.label, MONO, 10, '600', 1.4) +
+      8 +
+      measure(measuring, card.hero.value, MONO, 26, '700') +
+      10 +
+      measure(measuring, card.hero.caption, SANS, 12, '600')
+    : 0
+  const tileWidths = card.tiles.map(
+    (t) =>
+      Math.max(
+        measure(measuring, t.label, MONO, 8, '600', 1.5),
+        measure(measuring, t.value, MONO, 16, '700') +
+          (t.unit ? 3 + measure(measuring, t.unit, MONO, 9, '600') : 0)
+      ) + 24
+  )
+  const tilesW = tileWidths.reduce((a, b) => a + b, 0)
+  const contentW = Math.max(MIN_CONTENT, Math.min(MAX_CONTENT, Math.max(titleW, legW, heroW, tilesW)))
+
+  const ROW_TITLE = 34
+  const ROW_LEG = 30
+  const ROW_HERO = card.hero?.fill != null ? 54 : 42
+  const ROW_TILES = 40
+  const H =
+    HEAD_H + ROW_TITLE + (card.leg ? ROW_LEG : 0) + (card.hero ? ROW_HERO : 0) + ROW_TILES
+  const W = TAB_W + PAD + contentW + PAD
+
+  // --- Draw ---
   const c = document.createElement('canvas')
-  let ctx = c.getContext('2d')!
-  let w = 0
-  let h = padY * 2
-  lines.forEach((t, i) => {
-    const s = st(i)
-    ctx.font = `${s.weight} ${s.size}px sans-serif`
-    w = Math.max(w, ctx.measureText(t).width)
-    h += s.size + (i > 0 ? gap : 0)
+  c.width = Math.ceil(W * SS)
+  c.height = Math.ceil(H * SS)
+  const g = c.getContext('2d') as Ctx
+  g.textBaseline = 'alphabetic'
+
+  roundRect(g, 0, 0, W * SS, H * SS, 5 * SS)
+  g.fillStyle = PAPER
+  g.fill()
+  g.save()
+  g.clip() // keep the header strip and tab inside the rounded corners
+
+  // Header strip.
+  g.fillStyle = INK
+  g.fillRect(0, 0, W * SS, HEAD_H * SS)
+  setFont(g, MONO, 9, '600', 1.8)
+  g.fillStyle = PAPER
+  g.fillText(card.heading, 12 * SS, 13.5 * SS)
+
+  // Tab down the left edge: a mark at the top, the class turned on its side.
+  g.fillStyle = INK
+  g.fillRect(0, HEAD_H * SS, TAB_W * SS, (H - HEAD_H) * SS)
+  setFont(g, MONO, 11, '700')
+  g.fillStyle = PAPER
+  g.textAlign = 'center'
+  g.fillText(card.kind === 'aircraft' ? '○' : '◆', (TAB_W / 2) * SS, (HEAD_H + 16) * SS)
+  if (card.tab) {
+    g.save()
+    g.translate((TAB_W / 2) * SS, (H - 12) * SS)
+    g.rotate(-Math.PI / 2)
+    setFont(g, MONO, 8, '600', 1.6)
+    g.fillText(card.tab, 0, 3 * SS)
+    g.restore()
+  }
+  g.textAlign = 'left'
+  g.restore()
+
+  const x0 = TAB_W + PAD
+  const x1 = x0 + contentW
+  let y = HEAD_H
+  const rule = (): void => {
+    g.fillStyle = RULE
+    g.fillRect(x0 * SS, Math.round(y * SS), (contentW + PAD) * SS, Math.max(1, Math.round(SS / 2)))
+  }
+
+  // Title row: identifier left, state right.
+  setFont(g, MONO, 21, '700', 0.4)
+  g.fillStyle = accent
+  g.fillText(card.title, x0 * SS, (y + 24) * SS)
+  setFont(g, MONO, 9, '600', 1.6)
+  g.fillStyle = MUTED
+  g.textAlign = 'right'
+  g.fillText(card.status, x1 * SS, (y + 22) * SS)
+  g.textAlign = 'left'
+  y += ROW_TITLE
+  rule()
+
+  // Leg row: from — plane — to, with the plane at its progress along the line.
+  if (card.leg) {
+    const fromW = measure(g, card.leg.from, SANS, 12, '600')
+    const toW = measure(g, card.leg.to, SANS, 12, '600')
+    const mid = y + ROW_LEG / 2
+    setFont(g, SANS, 12, '600')
+    g.fillStyle = INK
+    g.fillText(card.leg.from, x0 * SS, (mid + 4) * SS)
+    g.textAlign = 'right'
+    g.fillText(card.leg.to, x1 * SS, (mid + 4) * SS)
+    g.textAlign = 'left'
+    const lineA = x0 + fromW + 10
+    const lineB = x1 - toW - 10
+    if (lineB > lineA + 20) {
+      g.strokeStyle = RULE
+      g.lineWidth = Math.max(1, SS)
+      g.setLineDash([3 * SS, 3 * SS])
+      g.beginPath()
+      g.moveTo(lineA * SS, mid * SS)
+      g.lineTo(lineB * SS, mid * SS)
+      g.stroke()
+      g.setLineDash([])
+      const t = card.leg.progress == null ? 0.5 : Math.max(0, Math.min(1, card.leg.progress))
+      planeGlyph(g, lineA + (lineB - lineA) * t, mid, 5.5, ACCENT)
+    }
+    y += ROW_LEG
+    rule()
+  }
+
+  // Hero row: the countdown, with an optional ruled scale under it.
+  if (card.hero) {
+    const labelW = measure(g, card.hero.label, MONO, 10, '600', 1.4)
+    const valueW = measure(g, card.hero.value, MONO, 26, '700')
+    setFont(g, MONO, 10, '600', 1.4)
+    g.fillStyle = MUTED
+    g.fillText(card.hero.label, x0 * SS, (y + 26) * SS)
+    setFont(g, MONO, 26, '700')
+    g.fillStyle = accent
+    g.fillText(card.hero.value, (x0 + labelW + 8) * SS, (y + 29) * SS)
+    setFont(g, SANS, 12, '600')
+    g.fillStyle = INK
+    g.fillText(card.hero.caption, (x0 + labelW + valueW + 18) * SS, (y + 27) * SS)
+    if (card.hero.fill != null) {
+      // Ruled scale: ticks fill toward the event, the marker stands taller.
+      const n = 30
+      const step = contentW / n
+      const lit = Math.round(Math.max(0, Math.min(1, card.hero.fill)) * (n - 1))
+      for (let i = 0; i < n; i++) {
+        const tall = i === lit
+        g.fillStyle = tall ? ACCENT : i < lit ? 'rgba(232,89,12,0.5)' : RULE
+        const th = tall ? 13 : 8
+        g.fillRect(
+          Math.round((x0 + i * step) * SS),
+          Math.round((y + 45 - th) * SS),
+          Math.max(1, Math.round(SS)),
+          th * SS
+        )
+      }
+    }
+    y += ROW_HERO
+    rule()
+  }
+
+  // Tile row: label over value, separated by hairlines.
+  const scale = tilesW > 0 ? contentW / Math.max(tilesW, contentW) : 1
+  let tx = x0
+  card.tiles.forEach((t, i) => {
+    const tw = tileWidths[i] * scale
+    if (i > 0) {
+      g.fillStyle = RULE
+      g.fillRect(Math.round((tx - 8) * SS), (y + 8) * SS, Math.max(1, Math.round(SS / 2)), 24 * SS)
+    }
+    setFont(g, MONO, 8, '600', 1.5)
+    g.fillStyle = MUTED
+    g.fillText(t.label, tx * SS, (y + 15) * SS)
+    setFont(g, MONO, 16, '700')
+    g.fillStyle = INK
+    g.fillText(t.value, tx * SS, (y + 32) * SS)
+    if (t.unit) {
+      const vw = measure(g, t.value, MONO, 16, '700')
+      setFont(g, MONO, 9, '600')
+      g.fillStyle = MUTED
+      g.fillText(t.unit, (tx + vw + 3) * SS, (y + 32) * SS)
+    }
+    tx += tw
   })
-  c.width = Math.ceil(w + padX * 2)
-  c.height = Math.ceil(h + 8) // extra room so descenders on the last line aren't clipped
-  ctx = c.getContext('2d')!
-  const r = 18
-  const W = c.width
-  const H = c.height
-  ctx.beginPath()
-  ctx.moveTo(r, 0)
-  ctx.arcTo(W, 0, W, H, r)
-  ctx.arcTo(W, H, 0, H, r)
-  ctx.arcTo(0, H, 0, 0, r)
-  ctx.arcTo(0, 0, W, 0, r)
-  ctx.closePath()
-  ctx.fillStyle = 'rgba(8,12,24,0.74)'
-  ctx.fill()
-  ctx.lineWidth = 2
-  ctx.strokeStyle = 'rgba(255,255,255,0.2)'
-  ctx.stroke()
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'top'
-  let y = padY
-  lines.forEach((t, i) => {
-    const s = st(i)
-    ctx.font = `${s.weight} ${s.size}px sans-serif`
-    ctx.fillStyle = s.color
-    ctx.fillText(t, padX, y)
-    y += s.size + gap
-  })
+
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
-  return { tex, aspect: W / H }
+  return { tex, aspect: W / H, screenH: H / DESIGN_FRAME_H }
 }
 
 // Icon color by flight category: passenger cyan, cargo amber, military green.
@@ -177,20 +412,25 @@ export function orbitColor(orbit: string): THREE.Color {
 
 /** A plain filled dot — what unselected satellites are drawn as. Sixteen
  * thousand icons overlap into noise, whereas dots read as a swarm, which is
- * what a satellite constellation actually looks like. No outline, because at
- * this size an outline is most of the pixel. */
+ * what a satellite constellation actually looks like.
+ *
+ * The disc is solid out to 80% of its radius and only feathers over the last
+ * sliver. An earlier version faded from the very centre outwards, which at the
+ * ten-or-so screen pixels a dot actually occupies left no solid core at all —
+ * every dot came out a grey smudge. */
 export function plainDotTexture(): THREE.CanvasTexture {
-  const s = 64
+  const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
   const g = c.getContext('2d')!
-  const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2)
+  const r = s * 0.46
+  const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, r)
   grad.addColorStop(0, 'rgba(255,255,255,1)')
-  grad.addColorStop(0.55, 'rgba(255,255,255,0.95)')
-  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  grad.addColorStop(0.8, 'rgba(255,255,255,1)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)') // just enough to antialias the rim
   g.fillStyle = grad
   g.beginPath()
-  g.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2)
+  g.arc(s / 2, s / 2, r, 0, Math.PI * 2)
   g.fill()
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace

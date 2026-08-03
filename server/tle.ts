@@ -11,7 +11,7 @@
 // flying yesterday's elements — accuracy decays over days, not minutes.
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { dataPath, dataPathCandidates } from './datadir'
 import { TLE_URL, TLE_MAX_AGE_MS } from '../src/shared/config'
 import { opsLog } from './log'
 
@@ -22,15 +22,11 @@ export interface TleRecord {
   line2: string
 }
 
-// Beside the executable in a packaged build; in dev `process.execPath` is the
-// node binary, so the working directory is checked first — same reasoning as the
-// .env lookup.
 const CACHE_NAME = 'aviation-route-tle.txt'
-const CACHE_PATHS = [join(process.cwd(), CACHE_NAME), join(dirname(process.execPath), CACHE_NAME)]
-const CACHE_PATH = CACHE_PATHS[CACHE_PATHS.length - 1]
+const CACHE_PATH = dataPath(CACHE_NAME)
 
 function findCache(explicit?: string): { path: string; data: { text: string; age: number } } | null {
-  for (const p of explicit ? [explicit] : CACHE_PATHS) {
+  for (const p of explicit ? [explicit] : dataPathCandidates(CACHE_NAME)) {
     const data = readCache(p)
     if (data) return { path: p, data }
   }

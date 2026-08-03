@@ -10,7 +10,12 @@
 import type { Aircraft, FlightDetail } from '../src/shared/types'
 import type { FlightFeed } from './feed'
 import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
-import { greatCirclePoints, greatCircleDistanceKm, nearestRouteIndex } from '../src/shared/projection'
+import {
+  greatCirclePoints,
+  greatCircleDistanceKm,
+  isPlausibleCoord,
+  nearestRouteIndex
+} from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
 import { cityKo } from '../src/common/airports'
 import { opsLog } from './log'
@@ -80,7 +85,9 @@ export function createOpenSkyFeed(): FlightFeed {
     for (const s of states) {
       const lon = s[S.lon] as number | null
       const lat = s[S.lat] as number | null
-      if (lon == null || lat == null) continue // no position → skip
+      // No position, an impossible one, or the null-island placeholder → skip.
+      // Drawing those puts a phantom dot on the equator at 0°E.
+      if (lon == null || lat == null || !isPlausibleCoord(lon, lat)) continue
       out.push({
         icao24: (s[S.icao24] as string) ?? '',
         callsign: ((s[S.callsign] as string) ?? '').trim(),

@@ -265,162 +265,202 @@ body,
 }
 
 /* ---------------------------------------------------------------------------
-   Satellite readout — a console, not a boarding pass.
-   Fixed-width labels, instrument tiles and corner brackets, so switching modes
-   feels like switching instruments rather than re-skinning the same card.
+   Satellite readout — a printed telemetry sheet, not a boarding pass.
+   Warm paper, ruled sections, monospaced labels and a ticked countdown scale,
+   so switching modes feels like switching instruments rather than re-skinning
+   the same card.
    --------------------------------------------------------------------------- */
 .sat-panel {
+  --ink: #14120f;
+  --paper: #f4f1ea;
+  --muted: #8d887e;
+  --rule: #d8d3c8;
+  --accent: #e8590c;
   position: relative;
-  padding: 16px 18px 14px;
-  border-radius: 4px;
-  border: 1px solid rgba(92, 225, 230, 0.4);
-  background:
-    repeating-linear-gradient(
-      180deg,
-      rgba(92, 225, 230, 0.045) 0px,
-      rgba(92, 225, 230, 0.045) 1px,
-      transparent 1px,
-      transparent 4px
-    ),
-    linear-gradient(160deg, rgba(9, 20, 34, 0.97), rgba(6, 13, 24, 0.97));
-  box-shadow:
-    0 8px 30px rgba(0, 0, 0, 0.55),
-    inset 0 0 40px rgba(92, 225, 230, 0.06);
-  color: #dCEcf5;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.6);
   font-variant-numeric: tabular-nums;
 }
-/* Corner brackets — the cheapest way to read as instrumentation. */
-.sat-bracket {
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(92, 225, 230, 0.85);
-  pointer-events: none;
-}
-.sat-bracket.tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
-.sat-bracket.tr { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
-.sat-bracket.bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
-.sat-bracket.br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
 
-.sat-head {
+/* Dark header + footer bars bracket the sheet. */
+.sat-head,
+.sat-foot {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(92, 225, 230, 0.22);
+  padding: 9px 14px;
+  background: var(--ink);
+  color: var(--paper);
   font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
-.sat-head-title { color: #5ce1e6; }
-.sat-head-id { color: #6b8299; }
+.sat-foot {
+  font-size: 9px;
+  color: #9a958c;
+}
+.sat-head-id {
+  color: #b9b3a8;
+}
 
+.sat-body {
+  padding: 0 14px;
+}
+/* Every block is a ruled section, like a form. */
+.sat-section {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.sat-label {
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 .sat-name {
-  margin-top: 12px;
-  font-size: 19px;
+  margin-top: 5px;
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 21px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
   letter-spacing: -0.01em;
+  text-transform: uppercase;
+}
+.sat-classline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 7px;
+  font-size: 11px;
 }
 .sat-class {
-  margin-top: 3px;
+  color: var(--muted);
+}
+.sat-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+.sat-status {
   font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: #8fb4c9;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--accent);
 }
 
 /* The hero: how long until it's overhead. */
-.sat-pass {
-  margin-top: 14px;
-  padding: 12px 14px;
-  border-radius: 3px;
-  border: 1px solid rgba(92, 225, 230, 0.28);
-  background: rgba(92, 225, 230, 0.07);
-}
-.sat-pass.soon {
-  border-color: rgba(143, 227, 160, 0.75);
-  background: rgba(143, 227, 160, 0.14);
-  box-shadow: inset 0 0 26px rgba(143, 227, 160, 0.12);
-}
-.sat-pass-label {
-  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #7f9bb0;
-}
 .sat-pass-big {
   margin-top: 2px;
-  font-size: 40px;
-  font-weight: 800;
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 46px;
+  font-weight: 700;
   line-height: 1.05;
-  color: #b8f2f5;
+  letter-spacing: -0.02em;
 }
 .sat-pass.soon .sat-pass-big {
-  color: #a8f5b8;
+  color: var(--accent);
 }
 .sat-pass-unit {
-  margin-left: 6px;
-  font-size: 14px;
+  margin-left: 7px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.1em;
-  opacity: 0.7;
+  color: var(--muted);
 }
 .sat-pass-caption {
-  margin-top: 4px;
+  margin-top: 8px;
   font-size: 12px;
-  color: #c2d6e4;
+  color: #55504a;
 }
 
-/* Instrument tiles. */
-.sat-tiles {
+/* Ruled countdown scale: ticks fill toward the pass, the marker is taller. */
+.sat-scale {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 20px;
   margin-top: 12px;
+}
+.sat-tick {
+  flex: 1;
+  height: 11px;
+  background: var(--rule);
+}
+.sat-tick.lit {
+  background: var(--accent);
+  opacity: 0.55;
+}
+.sat-tick.now {
+  height: 20px;
+  background: var(--accent);
+}
+
+/* Instrument tiles — a 2×2 grid of hairline-ruled cells. */
+.sat-tiles {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
-  background: rgba(92, 225, 230, 0.18);
-  border: 1px solid rgba(92, 225, 230, 0.18);
+  margin: 0 -14px;
+  padding: 1px 0;
+  background: var(--rule);
 }
 .sat-tile {
-  padding: 9px 10px;
-  background: rgba(7, 15, 27, 0.96);
+  padding: 11px 14px;
+  background: var(--paper);
 }
 .sat-tile-label {
   font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
   font-size: 9px;
-  letter-spacing: 0.16em;
-  color: #6b8299;
+  letter-spacing: 0.18em;
+  color: var(--muted);
 }
 .sat-tile-value {
-  margin-top: 1px;
-  font-size: 20px;
+  margin-top: 2px;
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 24px;
   font-weight: 700;
-  color: #e6f4fa;
 }
 .sat-tile-unit {
-  margin-left: 3px;
+  margin-left: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #7f9bb0;
+  color: var(--muted);
 }
 
 /* Plain-language notes — the bit that makes the numbers mean something. */
 .sat-story {
-  margin: 12px 0 0;
-  padding-left: 15px;
+  list-style: none;
+  margin: 0;
+  padding: 13px 0 15px;
   font-size: 12px;
-  line-height: 1.6;
-  color: #a8c0d2;
+  line-height: 1.55;
+  color: #3d3933;
 }
 .sat-story li {
-  margin: 2px 0;
+  display: flex;
+  gap: 14px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.sat-story li:last-child {
+  border-bottom: 0;
+}
+.sat-story-no {
+  flex: none;
+  font-family: 'Consolas', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--accent);
+  padding-top: 2px;
 }
 
 .sat-loading {
-  padding: 18px 0 6px;
+  padding: 22px 14px;
   font-size: 13px;
-  color: #8fb4c9;
+  color: var(--muted);
 }
