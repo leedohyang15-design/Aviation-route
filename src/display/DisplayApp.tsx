@@ -9,8 +9,8 @@ import type { InfoCard, InfoTile } from './textures'
 // top-left; the rest of the output stays black.
 const FRAME = { w: 1664, h: 838 }
 
-/** The class shown on the card's side tab. */
-const ORBIT_TAB: Record<OrbitClass, string> = {
+/** The orbit class, shown beside the state word on the card. */
+const ORBIT_NOTE: Record<OrbitClass, string> = {
   leo: 'LEO',
   starlink: 'STARLINK',
   meo: 'MEO',
@@ -21,13 +21,10 @@ const ORBIT_TAB: Record<OrbitClass, string> = {
  * Past that the bar sits near empty and stops reading as progress. */
 const PASS_SCALE_SEC = 3600
 
-/** A duration split into the big mono number and the words after it: `h:mm`
- * needs no unit, bare minutes do. */
-function duration(sec: number, tail: string): { value: string; caption: string } {
+/** A countdown as a big figure plus its unit: `h:mm` needs none, minutes do. */
+function countdown(sec: number): { value: string; unit?: string } {
   const m = Math.round(sec / 60)
-  return m >= 60
-    ? { value: `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`, caption: tail }
-    : { value: String(m), caption: `분 ${tail}` }
+  return m >= 60 ? { value: `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}` } : { value: String(m), unit: '분' }
 }
 
 function satPassHero(sd: SatelliteDetail): InfoCard['hero'] {
@@ -39,7 +36,8 @@ function satPassHero(sd: SatelliteDetail): InfoCard['hero'] {
   }
   return {
     label: 'T−',
-    ...duration(sd.nextPassSec, '뒤 머리 위를 지나가요'),
+    ...countdown(sd.nextPassSec),
+    caption: '뒤 머리 위를 지나가요',
     fill: Math.max(0, Math.min(1, 1 - sd.nextPassSec / PASS_SCALE_SEC))
   }
 }
@@ -48,7 +46,29 @@ function etaHero(d: FlightDetail): InfoCard['hero'] {
   if (d.etaRemainingSec == null || d.etaRemainingSec <= 0) {
     return { label: 'ETA', value: '—', caption: '곧 도착해요', fill: d.progress ?? null }
   }
-  return { label: 'ETA', ...duration(d.etaRemainingSec, '뒤 도착해요'), fill: d.progress ?? null }
+  return {
+    label: 'ETA',
+    ...countdown(d.etaRemainingSec),
+    caption: '뒤 도착해요',
+    fill: d.progress ?? null
+  }
+}
+
+/**
+ * Total gate-to-gate time as "4H 05M". Preferred from the departure stamp;
+ * otherwise back-calculated from how far along the route the aircraft is,
+ * which real-data flights often have when the departure time is missing.
+ */
+function tripDuration(d: FlightDetail): string | null {
+  let totalSec: number | null = null
+  if (d.departureTime != null && d.etaRemainingSec != null) {
+    totalSec = (Date.now() - d.departureTime) / 1000 + d.etaRemainingSec
+  } else if (d.etaRemainingSec != null && d.progress != null && d.progress < 0.98) {
+    totalSec = d.etaRemainingSec / (1 - d.progress)
+  }
+  if (totalSec == null || !Number.isFinite(totalSec) || totalSec <= 0) return null
+  const m = Math.round(totalSec / 60)
+  return `${Math.floor(m / 60)}H ${String(m % 60).padStart(2, '0')}M`
 }
 
 /** Why there's no route — or that we're still asking. */
@@ -82,19 +102,18 @@ export function DisplayApp(): JSX.Element {
       if (!sd) {
         return {
           kind: 'satellite',
-          heading: 'SATELLITE — 위성',
-          tab: '',
           title: '· · ·',
-          status: 'ACQUIRING',
+          note: 'ACQUIRING',
           tiles: [{ label: 'STATUS', value: '위성을 찾는 중' }]
         }
       }
       return {
         kind: 'satellite',
-        heading: 'SATELLITE — 위성',
-        tab: ORBIT_TAB[sd.orbit],
         title: sd.name,
-        status: 'TRACKING',
+        // The orbit class rides along with the state word: it's the one thing
+        // about a satellite a visitor can act on ("that's the one that stands
+        // still"), and this card has no other slot for it.
+        note: `${ORBIT_NOTE[sd.orbit]} · TRACKING`,
         hero: satPassHero(sd),
         tiles: [
           { label: 'ALT', value: Math.round(sd.altKm).toLocaleString(), unit: 'km' },
@@ -121,16 +140,21 @@ export function DisplayApp(): JSX.Element {
     const routed = !!(d && (d.origin?.code || d.destination?.code))
     return {
       kind: 'aircraft',
-      heading: 'AIRCRAFT — 비행기',
-      // Flight level: the altitude in hundreds of feet, as air traffic says it.
-      tab: sel.altitude != null ? `FL${Math.round((sel.altitude * 3.28084) / 100)}` : '',
+      header: {
+        left: `✈ ${d?.airline ?? '항공편'}`,
+        badge: routed ? 'EN ROUTE' : d ? 'NO ROUTE' : 'QUERYING'
+      },
       title: flightNo,
-      status: routed ? 'EN ROUTE' : d ? 'NO ROUTE' : 'QUERYING',
+      // Flight level: the altitude in hundreds of feet, as air traffic says it.
+      note: sel.altitude != null ? `FL${Math.round((sel.altitude * 3.28084) / 100)}` : '',
       leg: routed
         ? {
+            fromCode: d!.origin?.code ?? '—',
+            toCode: d!.destination?.code ?? '—',
             // City names (Korean when known) read better than airport codes.
-            from: d!.origin?.city ?? d!.origin?.code ?? '—',
-            to: d!.destination?.city ?? d!.destination?.code ?? '—',
+            fromCity: d!.origin?.city ?? '',
+            toCity: d!.destination?.city ?? '',
+            duration: tripDuration(d!),
             progress: d!.progress ?? null
           }
         : undefined,
