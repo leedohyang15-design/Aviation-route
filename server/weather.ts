@@ -239,12 +239,19 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     for (const layer of set) {
       const url = await get(layer)
       if (url) got.push({ x: 0, y: 0, url, centerLon: subSatelliteLon(layer) })
-      // The first set is discs meant to be stacked; the second is whole-globe
-      // mosaics where one is enough.
-      if (url && set === WEATHER_GIBS_FALLBACK_LAYERS) break
+      // A whole-globe mosaic is complete on its own; the discs are meant to be
+      // stacked, so all of them are fetched.
+      if (url && set === WEATHER_GIBS_LAYERS) break
     }
     if (got.length) {
-      return { layer: 'cloud', projection: 'equirect', z: 0, time: Date.now(), tiles: got }
+      return {
+        layer: 'cloud',
+        projection: 'equirect',
+        blend: set === WEATHER_GIBS_LAYERS ? 'photo' : 'cloud',
+        z: 0,
+        time: Date.now(),
+        tiles: got
+      }
     }
     opsLog(`[weather] cloud: none of [${set.join(', ')}] answered. Last: ${lastTileError}`)
   }

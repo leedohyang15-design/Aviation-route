@@ -54,6 +54,15 @@ export interface WeatherFrame {
    * thing that looks almost right.
    */
   projection: 'mercator' | 'equirect'
+  /**
+   * How to put it on the globe.
+   *
+   * `photo` is a seamless picture of the earth — draw it where it has data and
+   * let it be the earth. `cloud` is a geostationary disc, which is opaque out
+   * to its own horizon and useless past it, so the cloud has to be lifted out
+   * of it and the edge faded away.
+   */
+  blend?: 'photo' | 'cloud'
   /** Tile pyramid level; the grid is 2^z by 2^z. A single full-frame image is
    * z=0, and several of them at (0,0) composite in the order they arrive —
    * which is how the geostationary discs are stitched into one globe. */

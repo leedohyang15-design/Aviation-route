@@ -158,22 +158,28 @@ export const WEATHER_GIBS_URL =
  * machine is the only place these can be verified, so the log names the one
  * that answered rather than assuming.
  *
- * The geostationary GeoColor discs come first: they are ten minutes old and
- * together cover most of the globe, and several of them composite into one
- * picture. The true-colour global mosaics are the fallback — a few hours
- * behind, but seamless and always there.
+ * The global true-colour mosaics come first. They are a few hours behind, but
+ * they are ONE seamless picture of the whole earth, which is what a visitor
+ * expects to see; the geostationary discs are fresher and, being three
+ * overlapping photographs with hard horizons, never quite stop looking like
+ * three photographs.
  */
 export const WEATHER_GIBS_LAYERS = (
   readEnv('WEATHER_GIBS_LAYERS') ??
-  'GOES-East_ABI_GeoColor,GOES-West_ABI_GeoColor,Himawari_AHI_GeoColor'
+  'VIIRS_NOAA20_CorrectedReflectance_TrueColor,VIIRS_SNPP_CorrectedReflectance_TrueColor,MODIS_Terra_CorrectedReflectance_TrueColor'
 )
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
-/** Used when none of the above answer: global, seamless, a few hours old. */
+/**
+ * Used when none of the above answer: the geostationary discs. Ten minutes old
+ * rather than a few hours, but three separate sensors that have to be lifted
+ * out of their own pictures and faded into each other — which is why the
+ * seamless mosaic is tried first even though it is older.
+ */
 export const WEATHER_GIBS_FALLBACK_LAYERS = (
   readEnv('WEATHER_GIBS_FALLBACK_LAYERS') ??
-  'VIIRS_NOAA20_CorrectedReflectance_TrueColor,VIIRS_SNPP_CorrectedReflectance_TrueColor,MODIS_Terra_CorrectedReflectance_TrueColor'
+  'GOES-East_ABI_GeoColor,GOES-West_ABI_GeoColor,Himawari_AHI_GeoColor'
 )
   .split(',')
   .map((s) => s.trim())

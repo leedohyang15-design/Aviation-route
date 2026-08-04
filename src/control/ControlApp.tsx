@@ -17,8 +17,25 @@ const SHEET_H = 660
 /** How far the card keeps off the object it describes. Generous: at the old
  * 28px it crowded the icon, and on a satellite it sat right on the panels. */
 const GAP = 64
-/** How still the map has to be before the card is allowed to reconsider. */
-const SETTLE_MS = 700
+/**
+ * How still the map has to be before the card is allowed to reconsider.
+ *
+ * Long on purpose. A visitor pans in bursts with pauses between them, and at
+ * 700ms every one of those pauses was long enough to move the card — which
+ * from the other side of the glass looks exactly like the card following your
+ * finger. At two and a half seconds it only ever moves once you have stopped.
+ */
+const SETTLE_MS = 2500
+/**
+ * How long to hold the card back after a selection while the route arrives.
+ *
+ * The route is a beat behind the selection, so the card was being placed
+ * against an empty map, drawn there, and then teleported the moment the line
+ * appeared under it. Waiting for the line — or giving up on it, for the
+ * aircraft that have none — means it is only ever drawn once, in its final
+ * place.
+ */
+const ROUTE_WAIT_MS = 900
 
 
 /**
@@ -57,21 +74,36 @@ function keepOut(a: SelectionAnchor): { x: number; y: number }[] {
   return avoid
 }
 
-/** How much a card at this rect would hide, given the current keep-out set. */
+/**
+ * What a card at this rect would hide.
+ *
+ * Two numbers, because two things are being hidden. `hard` is the destination
+ * pin, the place names, the flags and the control overlay — hiding any of them
+ * is the answer gone, so it is counted absolutely. `soft` is the line itself,
+ * counted as a FRACTION of it: an aircraft's route is short and covering half
+ * of it matters, while a satellite's orbit wraps the whole globe and covering
+ * a tenth of it is unavoidable. Counting raw points made every satellite
+ * placement look hopeless, so the card fled to a corner every time.
+ */
 function hiddenBy(
   rect: { x: number; y: number; w: number; h: number },
-  avoid: { x: number; y: number }[],
+  avoid: SelectionAnchor['avoid'],
   a: SelectionAnchor
-): number {
-  let hidden = 0
+): { hard: number; soft: number } {
+  let hard = 0
+  let soft = 0
+  let softTotal = 0
   for (const p of avoid) {
-    if (p.x > rect.x - 8 && p.x < rect.x + rect.w + 8 && p.y > rect.y - 8 && p.y < rect.y + rect.h + 8) {
-      hidden++
-    }
+    if (!p.hard) softTotal++
+    const inside =
+      p.x > rect.x - 8 && p.x < rect.x + rect.w + 8 && p.y > rect.y - 8 && p.y < rect.y + rect.h + 8
+    if (!inside) continue
+    if (p.hard) hard++
+    else soft++
   }
   // The object itself must never end up under the card either.
-  if (a.x > rect.x && a.x < rect.x + rect.w && a.y > rect.y && a.y < rect.y + rect.h) hidden += 100
-  return hidden
+  if (a.x > rect.x && a.x < rect.x + rect.w && a.y > rect.y && a.y < rect.y + rect.h) hard += 100
+  return { hard, soft: softTotal ? soft / softTotal : 0 }
 }
 
 /** Whether a card sitting where it is would still be a clean placement — asked
@@ -80,7 +112,10 @@ function hiddenBy(
  * somewhere clear, the visitor panned the route underneath it, and the check
  * kept answering "still clear" from a number taken minutes earlier. */
 function stillClear(a: SelectionAnchor, rect: Placement['rect']): boolean {
-  return hiddenBy(rect, keepOut(a), a) === 0
+  const h = hiddenBy(rect, keepOut(a), a)
+  // A token overlap is not worth moving the card for. Moving it is the thing
+  // the visitor notices; a corner of the line under a corner of the card is not.
+  return h.hard === 0 && h.soft < 0.12
 }
 
 function placeCard(a: SelectionAnchor): Placement {
@@ -139,16 +174,19 @@ function placeCard(a: SelectionAnchor): Placement {
   let bestCost = Infinity
   let bestHidden = 0
   for (const s of slots) {
-    const hidden = hiddenBy({ x: s.x, y: s.y, w: W, h: H }, avoid, a)
+    const h = hiddenBy({ x: s.x, y: s.y, w: W, h: H }, avoid, a)
     // Covering something is always worse than being further away, but among
     // slots that cover nothing the nearest one wins outright — distance is
     // counted in real pixels now, not divided into insignificance.
     const cost =
-      hidden * 100_000 + s.bias * 1_000 + Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y)
+      h.hard * 100_000 +
+      h.soft * 6_000 +
+      s.bias * 1_000 +
+      Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y)
     if (cost < bestCost) {
       bestCost = cost
       best = s
-      bestHidden = hidden
+      bestHidden = h.hard + (h.soft >= 0.12 ? 1 : 0)
     }
   }
   return {
@@ -271,26 +309,43 @@ export function ControlApp(): JSX.Element {
    * become a bad one. During a drag or a zoom it does not move at all.
    */
   const [placed, setPlaced] = useState<React.CSSProperties>({})
+  /** False until the card has a final home, so it is never drawn mid-decision. */
+  const [settled, setSettled] = useState(false)
   const placedRef = useRef<Placement | null>(null)
   const anchorRef = useRef<SelectionAnchor | null>(null)
   const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const openedAt = useRef(0)
 
   const apply = (p: Placement) => {
     placedRef.current = p
     setPlaced(p.style)
+    setSettled(true)
   }
 
   useEffect(() => {
     placedRef.current = null
+    openedAt.current = Date.now()
+    setSettled(false)
     if (!state.selected) setPlaced({})
+    // A geostationary satellite barely moves, so its anchor may not fire again
+    // for a while — without this the card would wait forever for a route that
+    // is never coming.
+    const t = setTimeout(() => {
+      const a = anchorRef.current
+      if (a && !placedRef.current) apply(placeCard(a))
+    }, ROUTE_WAIT_MS + 50)
+    return () => clearTimeout(t)
   }, [state.selected])
 
   useEffect(() => {
     anchorRef.current = anchor
     if (!anchor) return
-    // No placement yet for this selection: place it now.
+    // No placement yet for this selection. Hold off until the route has landed
+    // — an anchor that already carries the line is the signal — or until the
+    // wait runs out, which is how a route-less aircraft still gets a card.
     if (!placedRef.current) {
-      apply(placeCard(anchor))
+      const hasLine = anchor.avoid.length > 0
+      if (hasLine || Date.now() - openedAt.current > ROUTE_WAIT_MS) apply(placeCard(anchor))
       return
     }
     // Otherwise wait for the map to stop moving, then only move if we have to.
@@ -303,7 +358,7 @@ export function ControlApp(): JSX.Element {
       // does it get to move, and only to somewhere better.
       if (stillClear(a, cur.rect)) return
       const next = placeCard(a)
-      if (next.hidden >= hiddenBy(cur.rect, keepOut(a), a)) return
+      if (next.hidden > 0) return // nowhere better to go
       apply(next)
     }, SETTLE_MS)
     return () => {
@@ -533,7 +588,7 @@ export function ControlApp(): JSX.Element {
           metre away. Falls back to the corner when the object is off screen.
           Keyed by icao24 so it re-mounts and replays the pop-up on every new
           selection. */}
-      <div className="sheet" style={sheetStyle}>
+      <div className="sheet" style={sheetStyle} hidden={!settled}>
         {isWeather
           ? null
           : isSat

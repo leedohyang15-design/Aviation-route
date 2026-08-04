@@ -66,7 +66,7 @@ export interface SelectionAnchor {
    * both sides of the aircraft has no clear side, and the card landed on the
    * destination anyway.
    */
-  avoid: { x: number; y: number }[]
+  avoid: { x: number; y: number; hard?: boolean }[]
 }
 
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
@@ -348,6 +348,9 @@ export class Globe {
       // 1 = the picture is Web Mercator and needs the row remap; 0 = it is
       // already plate carrée, i.e. this frame's own projection.
       uCloudMerc: { value: 1 },
+      // 1 = a seamless photograph of the earth, drawn where it has data;
+      // 0 = a geostationary disc the cloud has to be lifted out of.
+      uCloudPhoto: { value: 0 },
       uRain: { value: null },
       uHasRain: { value: 0 },
       uRainMerc: { value: 1 },
@@ -368,6 +371,7 @@ export class Globe {
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
+        uniform float uCloudPhoto;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
@@ -443,9 +447,14 @@ export class Globe {
             float mx = max(c.r, max(c.g, c.b));
             float mn = min(c.r, min(c.g, c.b));
             float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
+            float lifted = smoothstep(0.22, 0.62, lum) * (1.0 - smoothstep(0.30, 0.65, sat));
+            // A seamless mosaic IS the earth, so it goes on as a photograph and
+            // keeps its land, its sea and its clouds together — which is what
+            // stops it looking like grey smudges pasted over a map. Only a disc
+            // needs the cloud lifted out of it. Either way an empty pixel (no
+            // data, or the unlit half of an orbit swath) stays out of the way.
             float a = c.a
-              * smoothstep(0.22, 0.62, lum)
-              * (1.0 - smoothstep(0.30, 0.65, sat))
+              * (uCloudPhoto > 0.5 ? 1.0 : lifted)
               * (uCloudMerc > 0.5 ? inMerc : 1.0);
             day = mix(day, c.rgb, a);
           }
@@ -911,7 +920,7 @@ export class Globe {
     // Sample the route sparsely — the card only needs to know where the line
     // runs, not to trace it — and always include both ends, which carry the
     // markers, the place names and the flags.
-    const avoid: { x: number; y: number }[] = []
+    const avoid: SelectionAnchor['avoid'] = []
     const pts = this.routePoints
     if (pts && pts.length) {
       const step = Math.max(1, Math.ceil(pts.length / 40))
@@ -925,7 +934,12 @@ export class Globe {
     }
     // The place names and flags sit well outside their markers, so sampling the
     // route alone left them uncovered by the check and covered by the card.
-    for (const e of this.extraAvoid) avoid.push(toClient(e.u, e.y))
+    // They are marked hard: a route is long and hiding a little of it is a
+    // nuisance, while hiding the destination is the whole answer gone.
+    for (const e of this.extraAvoid) {
+      const p = toClient(e.u, e.y)
+      avoid.push({ ...p, hard: true })
+    }
     const c = toClient(worldX, worldY)
     const p: SelectionAnchor = { x: c.x, y: c.y, span: this.targetSpan, avoid }
     const prev = this.lastAnchor
@@ -1611,6 +1625,9 @@ export class Globe {
       this.bgUniforms[mapKey].value = tex
       this.bgUniforms[hasKey].value = 1
       this.bgUniforms[mercKey].value = frame.projection === 'mercator' ? 1 : 0
+      if (layer === 'cloud') {
+        this.bgUniforms.uCloudPhoto.value = frame.blend === 'photo' ? 1 : 0
+      }
       old?.dispose()
     }
     /**
