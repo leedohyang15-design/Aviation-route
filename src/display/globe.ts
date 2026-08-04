@@ -435,45 +435,6 @@ export class Globe {
           vec2 mercUV = vec2(uv.x, mercY);
           vec2 flatUV = vec2(uv.x, vUv.y);
 
-          // Clouds go in BEFORE the day/night mix: they are a photograph of the
-          // earth, so they belong to the daylight, and the night side's cloud
-          // deck goes dark with the ground under it — which also lets the city
-          // lights show through the gaps.
-          if (uHasCloud > 0.5) {
-            vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            // The satellite products are pictures of the earth, not cloud
-            // overlays: they are opaque everywhere inside the sensor's reach,
-            // including the black space around a geostationary disc. Painted on
-            // as-is they replace our globe with a rounded rectangle and a hard
-            // edge where the disc ends.
-            //
-            // So the cloud is extracted rather than pasted. Cloud is the bright,
-            // colourless part of the image; ocean and unlit land are dark, and
-            // city lights and deserts are bright but strongly coloured. Reading
-            // opacity out of luminance-minus-saturation makes the disc's own
-            // edge disappear (black is transparent), leaves the night side to
-            // the terminator, and puts real weather over our own earth.
-            float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
-            float mx = max(c.r, max(c.g, c.b));
-            float mn = min(c.r, min(c.g, c.b));
-            float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
-            // A wider, earlier ramp and a gain on top: infrared cloud sits in a
-            // narrow band of greys, and mapping it one-to-one leaves the sky
-            // looking like a smear rather than weather.
-            float lifted =
-              clamp(smoothstep(0.16, 0.52, lum) * uCloudAmt, 0.0, 1.0)
-              * (1.0 - smoothstep(0.30, 0.65, sat));
-            // A seamless mosaic IS the earth, so it goes on as a photograph and
-            // keeps its land, its sea and its clouds together — which is what
-            // stops it looking like grey smudges pasted over a map. Only a disc
-            // needs the cloud lifted out of it. Either way an empty pixel (no
-            // data, or the unlit half of an orbit swath) stays out of the way.
-            float a = c.a
-              * (uCloudPhoto > 0.5 ? 1.0 : lifted)
-              * (uCloudMerc > 0.5 ? inMerc : 1.0);
-            day = mix(day, c.rgb, a);
-          }
-
           // Night = moonlit earth + city lights (from the night texture) glowing.
           //
           // The floor used to be 0.10, which left the land indistinguishable
@@ -486,7 +447,34 @@ export class Globe {
           vec3 lights = uHasNight > 0.5 ? texture2D(uNightMap, uv).rgb * 1.6 : vec3(0.0);
           vec3 night = moonlit + lights;
           vec3 col = mix(day, night, uNight);
-          // Rain goes in AFTER: it is a data overlay, not a photograph, and a
+
+          // Cloud goes in AFTER the terminator, not before.
+          //
+          // Infrared is a measurement of how cold the cloud top is, not a
+          // photograph of sunlight bouncing off it — the sensor sees the same
+          // storm at midnight as at noon, which is the whole reason for using
+          // it. Putting it in with the daylight and then dimming it to a fifth
+          // for the night side made half the world's weather invisible, which
+          // is exactly what it looked like. And it is drawn toward white rather
+          // than toward the sensor's own grey, because a grey cloud over a dark
+          // ocean is a grey nobody can see.
+          if (uHasCloud > 0.5) {
+            vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
+            float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+            float mx = max(c.r, max(c.g, c.b));
+            float mn = min(c.r, min(c.g, c.b));
+            float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
+            float lifted =
+              clamp(smoothstep(0.16, 0.52, lum) * uCloudAmt, 0.0, 1.0)
+              * (1.0 - smoothstep(0.30, 0.65, sat));
+            float a = c.a
+              * (uCloudPhoto > 0.5 ? 1.0 : lifted)
+              * (uCloudMerc > 0.5 ? inMerc : 1.0);
+            vec3 tint = uCloudPhoto > 0.5 ? c.rgb : mix(c.rgb, vec3(1.0), 0.75);
+            col = mix(col, tint, a);
+          }
+
+          // Rain goes in last: it is a data overlay, not a photograph, and a
           // storm that vanishes at sunset is a storm nobody can point at.
           if (uHasRain > 0.5) {
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);

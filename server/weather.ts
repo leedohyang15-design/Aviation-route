@@ -12,7 +12,8 @@
 // reprojected here: Mercator's x is linear in longitude, so the remap is a
 // vertical formula the fragment shader does for free (see globe.ts).
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import type { WeatherFrame, WeatherLayer } from '../src/shared/types'
 import {
   WEATHER_INDEX_URL,
@@ -101,14 +102,29 @@ function loadCache(): void {
   }
 }
 
+/** What was last written, so an unchanged cache is not written again. */
+let savedAt = 0
+
+/**
+ * Write the cache without stopping the world.
+ *
+ * This used to be writeFileSync, and the frames it writes are five
+ * base64-encoded satellite images — well over ten megabytes. Leaving weather
+ * mode calls it, so every tap of another tab blocked the hub long enough that
+ * the mode change did not reach the windows until the NEXT tap: from the
+ * control screen it looked as though you could not get out of the weather tab
+ * at all.
+ */
 function saveCache(): void {
   if (!latest.size) return
-  try {
-    const data: Persisted = { version: CACHE_VERSION, saved: Date.now(), frames: weatherFrames() }
-    writeFileSync(CACHE_PATH, JSON.stringify(data))
-  } catch (err) {
-    opsLog(`[weather] could not write ${CACHE_NAME}: ${(err as Error).message}`)
-  }
+  let newest = 0
+  for (const f of latest.values()) newest = Math.max(newest, f.time)
+  if (newest === savedAt) return // nothing new since the last write
+  savedAt = newest
+  const data: Persisted = { version: CACHE_VERSION, saved: Date.now(), frames: weatherFrames() }
+  void writeFile(CACHE_PATH, JSON.stringify(data)).catch((err: Error) => {
+    opsLog(`[weather] could not write ${CACHE_NAME}: ${err.message}`)
+  })
 }
 
 /** The tile path for one layer's newest frame, or null if the index has none. */
@@ -320,9 +336,14 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   if (running) return
   running = true
   if (!latest.size) loadCache()
-  // Whatever we already have goes out immediately, so switching to the tab
-  // never shows an empty earth while a poll is in flight.
-  for (const f of latest.values()) onFrame(f)
+  // Whatever we already have goes out, so switching to the tab never shows an
+  // empty earth while a poll is in flight — but NOT on this tick. Each frame is
+  // several base64'd satellite images, and stringifying them is the hub's only
+  // thread; doing it inline made the mode change itself arrive late.
+  const replay = [...latest.values()]
+  setImmediate(() => {
+    for (const f of replay) if (!stopped) onFrame(f)
+  })
 
   const loop = async (): Promise<void> => {
     if (stopped) {

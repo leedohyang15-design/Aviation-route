@@ -18,15 +18,6 @@ const SHEET_H = 660
  * 28px it crowded the icon, and on a satellite it sat right on the panels. */
 const GAP = 64
 /**
- * How still the map has to be before the card is allowed to reconsider.
- *
- * Long on purpose. A visitor pans in bursts with pauses between them, and at
- * 700ms every one of those pauses was long enough to move the card — which
- * from the other side of the glass looks exactly like the card following your
- * finger. At two and a half seconds it only ever moves once you have stopped.
- */
-const SETTLE_MS = 2500
-/**
  * How long to hold the card back after a selection while the route arrives.
  *
  * The route is a beat behind the selection, so the card was being placed
@@ -119,18 +110,6 @@ function hiddenBy(
   // The object itself must never end up under the card either.
   if (a.x > rect.x && a.x < rect.x + rect.w && a.y > rect.y && a.y < rect.y + rect.h) hard += 100
   return { hard, soft: softTotal ? soft / softTotal : 0 }
-}
-
-/** Whether a card sitting where it is would still be a clean placement — asked
- * fresh against the CURRENT route position, not against the count that was
- * true when it was placed. That stale count was the bug: the card was put
- * somewhere clear, the visitor panned the route underneath it, and the check
- * kept answering "still clear" from a number taken minutes earlier. */
-function stillClear(a: SelectionAnchor, rect: Placement['rect']): boolean {
-  const h = hiddenBy(rect, keepOut(a), a)
-  // A token overlap is not worth moving the card for. Moving it is the thing
-  // the visitor notices; a corner of the line under a corner of the card is not.
-  return h.hard === 0 && h.soft < 0.04
 }
 
 function placeCard(a: SelectionAnchor): Placement {
@@ -330,7 +309,6 @@ export function ControlApp(): JSX.Element {
   const [settled, setSettled] = useState(false)
   const placedRef = useRef<Placement | null>(null)
   const anchorRef = useRef<SelectionAnchor | null>(null)
-  const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const openedAt = useRef(0)
 
   const apply = (p: Placement) => {
@@ -339,14 +317,20 @@ export function ControlApp(): JSX.Element {
     setSettled(true)
   }
 
-  /** Re-hang the card at its chosen offset from wherever the object is now. */
+  /**
+   * Re-hang the card at its chosen offset from wherever the object is now.
+   *
+   * No clamping to the viewport. Clamping is what made it follow the observer:
+   * pan the aircraft off the left edge and a clamped card stops at the edge and
+   * sits there, staring at you, while the thing it describes is gone. It is
+   * nailed to the object — if the object leaves the screen, so does the card.
+   */
   const follow = (a: SelectionAnchor, p: Placement) => {
-    const M = 12
     const w = (p.rect.w * a.span) / p.cam.span // the scale tracks the zoom
     const scale = w / SHEET_W
     const h = SHEET_H * scale
-    const left = Math.max(M, Math.min(window.innerWidth - w - M, a.x + p.off.dx))
-    const top = Math.max(M, Math.min(window.innerHeight - h - M, a.y + p.off.dy))
+    const left = a.x + p.off.dx
+    const top = a.y + p.off.dy
     setPlaced({
       left,
       top,
@@ -356,7 +340,7 @@ export function ControlApp(): JSX.Element {
       transform: `scale(${scale})`,
       transformOrigin: 'top left'
     })
-    placedRef.current = { ...p, rect: { ...p.rect, x: left, y: top, w, h: h } }
+    placedRef.current = { ...p, rect: { ...p.rect, x: left, y: top, w, h } }
   }
 
   useEffect(() => {
@@ -382,12 +366,13 @@ export function ControlApp(): JSX.Element {
     return () => clearTimeout(t)
   }, [state.selected])
   void waitTick
+  // The hub always answers a selection with a route message — points or null.
+  // THAT arriving is the signal, not a detail that happens to have no route in
+  // it yet: the card was being drawn on the strength of a half-filled detail
+  // and then shoved aside when the line turned up under it.
   const routeReady =
     !!state.selected &&
-    (isSat ||
-      (route.icao24 === state.selected && !!route.points) ||
-      (!!d && !d.route) ||
-      Date.now() - openedAt.current > ROUTE_WAIT_MS)
+    (route.icao24 === state.selected || Date.now() - openedAt.current > ROUTE_WAIT_MS)
 
   useEffect(() => {
     anchorRef.current = anchor
@@ -402,24 +387,10 @@ export function ControlApp(): JSX.Element {
       return
     }
 
-    // Placed: ride along with the object, every frame it moves.
+    // Placed: ride along with the object, and never move again. Relocating a
+    // card that is already on screen is the thing that annoys — better to have
+    // picked well once. It is only ever re-chosen for a NEW selection.
     follow(anchor, placedRef.current)
-
-    // And only ever reconsider the OFFSET — never the fact that it is attached
-    // — once the map has been still a good while and the spot has gone bad.
-    if (settleRef.current) clearTimeout(settleRef.current)
-    settleRef.current = setTimeout(() => {
-      const a = anchorRef.current
-      const cur = placedRef.current
-      if (!a || !cur || a.moving) return
-      if (stillClear(a, cur.rect)) return
-      const next = placeCard(a)
-      if (next.hidden > 0) return // nowhere better to go
-      apply(next)
-    }, SETTLE_MS)
-    return () => {
-      if (settleRef.current) clearTimeout(settleRef.current)
-    }
   }, [anchor, routeReady])
 
   // A geostationary satellite can sit still enough that no further anchor ever
@@ -521,8 +492,8 @@ export function ControlApp(): JSX.Element {
         <div className="feed-tabs" role="tablist" aria-label="화면">
           <button
             role="tab"
-            aria-selected={!isSat}
-            className={'feed-tab' + (!isSat ? ' on' : '')}
+            aria-selected={mode === 'flight'}
+            className={'feed-tab' + (mode === 'flight' ? ' on' : '')}
             onClick={() => {
               poke()
               send({ type: 'setMode', mode: 'flight' })

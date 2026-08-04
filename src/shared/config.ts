@@ -205,5 +205,13 @@ export const WEATHER_RAIN_COLOR = Number(readEnv('WEATHER_RAIN_COLOR') ?? 2)
  */
 export const WEATHER_CLOUD_OPACITY = Number(readEnv('WEATHER_CLOUD_OPACITY') ?? 1.45)
 
-/** Width of the requested plate-carrée image; height is half, always. */
-export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 2048)
+/**
+ * Width of the requested plate-carrée image; height is half, always.
+ *
+ * 1024, not 2048. Each disc only covers about a quarter of the globe, so most
+ * of a full-width request is transparency — and five of them, base64'd into one
+ * WebSocket message, is over ten megabytes to stringify. That stringify happens
+ * on the hub's only thread, which is why switching INTO the weather tab used to
+ * hang long enough that the tab looked stuck.
+ */
+export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 1024)

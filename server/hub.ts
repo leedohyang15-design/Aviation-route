@@ -275,6 +275,18 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   function applyMode(next: ExhibitMode): void {
     state.mode = next
     state.selected = null // an icao24 means nothing to the other layer
+
+    // Answer FIRST, then swap the feeds. Starting a layer is not cheap — the
+    // satellite start propagates three thousand TLEs, the weather start replays
+    // three megabytes of cached tiles — and while that runs the hub is not
+    // reading its socket, so the tab a child just pressed stayed unlit for
+    // seconds and they pressed it again. These four are a few hundred bytes.
+    broadcast({ type: 'state', state })
+    // Clear the other layer's selection artefacts on both screens.
+    broadcast({ type: 'route', icao24: '', points: null })
+    broadcast({ type: 'detail', detail: null })
+    broadcast({ type: 'satDetail', detail: null })
+
     // A switch, not an if/else: the else used to mean "anything that isn't
     // satellite resumes OpenSky", which quietly made a third layer start
     // spending credits on aircraft nobody was looking at.
@@ -286,7 +298,6 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         break
       case 'weather':
         stopSatellites()
-      stopWeather()
         feed.setPaused(true, '날씨 모드')
         startWeather(onWeather)
         break
@@ -295,11 +306,6 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         stopWeather()
         feed.setPaused(false)
     }
-    broadcast({ type: 'state', state })
-    // Clear the other layer's selection artefacts on both screens.
-    broadcast({ type: 'route', icao24: '', points: null })
-    broadcast({ type: 'detail', detail: null })
-    broadcast({ type: 'satDetail', detail: null })
   }
 
   // The simulation and live data share no aircraft, so a handover invalidates
