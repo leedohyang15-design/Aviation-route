@@ -17,9 +17,8 @@ const SHEET_H = 660
 /** How far the card keeps off the object it describes. Generous: at the old
  * 28px it crowded the icon, and on a satellite it sat right on the panels. */
 const GAP = 64
-/** How long after a selection the placement stays live — long enough for the
- * route to arrive, short enough that it never chases a pan. */
-const PLACE_WINDOW_MS = 1600
+/** How still the map has to be before the card is allowed to reconsider. */
+const SETTLE_MS = 700
 
 
 /**
@@ -31,7 +30,13 @@ const PLACE_WINDOW_MS = 1600
  * So the renderer sends the route's actual screen footprint and this tries a
  * handful of slots and scores them by how many of those points they'd hide.
  */
-function placeCard(a: SelectionAnchor): React.CSSProperties {
+interface Placement {
+  style: React.CSSProperties
+  /** How many keep-out points this spot covers — 0 is a clean placement. */
+  hidden: number
+}
+
+function placeCard(a: SelectionAnchor): Placement {
   // Shrink as the map zooms in. Zoomed out the card is one object among
   // thousands; zoomed in it is a slab over a nearly empty map.
   const t = Math.max(0, Math.min(1, (a.span - 0.15) / 0.55))
@@ -81,6 +86,7 @@ function placeCard(a: SelectionAnchor): React.CSSProperties {
 
   let best = slots[0]
   let bestCost = Infinity
+  let bestHidden = 0
   for (const s of slots) {
     let hidden = 0
     for (const p of avoid) {
@@ -94,16 +100,20 @@ function placeCard(a: SelectionAnchor): React.CSSProperties {
     if (cost < bestCost) {
       bestCost = cost
       best = s
+      bestHidden = hidden
     }
   }
   return {
-    left: best.x,
-    top: best.y,
-    right: 'auto',
-    bottom: 'auto',
-    width: SHEET_W,
-    transform: `scale(${scale})`,
-    transformOrigin: 'top left'
+    hidden: bestHidden,
+    style: {
+      left: best.x,
+      top: best.y,
+      right: 'auto',
+      bottom: 'auto',
+      width: SHEET_W,
+      transform: `scale(${scale})`,
+      transformOrigin: 'top left'
+    }
   }
 }
 
@@ -179,29 +189,53 @@ export function ControlApp(): JSX.Element {
   const poke = () => pokeRef.current?.()
 
   /**
-   * Where the card sits, decided ONCE per selection and then left alone.
+   * Where the card sits.
    *
-   * It used to track the object every frame, so panning the map dragged the
-   * card along behind your finger — the thing you are moving is the map, and
-   * having the readout chase you across the screen is what made it feel
-   * broken. The anchor is still live for a moment after a selection (the route
-   * arrives a beat later and the placement depends on it), then it locks.
+   * It must not chase the map — the thing you are moving is the map, and having
+   * the readout follow your finger across the screen is what made it feel
+   * broken — and it must not end up sitting on the route, which is what happens
+   * if it never moves at all: pan far enough and the flight path slides under
+   * it. So: it is placed when the selection changes, and after that it moves
+   * only when the map has been STILL for a moment AND the spot it is in has
+   * become a bad one. During a drag or a zoom it does not move at all.
    */
   const [placed, setPlaced] = useState<React.CSSProperties>({})
-  const lockRef = useRef<{ id: string | null; until: number }>({ id: null, until: 0 })
+  const placedRef = useRef<Placement | null>(null)
+  const anchorRef = useRef<SelectionAnchor | null>(null)
+  const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const apply = (p: Placement) => {
+    placedRef.current = p
+    setPlaced(p.style)
+  }
 
   useEffect(() => {
-    lockRef.current = { id: state.selected, until: Date.now() + PLACE_WINDOW_MS }
+    placedRef.current = null
     if (!state.selected) setPlaced({})
   }, [state.selected])
 
   useEffect(() => {
+    anchorRef.current = anchor
     if (!anchor) return
-    const lock = lockRef.current
-    if (lock.id !== state.selected) return
-    if (Date.now() > lock.until) return
-    setPlaced(placeCard(anchor))
-  }, [anchor, state.selected])
+    // No placement yet for this selection: place it now.
+    if (!placedRef.current) {
+      apply(placeCard(anchor))
+      return
+    }
+    // Otherwise wait for the map to stop moving, then only move if we have to.
+    if (settleRef.current) clearTimeout(settleRef.current)
+    settleRef.current = setTimeout(() => {
+      const a = anchorRef.current
+      const cur = placedRef.current
+      if (!a || !cur) return
+      const next = placeCard(a)
+      if (cur.hidden === 0 || next.hidden >= cur.hidden) return // no better spot
+      apply(next)
+    }, SETTLE_MS)
+    return () => {
+      if (settleRef.current) clearTimeout(settleRef.current)
+    }
+  }, [anchor])
   const sheetStyle = placed
 
 

@@ -281,6 +281,10 @@ export class Globe {
    */
   onSelectedAnchor: ((p: SelectionAnchor | null) => void) | null = null
   private lastAnchor: SelectionAnchor | null = null
+  /** Extra keep-out points in world coords (u, screen-y): the endpoint markers,
+   * their place names and their flags. Refreshed each frame by the route block,
+   * and read by emitAnchor on the next one. */
+  private extraAvoid: { u: number; y: number }[] = []
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
   private iCenterLon = 127.5
@@ -852,6 +856,9 @@ export class Globe {
       const q = projectNorm(last.lon, last.lat, this.lonOffset)
       avoid.push(toClient(q.u, 1 - q.v))
     }
+    // The place names and flags sit well outside their markers, so sampling the
+    // route alone left them uncovered by the check and covered by the card.
+    for (const e of this.extraAvoid) avoid.push(toClient(e.u, e.y))
     const c = toClient(worldX, worldY)
     const p: SelectionAnchor = { x: c.x, y: c.y, span: this.targetSpan, avoid }
     const prev = this.lastAnchor
@@ -1816,6 +1823,26 @@ export class Globe {
           }
           placeFlag(this.originFlag, op.u, oy, 1, oOuter, oStretch)
           placeFlag(this.destFlag, dp.u, dy0, -1, dOuter, dStretch)
+          // Remember where the endpoint furniture ended up, corners included, so
+          // the control card can be told to keep off it.
+          this.extraAvoid = []
+          for (const m of [
+            this.originMarker,
+            this.destMarker,
+            this.originLabel,
+            this.destLabel,
+            this.originFlag,
+            this.destFlag
+          ]) {
+            if (!m.visible) continue
+            const hw = m.scale.x / 2
+            const hh = m.scale.y / 2
+            for (const sx of [-1, 0, 1]) {
+              for (const sy of [-1, 0, 1]) {
+                this.extraAvoid.push({ u: m.position.x + sx * hw, y: m.position.y + sy * hh })
+              }
+            }
+          }
           // Split the route at the plane's nearest point; rebuild when that split
           // or the pan offset changed so the line stays aligned to the earth.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
@@ -1869,6 +1896,7 @@ export class Globe {
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
+      this.extraAvoid = []
       this.clearAnchor()
       this.selectedPlane.visible = false
       this.selectedGlow.visible = false
