@@ -18,6 +18,8 @@ interface Props {
   onSelect: (icao24: string | null) => void
   onView: (view: ViewState) => void
   onAttract?: (active: boolean) => void
+  /** Where the selected object is on screen, so the card can sit beside it. */
+  onAnchor?: (p: { x: number; y: number } | null) => void
   dayNightHour?: number | null
   originCity?: string | null
   destCity?: string | null
@@ -35,6 +37,7 @@ export function MapView({
   onSelect,
   onView,
   onAttract,
+  onAnchor,
   dayNightHour = null,
   originCity = null,
   destCity = null,
@@ -49,6 +52,8 @@ export function MapView({
   onSelectRef.current = onSelect
   const onAttractRef = useRef(onAttract)
   onAttractRef.current = onAttract
+  const onAnchorRef = useRef(onAnchor)
+  onAnchorRef.current = onAnchor
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -57,6 +62,7 @@ export function MapView({
     globe.onViewChange = (v) => onViewRef.current(v)
     globe.onSelectChange = (s) => onSelectRef.current(s)
     globe.onAttractChange = (a) => onAttractRef.current?.(a)
+    globe.onSelectedAnchor = (p) => onAnchorRef.current?.(p)
     globeRef.current = globe
     globe.start()
     // Refit/recenter whenever the map area changes size (also fixes the initial

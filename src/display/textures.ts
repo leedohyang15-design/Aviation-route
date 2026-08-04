@@ -216,7 +216,11 @@ export function calloutTexture(
   title: string,
   prefix: string,
   value: string,
-  suffix: string
+  suffix: string,
+  /** Draw it smaller. A satellite's countdown runs to "12시간 1분" and reads as
+   * shouting at the size the flight ETA needs; the aircraft plate is the one
+   * people read across the room, so only this one shrinks. */
+  compact = false
 ): { tex: THREE.CanvasTexture; aspect: number; screenH: number } {
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
   const valueFont = `700 ${27 * SS}px ${MONO}`
@@ -292,7 +296,7 @@ export function calloutTexture(
 
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
-  return { tex, aspect: W / H, screenH: H / CALLOUT_FRAME_H }
+  return { tex, aspect: W / H, screenH: (H / CALLOUT_FRAME_H) * (compact ? 0.72 : 1) }
 }
 
 // Icon color by flight category: passenger cyan, cargo amber, military green,

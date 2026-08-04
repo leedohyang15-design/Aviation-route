@@ -98,6 +98,10 @@ const PULSE_MS = 4200
  * Five is already generous, and past it the shape is doing more harm than the
  * squashing it fixes.
  */
+/** Plates get a shorter leash than icons — see plateStretch. */
+const MAX_PLATE_STRETCH = 2
+/** Widest a corrected plate may become, as a fraction of the frame. */
+const MAX_PLATE_W = 0.86
 const MAX_POLE_STRETCH = 5
 
 interface Eased {
@@ -253,6 +257,13 @@ export class Globe {
   private sphereIcons = false
   onViewChange: ((v: ViewState) => void) | null = null
   onSelectChange: ((icao24: string | null) => void) | null = null
+  /**
+   * Where the selected object currently is, in client pixels — so the control
+   * screen can put its card next to the thing that was tapped instead of always
+   * in the same corner. Null when nothing is selected or it isn't on screen.
+   */
+  onSelectedAnchor: ((p: { x: number; y: number } | null) => void) | null = null
+  private lastAnchor: { x: number; y: number } | null = null
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
   private iCenterLon = 127.5
@@ -571,6 +582,33 @@ export class Globe {
     return (h * texAspect) / this.frameAspect
   }
 
+  /**
+   * How much wider a screen-space plate has to be drawn at this latitude.
+   *
+   * The icons have had this since the dome went in — the projection squeezes
+   * horizontally toward the poles, so a square drawn in the frame arrives on
+   * the dome pinched — but the plates did not, and a callout over Alaska came
+   * out narrow and unreadable while the aircraft under it was correct. Same
+   * correction, same clamp, applied to the same axis.
+   */
+  private poleStretch(latDeg: number, max = MAX_POLE_STRETCH): number {
+    if (!this.sphereIcons) return 1
+    return 1 / Math.max(1 / max, Math.cos((latDeg * Math.PI) / 180))
+  }
+
+  /**
+   * The same correction for a text plate, which needs a tighter leash than an
+   * icon does. An icon is a few percent of the frame, so multiplying it by five
+   * over Alaska is invisible; a callout is already a third of the frame wide,
+   * and five times that is a band across the whole projection. Correct as far
+   * as the plate can be corrected without running off the frame, and let the
+   * last few degrees of latitude go under-corrected rather than unreadable.
+   */
+  private plateStretch(latDeg: number, width: number): number {
+    const want = this.poleStretch(latDeg, MAX_PLATE_STRETCH)
+    return Math.max(1, Math.min(want, MAX_PLATE_W / Math.max(width, 1e-4)))
+  }
+
   /** Apply crisp filtering (mipmaps + anisotropy) to reduce shimmer/blur. */
   private tuneTexture(tex: THREE.Texture): void {
     tex.colorSpace = THREE.SRGBColorSpace
@@ -761,6 +799,34 @@ export class Globe {
     this.applyInteractiveView()
     this.emitView()
     this.resetAttract()
+  }
+
+  /** World coords → client pixels: the inverse of screenToWorld, used to tell
+   * the control screen where the selected object is sitting. */
+  private emitAnchor(worldX: number, worldY: number): void {
+    if (!this.onSelectedAnchor) return
+    const r = this.canvas.getBoundingClientRect()
+    const { left: L, right: R, top: T, bottom: B } = this.viewRect
+    // The world wraps, so the same object can be half a turn out of the rect.
+    let wx = worldX
+    while (wx < L - 0.5) wx += 1
+    while (wx > R + 0.5) wx -= 1
+    const p = {
+      x: r.left + ((wx - L) / (R - L || 1)) * r.width,
+      y: r.top + ((T - worldY) / (T - B || 1)) * r.height
+    }
+    const prev = this.lastAnchor
+    // Only when it actually moved: this runs every frame, and a card that
+    // re-lays-out sixty times a second jitters.
+    if (prev && Math.abs(prev.x - p.x) < 3 && Math.abs(prev.y - p.y) < 3) return
+    this.lastAnchor = p
+    this.onSelectedAnchor(p)
+  }
+
+  private clearAnchor(): void {
+    if (!this.lastAnchor) return
+    this.lastAnchor = null
+    this.onSelectedAnchor?.(null)
   }
 
   /** Screen (client) pixel → world coords in the renderer's [0,1] frame, using
@@ -1294,11 +1360,11 @@ export class Globe {
 
   /** The plate the dome carries: what the object is, and how long until it
    * lands or passes overhead. All-empty clears it. */
-  setCallout(title: string, prefix: string, value: string, suffix: string): void {
+  setCallout(title: string, prefix: string, value: string, suffix: string, compact = false): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
     mat.map?.dispose()
     if (title || prefix || value || suffix) {
-      const { tex, aspect, screenH } = calloutTexture(title, prefix, value, suffix)
+      const { tex, aspect, screenH } = calloutTexture(title, prefix, value, suffix, compact)
       mat.map = this.tuneSprite(tex)
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
@@ -1565,6 +1631,7 @@ export class Globe {
         // A satellite icon is drawn upright; turning it to the ground track just
         // makes the solar panels point at nothing.
         placeSelected(u, 1 - v, this.kind === 'satellite' ? 0 : angle, e.lat)
+        this.emitAnchor(u, 1 - v)
         this.selectedPlane.visible = true
         // Place the info chip. Centered on the plane, offset either to the side
         // (no route) or PERPENDICULAR to the route (routed) so it clears the
@@ -1576,7 +1643,8 @@ export class Globe {
           // row grows the card instead of shrinking the text inside it.
           const lh = (this.infoLabel.userData.screenH as number) * ps
           const asp = (this.infoLabel.userData.aspect as number) || 3
-          const lw = this.quadWidth(lh, asp)
+          const base = this.quadWidth(lh, asp)
+          const lw = base * this.plateStretch(e.lat, base)
           // Push the chip a full plane-width off the anchor so it never covers the
           // aircraft icon, and clamp it to stay on the 2:1 frame.
           const clr = 0.045 * ps
@@ -1589,7 +1657,7 @@ export class Globe {
         // Place the card beside the object, flipping to the other side near the
         // frame edge. Used whenever there's no route axis to work around.
         const placeChipBeside = (au: number, ay: number): void => {
-          const lw = this.quadWidth(
+          const lw = this.plateStretch(e.lat, 0.3) * this.quadWidth(
             (this.infoLabel.userData.screenH as number) * ps,
             (this.infoLabel.userData.aspect as number) || 3
           )
@@ -1624,8 +1692,10 @@ export class Globe {
           const dp = projectNorm(de.lon, de.lat, this.lonOffset)
           const markH = MARKER_H * ps
           const pinH = PIN_H * ps
-          this.originMarker.scale.set(this.quadWidth(markH, 1), markH, 1)
-          this.destMarker.scale.set(this.quadWidth(pinH, PIN_ASPECT), pinH, 1)
+          const oStretch = this.poleStretch(o.lat, MAX_PLATE_STRETCH)
+          const dStretch = this.poleStretch(de.lat, MAX_PLATE_STRETCH)
+          this.originMarker.scale.set(this.quadWidth(markH, 1) * oStretch, markH, 1)
+          this.destMarker.scale.set(this.quadWidth(pinH, PIN_ASPECT) * dStretch, pinH, 1)
           this.originMarker.position.set(op.u, 1 - op.v, 0.65)
           // Lift the pin so its bottom tip (not center) sits on the coordinate.
           this.destMarker.position.set(dp.u, 1 - dp.v + pinH / 2, 0.65)
@@ -1661,31 +1731,44 @@ export class Globe {
           // out, so two names never collide even on a very short route.
           const halfAlong = (w: number, h: number) =>
             Math.abs(dirX) * (w / 2) + Math.abs(dirY) * (h / 2)
-          const placeLabel = (lbl: THREE.Mesh, mu: number, my: number, sign: number): number => {
+          const placeLabel = (
+            lbl: THREE.Mesh,
+            mu: number,
+            my: number,
+            sign: number,
+            stretch: number
+          ): number => {
             const asp = (lbl.userData.aspect as number) || 4
-            const w = this.quadWidth(lblH, asp)
+            const w = this.quadWidth(lblH, asp) * stretch
             lbl.scale.set(w, lblH, 1)
             const half = halfAlong(w, lblH)
             const g = margin + half
             lbl.position.set(mu + sign * dirX * g, my + sign * dirY * g, 0.68)
             return g + half + 0.006 * ps // outer edge (+gap) → where the flag begins
           }
-          const oOuter = placeLabel(this.originLabel, op.u, oy, 1)
-          const dOuter = placeLabel(this.destLabel, dp.u, dy0, -1)
-          const placeFlag = (flag: THREE.Mesh, mu: number, my: number, sign: number, outer: number) => {
+          const oOuter = placeLabel(this.originLabel, op.u, oy, 1, oStretch)
+          const dOuter = placeLabel(this.destLabel, dp.u, dy0, -1, dStretch)
+          const placeFlag = (
+            flag: THREE.Mesh,
+            mu: number,
+            my: number,
+            sign: number,
+            outer: number,
+            stretch: number
+          ) => {
             if (!(flag.material as THREE.MeshBasicMaterial).map) {
               flag.visible = false
               return
             }
             const asp = (flag.userData.aspect as number) || 1.33
-            const w = this.quadWidth(fh, asp)
+            const w = this.quadWidth(fh, asp) * stretch
             flag.scale.set(w, fh, 1)
             const g = outer + halfAlong(w, fh)
             flag.position.set(mu + sign * dirX * g, my + sign * dirY * g, 0.66)
             flag.visible = true
           }
-          placeFlag(this.originFlag, op.u, oy, 1, oOuter)
-          placeFlag(this.destFlag, dp.u, dy0, -1, dOuter)
+          placeFlag(this.originFlag, op.u, oy, 1, oOuter, oStretch)
+          placeFlag(this.destFlag, dp.u, dy0, -1, dOuter, dStretch)
           // Split the route at the plane's nearest point; rebuild when that split
           // or the pan offset changed so the line stays aligned to the earth.
           const idx = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
@@ -1739,6 +1822,7 @@ export class Globe {
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
+      this.clearAnchor()
       this.selectedPlane.visible = false
       this.selectedGlow.visible = false
       this.selectedLights.visible = false

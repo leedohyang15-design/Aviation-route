@@ -9,6 +9,12 @@ import { MapView } from './MapView'
 import { SatelliteSearch } from './SatelliteSearch'
 import { FlightSearch } from './FlightSearch'
 
+/** Card footprint, matched to .sheet in control.css — used to keep the card
+ * inside the window when it is anchored to a tapped object. */
+const SHEET_W = 360
+const SHEET_H = 660
+const GAP = 28
+
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
     useHub('control')
@@ -68,6 +74,20 @@ export function ControlApp(): JSX.Element {
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
+  const sheetStyle = useMemo<React.CSSProperties>(() => {
+    if (!anchor) return {}
+    const W = SHEET_W
+    const H = SHEET_H
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    // Prefer the side with room; the card never covers the object it describes.
+    const right = anchor.x + GAP + W <= vw - 12
+    const left = right ? anchor.x + GAP : Math.max(12, anchor.x - GAP - W)
+    const top = Math.max(12, Math.min(vh - H - 12, anchor.y - H / 2))
+    return { left, top, right: 'auto', bottom: 'auto' }
+  }, [anchor])
+
 
   // Category filter (also serves as the color legend). hiddenCategories lists
   // the categories to hide; clicking a chip toggles it.
@@ -105,6 +125,7 @@ export function ControlApp(): JSX.Element {
         onSelect={(icao24) => send({ type: 'select', icao24 })}
         onView={(view) => send({ type: 'setView', view })}
         onAttract={setAttract}
+        onAnchor={setAnchor}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
         destCity={d?.destination?.city ?? null}
@@ -223,9 +244,13 @@ export function ControlApp(): JSX.Element {
         )}
       </div>
 
-      {/* Bottom sheet: the card slides up on selection. Keyed by icao24 so it
-          re-mounts and replays the pop-up animation on every new selection. */}
-      <div className="sheet">
+      {/* The card sits BESIDE whatever was tapped, not in a fixed corner: on a
+          touchscreen the answer should appear where the finger is, and a corner
+          panel meant a child pressed a dot on the left and the reply arrived a
+          metre away. Falls back to the corner when the object is off screen.
+          Keyed by icao24 so it re-mounts and replays the pop-up on every new
+          selection. */}
+      <div className="sheet" style={sheetStyle}>
         {isSat
           ? state.selected && (
               <div className="sheet-card" key={state.selected}>

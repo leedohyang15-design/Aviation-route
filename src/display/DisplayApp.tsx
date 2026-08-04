@@ -149,8 +149,15 @@ export function DisplayApp(): JSX.Element {
     )
   }, [isSat, d])
   useEffect(
-    () => globeRef.current?.setCallout(callout.title, callout.prefix, callout.value, callout.suffix),
-    [callout]
+    () =>
+      globeRef.current?.setCallout(
+        callout.title,
+        callout.prefix,
+        callout.value,
+        callout.suffix,
+        isSat
+      ),
+    [callout, isSat]
   )
 
   return (
