@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
@@ -17,6 +17,95 @@ const SHEET_H = 660
 /** How far the card keeps off the object it describes. Generous: at the old
  * 28px it crowded the icon, and on a satellite it sat right on the panels. */
 const GAP = 64
+/** How long after a selection the placement stays live — long enough for the
+ * route to arrive, short enough that it never chases a pan. */
+const PLACE_WINDOW_MS = 1600
+
+
+/**
+ * Pick a spot for the card that covers as little of the route as possible.
+ *
+ * "Put it on the side the route isn't on" was too crude: a flight whose path
+ * runs off both sides of the aircraft has no free side, and the card landed on
+ * the destination — the one thing the visitor tapped the aircraft to find out.
+ * So the renderer sends the route's actual screen footprint and this tries a
+ * handful of slots and scores them by how many of those points they'd hide.
+ */
+function placeCard(a: SelectionAnchor): React.CSSProperties {
+  // Shrink as the map zooms in. Zoomed out the card is one object among
+  // thousands; zoomed in it is a slab over a nearly empty map.
+  const t = Math.max(0, Math.min(1, (a.span - 0.15) / 0.55))
+  const scale = 0.74 + 0.26 * t
+  const W = SHEET_W * scale
+  const H = SHEET_H * scale
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const gap = GAP * scale
+  const M = 12
+
+  // The overlay furniture counts as "must not cover" too — the title block and
+  // the chips top-left, the compass, zoom and reset top-right, the touch invite
+  // along the bottom. Read from the DOM rather than hard-coded, so it stays
+  // right whatever the exhibit's screen turns out to be.
+  const avoid = [...a.avoid]
+  for (const sel of ['.ctrl-info', '.ctrl-zoom', '.reset-btn', '.ctrl-compass', '.touch-hint']) {
+    for (const el of Array.from(document.querySelectorAll(sel))) {
+      const r = el.getBoundingClientRect()
+      if (!r.width || !r.height) continue
+      for (let fx = 0; fx <= 1; fx += 0.25) {
+        for (let fy = 0; fy <= 1; fy += 0.25) {
+          avoid.push({ x: r.left + r.width * fx, y: r.top + r.height * fy })
+        }
+      }
+    }
+  }
+
+  const clampX = (x: number) => Math.max(M, Math.min(vw - W - M, x))
+  const clampY = (y: number) => Math.max(M, Math.min(vh - H - M, y))
+  const beside = clampY(a.y - H / 2)
+  // Beside the object first, then the corners — a corner is further from what
+  // it describes, but a card that hides the flight path is worse than one that
+  // is a hand's width away from it.
+  // `bias` ranks otherwise-equal slots: beside the object first, then the two
+  // bottom corners, then the top ones — the top of the frame carries the title
+  // block, the chips and the search on the left and the compass and the zoom
+  // controls on the right, and a card up there hides those instead.
+  const slots = [
+    { x: clampX(a.x + gap), y: beside, bias: 0 },
+    { x: clampX(a.x - gap - W), y: beside, bias: 0 },
+    { x: vw - W - M, y: vh - H - M, bias: 2 },
+    { x: M, y: vh - H - M, bias: 2 },
+    { x: vw - W - M, y: M, bias: 6 },
+    { x: M, y: M, bias: 6 }
+  ]
+
+  let best = slots[0]
+  let bestCost = Infinity
+  for (const s of slots) {
+    let hidden = 0
+    for (const p of avoid) {
+      if (p.x > s.x - 8 && p.x < s.x + W + 8 && p.y > s.y - 8 && p.y < s.y + H + 8) hidden++
+    }
+    // The object itself must never end up under the card either.
+    if (a.x > s.x && a.x < s.x + W && a.y > s.y && a.y < s.y + H) hidden += 100
+    // Among equally clear slots, take the least awkward, then the nearest.
+    const cost =
+      hidden * 1000 + s.bias * 20 + Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y) / 100
+    if (cost < bestCost) {
+      bestCost = cost
+      best = s
+    }
+  }
+  return {
+    left: best.x,
+    top: best.y,
+    right: 'auto',
+    bottom: 'auto',
+    width: SHEET_W,
+    transform: `scale(${scale})`,
+    transformOrigin: 'top left'
+  }
+}
 
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
@@ -89,38 +178,31 @@ export function ControlApp(): JSX.Element {
    * because its 30s countdown had been running the whole time. */
   const poke = () => pokeRef.current?.()
 
-  const sheetStyle = useMemo<React.CSSProperties>(() => {
-    if (!anchor) return {}
-    // Shrink as the map zooms in. Zoomed out the card is one object among
-    // thousands; zoomed in it is a slab over a nearly empty map, and it covered
-    // the very route the visitor had just zoomed in to look at.
-    const t = Math.max(0, Math.min(1, (anchor.span - 0.15) / 0.55))
-    const scale = 0.74 + 0.26 * t
-    const W = SHEET_W * scale
-    const H = SHEET_H * scale
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    const gap = GAP * scale
-    // The route and the destination marker run off to one side; put the card on
-    // the other one, and only override that if there genuinely isn't room.
-    const fits = (x: number) => x >= 12 && x + W <= vw - 12
-    const rightOf = anchor.x + gap
-    const leftOf = anchor.x - gap - W
-    const preferLeft = anchor.avoidX > 0
-    const first = preferLeft ? leftOf : rightOf
-    const second = preferLeft ? rightOf : leftOf
-    const left = fits(first) ? first : fits(second) ? second : Math.max(12, Math.min(vw - W - 12, first))
-    const top = Math.max(12, Math.min(vh - H - 12, anchor.y - H / 2))
-    return {
-      left,
-      top,
-      right: 'auto',
-      bottom: 'auto',
-      width: SHEET_W,
-      transform: `scale(${scale})`,
-      transformOrigin: 'top left'
-    }
-  }, [anchor])
+  /**
+   * Where the card sits, decided ONCE per selection and then left alone.
+   *
+   * It used to track the object every frame, so panning the map dragged the
+   * card along behind your finger — the thing you are moving is the map, and
+   * having the readout chase you across the screen is what made it feel
+   * broken. The anchor is still live for a moment after a selection (the route
+   * arrives a beat later and the placement depends on it), then it locks.
+   */
+  const [placed, setPlaced] = useState<React.CSSProperties>({})
+  const lockRef = useRef<{ id: string | null; until: number }>({ id: null, until: 0 })
+
+  useEffect(() => {
+    lockRef.current = { id: state.selected, until: Date.now() + PLACE_WINDOW_MS }
+    if (!state.selected) setPlaced({})
+  }, [state.selected])
+
+  useEffect(() => {
+    if (!anchor) return
+    const lock = lockRef.current
+    if (lock.id !== state.selected) return
+    if (Date.now() > lock.until) return
+    setPlaced(placeCard(anchor))
+  }, [anchor, state.selected])
+  const sheetStyle = placed
 
 
   // Category filter (also serves as the color legend). hiddenCategories lists

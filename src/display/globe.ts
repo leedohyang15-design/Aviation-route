@@ -51,8 +51,14 @@ export interface SelectionAnchor {
   y: number
   /** Current view span (1 = whole world, MIN_SPAN = fully zoomed in). */
   span: number
-  /** Screen-x direction of the route from the object: -1, 0 or +1. */
-  avoidX: number
+  /**
+   * Everything on screen the card must not cover, in client pixels: the route
+   * itself, sampled along its length, plus its two endpoint markers. A single
+   * "which side is the route on" hint was not enough — a route that runs off
+   * both sides of the aircraft has no clear side, and the card landed on the
+   * destination anyway.
+   */
+  avoid: { x: number; y: number }[]
 }
 
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
@@ -275,9 +281,6 @@ export class Globe {
    */
   onSelectedAnchor: ((p: SelectionAnchor | null) => void) | null = null
   private lastAnchor: SelectionAnchor | null = null
-  /** Screen-x direction the route runs in from the selected object: -1 left,
-   * +1 right, 0 unknown. The card is placed on the other side. */
-  private routeSideX = 0
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
   private iCenterLon = 127.5
@@ -825,12 +828,32 @@ export class Globe {
     let wx = worldX
     while (wx < L - 0.5) wx += 1
     while (wx > R + 0.5) wx -= 1
-    const p: SelectionAnchor = {
-      x: r.left + ((wx - L) / (R - L || 1)) * r.width,
-      y: r.top + ((T - worldY) / (T - B || 1)) * r.height,
-      span: this.targetSpan,
-      avoidX: this.routeSideX
+    const toClient = (u: number, y: number) => {
+      let x = u
+      while (x < L - 0.5) x += 1
+      while (x > R + 0.5) x -= 1
+      return {
+        x: r.left + ((x - L) / (R - L || 1)) * r.width,
+        y: r.top + ((T - y) / (T - B || 1)) * r.height
+      }
     }
+    // Sample the route sparsely — the card only needs to know where the line
+    // runs, not to trace it — and always include both ends, which carry the
+    // markers, the place names and the flags.
+    const avoid: { x: number; y: number }[] = []
+    const pts = this.routePoints
+    if (pts && pts.length) {
+      const step = Math.max(1, Math.ceil(pts.length / 40))
+      for (let i = 0; i < pts.length; i += step) {
+        const q = projectNorm(pts[i].lon, pts[i].lat, this.lonOffset)
+        avoid.push(toClient(q.u, 1 - q.v))
+      }
+      const last = pts[pts.length - 1]
+      const q = projectNorm(last.lon, last.lat, this.lonOffset)
+      avoid.push(toClient(q.u, 1 - q.v))
+    }
+    const c = toClient(worldX, worldY)
+    const p: SelectionAnchor = { x: c.x, y: c.y, span: this.targetSpan, avoid }
     const prev = this.lastAnchor
     // Only when it actually moved: this runs every frame, and a card that
     // re-lays-out sixty times a second jitters.
@@ -838,7 +861,7 @@ export class Globe {
       prev &&
       Math.abs(prev.x - p.x) < 3 &&
       Math.abs(prev.y - p.y) < 3 &&
-      prev.avoidX === p.avoidX &&
+      prev.avoid.length === p.avoid.length &&
       Math.abs(prev.span - p.span) < 0.01
     ) {
       return
@@ -1714,18 +1737,6 @@ export class Globe {
           const de = this.routePoints[this.routePoints.length - 1]
           const op = projectNorm(o.lon, o.lat, this.lonOffset)
           const dp = projectNorm(de.lon, de.lat, this.lonOffset)
-          // Which side of the object the rest of the journey lies on, so the
-          // control card can be put on the other one — a card that covers the
-          // route and the destination hides the two things the visitor tapped
-          // the aircraft to see.
-          let side = 0
-          for (const q of [op, dp]) {
-            let dx = q.u - u
-            if (dx > 0.5) dx -= 1
-            else if (dx < -0.5) dx += 1
-            side += Math.sign(dx)
-          }
-          this.routeSideX = Math.sign(side)
           const markH = MARKER_H * ps
           const pinH = PIN_H * ps
           const oStretch = this.poleStretch(o.lat, MAX_PLATE_STRETCH)
@@ -1858,7 +1869,6 @@ export class Globe {
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
-      this.routeSideX = 0
       this.clearAnchor()
       this.selectedPlane.visible = false
       this.selectedGlow.visible = false
