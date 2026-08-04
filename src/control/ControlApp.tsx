@@ -32,8 +32,55 @@ const SETTLE_MS = 700
  */
 interface Placement {
   style: React.CSSProperties
+  /** Where it actually is, so a later frame can ask whether it still works. */
+  rect: { x: number; y: number; w: number; h: number }
   /** How many keep-out points this spot covers — 0 is a clean placement. */
   hidden: number
+}
+
+/** Everything the card must not cover: what the renderer reported (the route,
+ * its endpoint markers, the place names and the flags) plus the control
+ * overlay, read from the DOM so it stays right on any screen. */
+function keepOut(a: SelectionAnchor): { x: number; y: number }[] {
+  const avoid = [...a.avoid]
+  for (const sel of ['.ctrl-info', '.ctrl-zoom', '.reset-btn', '.ctrl-compass', '.touch-hint']) {
+    for (const el of Array.from(document.querySelectorAll(sel))) {
+      const r = el.getBoundingClientRect()
+      if (!r.width || !r.height) continue
+      for (let fx = 0; fx <= 1; fx += 0.25) {
+        for (let fy = 0; fy <= 1; fy += 0.25) {
+          avoid.push({ x: r.left + r.width * fx, y: r.top + r.height * fy })
+        }
+      }
+    }
+  }
+  return avoid
+}
+
+/** How much a card at this rect would hide, given the current keep-out set. */
+function hiddenBy(
+  rect: { x: number; y: number; w: number; h: number },
+  avoid: { x: number; y: number }[],
+  a: SelectionAnchor
+): number {
+  let hidden = 0
+  for (const p of avoid) {
+    if (p.x > rect.x - 8 && p.x < rect.x + rect.w + 8 && p.y > rect.y - 8 && p.y < rect.y + rect.h + 8) {
+      hidden++
+    }
+  }
+  // The object itself must never end up under the card either.
+  if (a.x > rect.x && a.x < rect.x + rect.w && a.y > rect.y && a.y < rect.y + rect.h) hidden += 100
+  return hidden
+}
+
+/** Whether a card sitting where it is would still be a clean placement — asked
+ * fresh against the CURRENT route position, not against the count that was
+ * true when it was placed. That stale count was the bug: the card was put
+ * somewhere clear, the visitor panned the route underneath it, and the check
+ * kept answering "still clear" from a number taken minutes earlier. */
+function stillClear(a: SelectionAnchor, rect: Placement['rect']): boolean {
+  return hiddenBy(rect, keepOut(a), a) === 0
 }
 
 function placeCard(a: SelectionAnchor): Placement {
@@ -52,18 +99,7 @@ function placeCard(a: SelectionAnchor): Placement {
   // the chips top-left, the compass, zoom and reset top-right, the touch invite
   // along the bottom. Read from the DOM rather than hard-coded, so it stays
   // right whatever the exhibit's screen turns out to be.
-  const avoid = [...a.avoid]
-  for (const sel of ['.ctrl-info', '.ctrl-zoom', '.reset-btn', '.ctrl-compass', '.touch-hint']) {
-    for (const el of Array.from(document.querySelectorAll(sel))) {
-      const r = el.getBoundingClientRect()
-      if (!r.width || !r.height) continue
-      for (let fx = 0; fx <= 1; fx += 0.25) {
-        for (let fy = 0; fy <= 1; fy += 0.25) {
-          avoid.push({ x: r.left + r.width * fx, y: r.top + r.height * fy })
-        }
-      }
-    }
-  }
+  const avoid = keepOut(a)
 
   const clampX = (x: number) => Math.max(M, Math.min(vw - W - M, x))
   const clampY = (y: number) => Math.max(M, Math.min(vh - H - M, y))
@@ -88,12 +124,7 @@ function placeCard(a: SelectionAnchor): Placement {
   let bestCost = Infinity
   let bestHidden = 0
   for (const s of slots) {
-    let hidden = 0
-    for (const p of avoid) {
-      if (p.x > s.x - 8 && p.x < s.x + W + 8 && p.y > s.y - 8 && p.y < s.y + H + 8) hidden++
-    }
-    // The object itself must never end up under the card either.
-    if (a.x > s.x && a.x < s.x + W && a.y > s.y && a.y < s.y + H) hidden += 100
+    const hidden = hiddenBy({ x: s.x, y: s.y, w: W, h: H }, avoid, a)
     // Among equally clear slots, take the least awkward, then the nearest.
     const cost =
       hidden * 1000 + s.bias * 20 + Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y) / 100
@@ -105,6 +136,7 @@ function placeCard(a: SelectionAnchor): Placement {
   }
   return {
     hidden: bestHidden,
+    rect: { x: best.x, y: best.y, w: W, h: H },
     style: {
       left: best.x,
       top: best.y,
@@ -228,8 +260,11 @@ export function ControlApp(): JSX.Element {
       const a = anchorRef.current
       const cur = placedRef.current
       if (!a || !cur) return
+      // Is where it is STILL clear, against the route as it is now? Only if not
+      // does it get to move, and only to somewhere better.
+      if (stillClear(a, cur.rect)) return
       const next = placeCard(a)
-      if (cur.hidden === 0 || next.hidden >= cur.hidden) return // no better spot
+      if (next.hidden >= hiddenBy(cur.rect, keepOut(a), a)) return
       apply(next)
     }, SETTLE_MS)
     return () => {
