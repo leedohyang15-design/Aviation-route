@@ -24,7 +24,8 @@ import {
   WEATHER_GIBS_URL,
   WEATHER_GIBS_LAYERS,
   WEATHER_GIBS_FALLBACK_LAYERS,
-  WEATHER_GIBS_WIDTH
+  WEATHER_GIBS_WIDTH,
+  WEATHER_RAIN_COLOR
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
 import { dataPath, dataPathCandidates } from './datadir'
@@ -118,7 +119,7 @@ function newestPath(index: Index, layer: WeatherLayer): { time: number; path: st
  */
 const TILE_STYLE: Record<WeatherLayer, string> = {
   cloud: '0/0_0',
-  rain: '2/1_1'
+  rain: `${WEATHER_RAIN_COLOR}/1_1`
 }
 
 /** Why the last tile that failed, failed — so the log can say more than "no". */

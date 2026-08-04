@@ -435,6 +435,16 @@ export function ControlApp(): JSX.Element {
                 {label}
               </button>
             ))}
+            {/* Radar colour is a scale, not a category, and without the key the
+                red just looks alarming. Drawn to match RainViewer's Universal
+                Blue ramp — if WEATHER_RAIN_COLOR changes, change this too. */}
+            {!hiddenWeather.includes('rain') && (
+              <div className="rain-key">
+                <span>약한 비</span>
+                <i />
+                <span>강한 비</span>
+              </div>
+            )}
           </div>
         ) : isSat ? (
           <div className="legend">

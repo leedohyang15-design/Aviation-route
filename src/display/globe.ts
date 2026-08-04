@@ -427,7 +427,27 @@ export class Globe {
           // lights show through the gaps.
           if (uHasCloud > 0.5) {
             vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            day = mix(day, c.rgb, c.a * (uCloudMerc > 0.5 ? inMerc : 1.0));
+            // The satellite products are pictures of the earth, not cloud
+            // overlays: they are opaque everywhere inside the sensor's reach,
+            // including the black space around a geostationary disc. Painted on
+            // as-is they replace our globe with a rounded rectangle and a hard
+            // edge where the disc ends.
+            //
+            // So the cloud is extracted rather than pasted. Cloud is the bright,
+            // colourless part of the image; ocean and unlit land are dark, and
+            // city lights and deserts are bright but strongly coloured. Reading
+            // opacity out of luminance-minus-saturation makes the disc's own
+            // edge disappear (black is transparent), leaves the night side to
+            // the terminator, and puts real weather over our own earth.
+            float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+            float mx = max(c.r, max(c.g, c.b));
+            float mn = min(c.r, min(c.g, c.b));
+            float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
+            float a = c.a
+              * smoothstep(0.22, 0.62, lum)
+              * (1.0 - smoothstep(0.30, 0.65, sat))
+              * (uCloudMerc > 0.5 ? inMerc : 1.0);
+            day = mix(day, c.rgb, a);
           }
 
           // Night = moonlit earth + city lights (from the night texture) glowing.

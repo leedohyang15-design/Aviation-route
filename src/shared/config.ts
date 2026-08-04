@@ -178,5 +178,12 @@ export const WEATHER_GIBS_FALLBACK_LAYERS = (
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
+/**
+ * RainViewer's colour scheme for the rain tiles. 2 is Universal Blue, the one
+ * the free tier serves, and the one the legend on the control screen is drawn
+ * to match — change them together or the key will lie.
+ */
+export const WEATHER_RAIN_COLOR = Number(readEnv('WEATHER_RAIN_COLOR') ?? 2)
+
 /** Width of the requested plate-carrée image; height is half, always. */
 export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 2048)

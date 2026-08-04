@@ -562,3 +562,27 @@ body,
   font-size: 13px;
   color: var(--muted);
 }
+
+/* Radar intensity key. Sits under the weather chips, and only while rain is
+   actually on screen — a key for something invisible is just clutter. */
+.ctrl-info .rain-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(16, 24, 43, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #c8d6e8;
+  pointer-events: none;
+}
+.ctrl-info .rain-key i {
+  width: 92px;
+  height: 8px;
+  border-radius: 4px;
+  /* RainViewer "Universal Blue": light blue → blue → green → yellow → red. */
+  background: linear-gradient(90deg, #8ad3ff, #2a7fe0, #23c552, #f2d43a, #f24b3a);
+}
