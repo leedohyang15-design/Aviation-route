@@ -53,8 +53,6 @@ interface Placement {
    * time the offset is reconsidered is when it has started covering something.
    */
   off: { dx: number; dy: number }
-  /** Where the camera was pointing when this was decided. */
-  cam: { span: number; lon: number }
   /** Where it actually is, so a later frame can ask whether it still works. */
   rect: { x: number; y: number; w: number; h: number }
   /** How many keep-out points this spot covers — 0 is a clean placement. */
@@ -112,11 +110,23 @@ function hiddenBy(
   return { hard, soft: softTotal ? soft / softTotal : 0 }
 }
 
+/**
+ * How big the card is at a given camera span. Bounded, and deliberately so.
+ *
+ * The card used to be re-scaled by the RATIO of the current span to the span it
+ * was placed at, which has no bottom and no top: zoom out far enough and the
+ * card grew past the edge of the screen, zoom in and it shrank to a stamp. The
+ * card is a thing you read, not a thing on the map — it only ever moves between
+ * three quarters and full size, and it does that so a zoomed-in map (nearly
+ * empty) doesn't sit under a slab.
+ */
+function cardScale(span: number): number {
+  const t = Math.max(0, Math.min(1, (span - 0.15) / 0.55))
+  return 0.74 + 0.26 * t
+}
+
 function placeCard(a: SelectionAnchor): Placement {
-  // Shrink as the map zooms in. Zoomed out the card is one object among
-  // thousands; zoomed in it is a slab over a nearly empty map.
-  const t = Math.max(0, Math.min(1, (a.span - 0.15) / 0.55))
-  const scale = 0.74 + 0.26 * t
+  const scale = cardScale(a.span)
   const W = SHEET_W * scale
   const H = SHEET_H * scale
   const vw = window.innerWidth
@@ -186,7 +196,6 @@ function placeCard(a: SelectionAnchor): Placement {
   return {
     hidden: bestHidden,
     off: { dx: best.x - a.x, dy: best.y - a.y },
-    cam: { span: a.span, lon: a.viewLon },
     rect: { x: best.x, y: best.y, w: W, h: H },
     style: {
       left: best.x,
@@ -294,15 +303,19 @@ export function ControlApp(): JSX.Element {
   const poke = () => pokeRef.current?.()
 
   /**
-   * Where the card sits.
+   * Where the card sits — and only satellites get a say in it.
    *
-   * It must not chase the map — the thing you are moving is the map, and having
-   * the readout follow your finger across the screen is what made it feel
-   * broken — and it must not end up sitting on the route, which is what happens
-   * if it never moves at all: pan far enough and the flight path slides under
-   * it. So: it is placed when the selection changes, and after that it moves
-   * only when the map has been STILL for a moment AND the spot it is in has
-   * become a bad one. During a drag or a zoom it does not move at all.
+   * An aircraft's card goes back in the bottom-right corner, where it started.
+   * Beside-the-object was the right idea for a satellite, which is a dot with
+   * nothing else attached to it, and the wrong one for a flight: a flight comes
+   * with an origin, a destination, two flags and a line across half the world,
+   * and no offset from the aircraft avoids all of them at every zoom. The
+   * corner never covers any of it.
+   *
+   * When it IS anchored (satellites), it is placed once and then only ever
+   * rides along with the object — it never re-chooses its spot, because a card
+   * that relocates itself while you are reading it is worse than one in a
+   * slightly awkward place.
    */
   const [placed, setPlaced] = useState<React.CSSProperties>({})
   /** False until the card has a final home, so it is never drawn mid-decision. */
@@ -326,8 +339,8 @@ export function ControlApp(): JSX.Element {
    * nailed to the object — if the object leaves the screen, so does the card.
    */
   const follow = (a: SelectionAnchor, p: Placement) => {
-    const w = (p.rect.w * a.span) / p.cam.span // the scale tracks the zoom
-    const scale = w / SHEET_W
+    const scale = cardScale(a.span) // bounded — never a ratio against the old span
+    const w = SHEET_W * scale
     const h = SHEET_H * scale
     const left = a.x + p.off.dx
     const top = a.y + p.off.dy
@@ -374,9 +387,27 @@ export function ControlApp(): JSX.Element {
     !!state.selected &&
     (route.icao24 === state.selected || Date.now() - openedAt.current > ROUTE_WAIT_MS)
 
+  /**
+   * Only the satellite card listens for the anchor.
+   *
+   * It arrives every frame the map is moving, and each one is a setState — in
+   * flight mode that re-rendered the whole control window sixty times a second
+   * to position a card that is nailed to the corner and does not move.
+   */
+  const anchorSink = isSat ? setAnchor : undefined
+
+  // Aircraft: straight to the corner, the moment there is something to show.
+  // Nothing to wait for — the corner cannot land on the route, so there is no
+  // reason to hold the card back until the line arrives.
+  useEffect(() => {
+    if (isSat || !state.selected) return
+    setPlaced({})
+    setSettled(true)
+  }, [isSat, state.selected])
+
   useEffect(() => {
     anchorRef.current = anchor
-    if (!anchor) return
+    if (!isSat || !anchor) return
 
     if (!placedRef.current) {
       if (!routeReady) return
@@ -391,18 +422,18 @@ export function ControlApp(): JSX.Element {
     // card that is already on screen is the thing that annoys — better to have
     // picked well once. It is only ever re-chosen for a NEW selection.
     follow(anchor, placedRef.current)
-  }, [anchor, routeReady])
+  }, [anchor, routeReady, isSat])
 
   // A geostationary satellite can sit still enough that no further anchor ever
   // arrives, so the wait needs its own alarm clock as a backstop.
   useEffect(() => {
-    if (!state.selected || placedRef.current || !routeReady) return
+    if (!isSat || !state.selected || placedRef.current || !routeReady) return
     const t = setTimeout(() => {
       const a = anchorRef.current
       if (a && !placedRef.current) apply(placeCard(a))
     }, CAMERA_QUIET_MS)
     return () => clearTimeout(t)
-  }, [state.selected, routeReady])
+  }, [isSat, state.selected, routeReady])
 
   const sheetStyle = placed
 
@@ -446,7 +477,7 @@ export function ControlApp(): JSX.Element {
         onSelect={(icao24) => send({ type: 'select', icao24 })}
         onView={(view) => send({ type: 'setView', view })}
         onAttract={setAttract}
-        onAnchor={setAnchor}
+        onAnchor={anchorSink}
         pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
@@ -485,7 +516,14 @@ export function ControlApp(): JSX.Element {
             line of small grey text, which is how a whole evaluation session got
             spent on simulated aircraft. Make it a badge nobody can miss. */}
         <div className={'src ' + (isWeather ? (weatherAgeMin == null ? 'pending' : 'ok') : isSat || live ? 'ok' : 'pending')}>
-          {isWeather ? 'RainViewer · 10분마다 갱신' : isSat ? '위성 궤도 · 실시간 계산' : statusText}
+          {/* The two layers come from two different places and the badge has to
+              say both — it is the exhibit's only attribution. Cloud is NASA
+              GIBS (geostationary infrared); rain is RainViewer's radar. */}
+          {isWeather
+            ? '구름 NASA GIBS · 비 RainViewer'
+            : isSat
+            ? '위성 궤도 · 실시간 계산'
+            : statusText}
         </div>
 
         {/* Layer tabs — aircraft or satellites. */}
@@ -621,12 +659,11 @@ export function ControlApp(): JSX.Element {
         )}
       </div>
 
-      {/* The card sits BESIDE whatever was tapped, not in a fixed corner: on a
-          touchscreen the answer should appear where the finger is, and a corner
-          panel meant a child pressed a dot on the left and the reply arrived a
-          metre away. Falls back to the corner when the object is off screen.
-          Keyed by icao24 so it re-mounts and replays the pop-up on every new
-          selection. */}
+      {/* Aircraft: bottom-right corner (the CSS default, i.e. no inline style),
+          clear of the flight path, the two flags and the place names. Satellite:
+          beside the object, since an orbit is a ring that says the same thing
+          everywhere and there is nothing else on screen to cover. Keyed by the
+          selection so it re-mounts and replays the pop-up each time. */}
       <div className="sheet" style={sheetStyle} hidden={!settled}>
         {isWeather
           ? null
