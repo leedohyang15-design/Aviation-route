@@ -11,15 +11,39 @@ import './detail-card.css'
  * "10,900 m" is a number, not a height — the satellite card has had these
  * comparisons since it was written and the flight card never did, so the one
  * figure a child actually asks about ("how high is that?") was the one with no
- * answer. Three references, so the sentence changes as a flight climbs rather
- * than always reaching for the same landmark.
+ * answer.
+ *
+ * The first version picked the landmark by altitude band, which meant every
+ * aircraft at cruise — nearly all of them — got the same sentence about
+ * Hallasan. Instead: any landmark the aircraft is comfortably above is a fair
+ * comparison, so choose among them by the aircraft's own address. Stable for a
+ * given aircraft, different from its neighbour, and a visitor watching several
+ * flights sees several different pictures.
  */
-function altitudeInHumanTerms(m: number | null | undefined): string | null {
+const LANDMARKS = [
+  { name: '63빌딩', m: 250 },
+  { name: '롯데월드타워', m: 555 },
+  { name: '남산', m: 265 },
+  { name: '한라산', m: 1947 },
+  { name: '백두산', m: 2744 },
+  { name: '몽블랑', m: 4808 },
+  { name: '에베레스트', m: 8849 }
+] as const
+
+function altitudeInHumanTerms(m: number | null | undefined, icao24: string): string | null {
   if (m == null || m < 150) return null
-  if (m < 1000) return `63빌딩(250 m)의 ${(m / 250).toFixed(1)}배 높이`
-  if (m < 4000) return `롯데월드타워(555 m) ${Math.round(m / 555)}개 높이`
-  return `한라산(1,947 m)의 ${(m / 1947).toFixed(1)}배 높이`
+  // Only landmarks the aircraft clears by half again, so the multiple is worth
+  // saying at all ("1.02배 높이" tells nobody anything).
+  const fair = LANDMARKS.filter((l) => m / l.m >= 1.5)
+  if (!fair.length) return null
+  let h = 0
+  for (const ch of icao24) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  const pick = fair[h % fair.length]
+  const ratio = m / pick.m
+  const times = ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1)
+  return `${pick.name}(${pick.m.toLocaleString()} m)의 ${times}배 높이`
 }
+
 
 const KST = 'Asia/Seoul'
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
@@ -218,8 +242,8 @@ export function FlightDetailCard({ aircraft: sel, detail: d }: Props): JSX.Eleme
         </div>
       </dl>
 
-      {altitudeInHumanTerms(sel.altitude) && (
-        <div className="bp-scale">↕ {altitudeInHumanTerms(sel.altitude)}</div>
+      {altitudeInHumanTerms(sel.altitude, sel.icao24) && (
+        <div className="bp-scale">↕ {altitudeInHumanTerms(sel.altitude, sel.icao24)}</div>
       )}
 
       {d && (d.progress != null || d.route) && (

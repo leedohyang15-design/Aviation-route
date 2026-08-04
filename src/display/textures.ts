@@ -295,61 +295,6 @@ export function calloutTexture(
   return { tex, aspect: W / H, screenH: H / CALLOUT_FRAME_H }
 }
 
-/**
- * The colour key, in the corner of the dome.
- *
- * The map has always been colour-coded — cyan passenger, amber cargo, green
- * military, grey everything else; cyan low orbit, violet Starlink and so on —
- * and that key existed only as chips on the operator's screen. A visitor at the
- * dome could see the colours and had no way to learn what they meant.
- */
-export function legendTexture(
-  items: readonly { color: string; label: string }[]
-): { tex: THREE.CanvasTexture; aspect: number; screenH: number } {
-  const font = `600 ${15 * SS}px ${SANS}`
-  const measuring = document.createElement('canvas').getContext('2d') as Ctx
-  measuring.font = font
-  const ROW = 21
-  const DOT = 8
-  const PAD = 12
-  const textW = Math.max(...items.map((i) => measuring.measureText(i.label).width / SS))
-  const W = PAD + DOT + 8 + textW + PAD
-  const H = PAD + items.length * ROW + PAD - 4
-
-  const c = document.createElement('canvas')
-  c.width = Math.ceil(W * SS)
-  c.height = Math.ceil(H * SS)
-  const g = c.getContext('2d') as Ctx
-
-  const r = 7 * SS
-  g.beginPath()
-  g.moveTo(r, 0)
-  g.arcTo(c.width, 0, c.width, c.height, r)
-  g.arcTo(c.width, c.height, 0, c.height, r)
-  g.arcTo(0, c.height, 0, 0, r)
-  g.arcTo(0, 0, c.width, 0, r)
-  g.closePath()
-  // Darker and quieter than the callout: this is a reference, not the message.
-  g.fillStyle = 'rgba(8,12,20,0.72)'
-  g.fill()
-
-  g.font = font
-  items.forEach((item, i) => {
-    const cy = (PAD + i * ROW + ROW / 2 - 2) * SS
-    g.beginPath()
-    g.arc((PAD + DOT / 2) * SS, cy, (DOT / 2) * SS, 0, Math.PI * 2)
-    g.fillStyle = item.color
-    g.fill()
-    g.fillStyle = 'rgba(238,244,252,0.92)'
-    g.textBaseline = 'middle'
-    g.fillText(item.label, (PAD + DOT + 8) * SS, cy)
-  })
-
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return { tex, aspect: W / H, screenH: H / CALLOUT_FRAME_H }
-}
-
 // Icon color by flight category: passenger cyan, cargo amber, military green,
 // unidentifiable grey.
 const CAT_COLOR: Record<CategoryKey, THREE.Color> = {

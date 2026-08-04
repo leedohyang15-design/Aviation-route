@@ -4,9 +4,10 @@ import { applyFilter } from '../common/filter'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
-import type { OrbitClass, Satellite } from '@shared/types'
+import type { Aircraft, OrbitClass, Satellite } from '@shared/types'
 import { MapView } from './MapView'
 import { SatelliteSearch } from './SatelliteSearch'
+import { FlightSearch } from './FlightSearch'
 
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
@@ -35,6 +36,19 @@ export function ControlApp(): JSX.Element {
       send({ type: 'setHiddenOrbits', orbits: hiddenOrbits.filter((x) => x !== s.orbit) })
     }
     send({ type: 'select', icao24: s.id })
+  }
+  /** Jump to a searched flight. A hit in a hidden category has to unhide it —
+   * 자가용·기타 is off by default, so a search for a private registration would
+   * otherwise select something that isn't on screen. */
+  const pickFlight = (a: Aircraft) => {
+    const cat = categoryKey(a.callsign, null, a.hasRoute)
+    if (hidden.includes(cat)) {
+      send({
+        type: 'setFilter',
+        filter: { ...state.filter, hiddenCategories: hidden.filter((c) => c !== cat) }
+      })
+    }
+    send({ type: 'select', icao24: a.icao24 })
   }
   const visible = useMemo(
     () => applyFilter(aircraft, state.filter, state.selected),
@@ -200,6 +214,11 @@ export function ControlApp(): JSX.Element {
             <i style={{ background: '#93a4b8' }} />
             자가용·기타 {perCategory.other.toLocaleString()}대
           </button>
+          <FlightSearch
+            aircraft={aircraft}
+            hiddenCategories={hidden as CategoryKey[]}
+            onPick={pickFlight}
+          />
         </div>
         )}
       </div>

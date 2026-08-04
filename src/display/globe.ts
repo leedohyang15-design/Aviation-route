@@ -30,7 +30,6 @@ import {
   LIGHT_QUAD_SCALE,
   LIGHT_SPOTS,
   calloutTexture,
-  legendTexture,
   categoryColor,
   orbitColor,
   plainDotTexture,
@@ -143,7 +142,6 @@ export class Globe {
   private originLabel!: THREE.Mesh
   private destLabel!: THREE.Mesh
   private infoLabel!: THREE.Mesh
-  private legend!: THREE.Mesh
   private originFlag!: THREE.Mesh
   private destFlag!: THREE.Mesh
   private flagCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>()
@@ -480,7 +478,6 @@ export class Globe {
     this.infoLabel = label() // flight info chip next to the selected plane
     this.originFlag = label() // country flag above the origin marker
     this.destFlag = label() // country flag above the destination marker
-    this.legend = label() // colour key, pinned to a corner of the frame
 
     this.tryLoadEarth()
     this.resize()
@@ -1312,28 +1309,6 @@ export class Globe {
     }
   }
 
-  /**
-   * The colour key in the corner of the frame. Null clears it.
-   *
-   * Pinned to the view rather than to the map, so panning and zooming leave it
-   * where it is — it is a reference for the frame, not a thing on the ground.
-   */
-  setLegend(items: readonly { color: string; label: string }[] | null): void {
-    const mat = this.legend.material as THREE.MeshBasicMaterial
-    mat.map?.dispose()
-    if (items && items.length) {
-      const { tex, aspect, screenH } = legendTexture(items)
-      mat.map = this.tuneSprite(tex)
-      mat.needsUpdate = true
-      this.legend.userData.aspect = aspect
-      this.legend.userData.screenH = screenH
-      this.legend.visible = true
-    } else {
-      mat.map = null
-      this.legend.visible = false
-    }
-  }
-
   /** Free the route lines' GPU geometries before clearing (they are rebuilt on
    * pan/progress; without disposal the buffers leak over a long session). */
   private disposeRouteGroup(): void {
@@ -1478,17 +1453,6 @@ export class Globe {
     // world view and grow when zoomed in so the swarm stays readable.
     this.uiScale += (this.targetSpan - this.uiScale) * 0.28
     this.iconScale += (iconScaleFor(this.kind, this.targetSpan) - this.iconScale) * 0.28
-
-    // The colour key rides the view, not the map: bottom-left of whatever the
-    // camera is currently showing, at a constant on-screen size.
-    if (this.legend.visible) {
-      const lh = (this.legend.userData.screenH as number) * this.uiScale
-      const lw = this.quadWidth(lh, (this.legend.userData.aspect as number) || 2)
-      const { left, bottom } = this.viewRect
-      const m = 0.018 * this.uiScale
-      this.legend.scale.set(lw, lh, 1)
-      this.legend.position.set(left + m + lw / 2, bottom + m + lh / 2, 0.8)
-    }
 
     // Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
     this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.28

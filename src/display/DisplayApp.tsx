@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { Globe } from './globe'
+import type { OrbitClass } from '@shared/types'
+
+const ORBIT_LABEL: Record<OrbitClass, string> = {
+  leo: '저궤도',
+  starlink: '스타링크',
+  meo: '중궤도',
+  geo: '정지궤도'
+}
 
 // The projector expects the equirect frame at exactly this pixel size, anchored
 // top-left; the rest of the output stays black.
@@ -21,24 +29,6 @@ interface Callout {
   suffix: string
 }
 const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
-
-/**
- * The colour key for the layer on screen. Kept here rather than in the
- * renderer because these are the same colours and the same words the control
- * screen's chips use — one list, two places to read it.
- */
-const FLIGHT_LEGEND = [
-  { color: '#35c1ff', label: '여객기' },
-  { color: '#f5a623', label: '화물기' },
-  { color: '#74d16a', label: '군용기' },
-  { color: '#93a4b8', label: '자가용 · 기타' }
-] as const
-const SAT_LEGEND = [
-  { color: '#5ce1e6', label: '저궤도' },
-  { color: '#b48cff', label: '스타링크' },
-  { color: '#ffd166', label: '중궤도' },
-  { color: '#ff7b6b', label: '정지궤도' }
-] as const
 
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -71,10 +61,26 @@ export function DisplayApp(): JSX.Element {
     // Satellites carry no caption at all: the orbit line is the whole story on
     // the dome, and the pass forecast is on the control screen where it can be
     // read properly.
-    // A satellite gets its name and nothing else. The pass forecast and the
-    // orbital figures live on the control screen; on the dome the orbit line is
-    // the whole story, and all the caption has to do is say whose it is.
-    if (isSat) return satDetail ? { ...NOTHING, title: satDetail.name } : NOTHING
+    // The satellite plate answers the same two questions the aircraft one does:
+    // what is it, and when does it get here. "When does it get here" for
+    // something in orbit is when it comes over us, which is the one number that
+    // makes a dot on a map feel like it is about to be overhead.
+    if (isSat) {
+      const sd = satDetail
+      if (!sd) return NOTHING
+      const title = `${sd.name}   ${ORBIT_LABEL[sd.orbit]} · ${Math.round(sd.altKm).toLocaleString()} km`
+      if (sd.overheadNow) return { ...NOTHING, title, prefix: '지금 우리 머리 위에 있어요' }
+      if (sd.nextPassSec == null) {
+        // Geostationary satellites sit over one spot forever; the rest of the
+        // "never" cases are orbits whose inclination never reaches us.
+        return {
+          ...NOTHING,
+          title,
+          prefix: sd.orbit === 'geo' ? '적도 위 한자리에 멈춰 있어요' : '우리 하늘로는 지나가지 않아요'
+        }
+      }
+      return { title, prefix: '머리 위까지', value: hhmm(sd.nextPassSec), suffix: '남음' }
+    }
     if (!sel) return NOTHING
     // Once something is selected the frame always says SOMETHING about it. An
     // empty callout used to be the outcome for two ordinary cases — a flight on
@@ -145,11 +151,6 @@ export function DisplayApp(): JSX.Element {
   useEffect(
     () => globeRef.current?.setCallout(callout.title, callout.prefix, callout.value, callout.suffix),
     [callout]
-  )
-  // The colour key, so the dome can be read without someone standing next to it.
-  useEffect(
-    () => globeRef.current?.setLegend(isSat ? SAT_LEGEND : FLIGHT_LEGEND),
-    [isSat]
   )
 
   return (
