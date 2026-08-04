@@ -516,11 +516,10 @@ export function ControlApp(): JSX.Element {
             line of small grey text, which is how a whole evaluation session got
             spent on simulated aircraft. Make it a badge nobody can miss. */}
         <div className={'src ' + (isWeather ? (weatherAgeMin == null ? 'pending' : 'ok') : isSat || live ? 'ok' : 'pending')}>
-          {/* The two layers come from two different places and the badge has to
-              say both — it is the exhibit's only attribution. Cloud is NASA
-              GIBS (geostationary infrared); rain is RainViewer's radar. */}
+          {/* Attribution — the exhibit's only place for it. Both layers now
+              come from the one service, which is the point of the change. */}
           {isWeather
-            ? '구름 NASA GIBS · 비 RainViewer'
+            ? '© MapTiler · GFS 실황'
             : isSat
             ? '위성 궤도 · 실시간 계산'
             : statusText}

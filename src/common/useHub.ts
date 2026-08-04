@@ -34,8 +34,8 @@ export interface HubView {
   detail: FlightDetail | null
   satellites: Satellite[]
   satDetail: SatelliteDetail | null
-  /** The newest assembled picture for each weather layer. */
-  weather: { cloud: WeatherFrame | null; rain: WeatherFrame | null }
+  /** The newest animation series for each weather layer, in loop order. */
+  weather: { cloud: WeatherFrame[]; rain: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
   weatherAgeMin: number | null
 }
@@ -82,9 +82,10 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [detail, setDetail] = useState<FlightDetail | null>(null)
   const [satellites, setSatellites] = useState<Satellite[]>([])
   const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
-  const [weather, setWeather] = useState<{ cloud: WeatherFrame | null; rain: WeatherFrame | null }>(
-    { cloud: null, rain: null }
-  )
+  const [weather, setWeather] = useState<{ cloud: WeatherFrame[]; rain: WeatherFrame[] }>({
+    cloud: [],
+    rain: []
+  })
   // Recomputed on a slow tick rather than per render: the caption counts whole
   // minutes, so anything faster is work nobody can see.
   const [now, setNow] = useState(() => Date.now())
@@ -121,9 +122,20 @@ export function useHub(role: 'control' | 'display'): HubView {
         case 'satDetail':
           setSatDetail(msg.detail)
           break
-        case 'weather':
-          setWeather((prev) => ({ ...prev, [msg.frame.layer]: msg.frame }))
+        case 'weather': {
+          // A series arrives one frame at a time, step 0 first. Step 0 is
+          // therefore the signal to start a fresh series — otherwise a shorter
+          // new series would keep the tail of the old one and the loop would
+          // jump back in time every time it came round.
+          const f = msg.frame
+          const step = f.step ?? 0
+          setWeather((prev) => {
+            const next = step === 0 ? [] : prev[f.layer].slice()
+            next[step] = f
+            return { ...prev, [f.layer]: next }
+          })
           break
+        }
       }
     })
     bus.onStatus(setConnected)
@@ -149,7 +161,10 @@ export function useHub(role: 'control' | 'display'): HubView {
     satDetail,
     weather,
     weatherAgeMin: (() => {
-      const newest = Math.max(weather.cloud?.time ?? 0, weather.rain?.time ?? 0)
+      const newest = [...weather.cloud, ...weather.rain].reduce(
+        (n, f) => Math.max(n, f?.time ?? 0),
+        0
+      )
       return newest ? Math.max(0, Math.round((now - newest) / 60_000)) : null
     })()
   }

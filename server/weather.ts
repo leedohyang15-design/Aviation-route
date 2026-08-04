@@ -14,8 +14,13 @@
 
 import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import type { WeatherFrame, WeatherLayer } from '../src/shared/types'
+import type { WeatherDecode, WeatherFrame, WeatherLayer } from '../src/shared/types'
 import {
+  MAPTILER_KEY,
+  MAPTILER_TILE_BASE,
+  MAPTILER_VARIABLES,
+  MAPTILER_WEATHER_INDEX,
+  WEATHER_FRAME_COUNT,
   WEATHER_INDEX_URL,
   WEATHER_POLL_MS,
   WEATHER_TILE_PX,
@@ -43,7 +48,7 @@ const CACHE_PATH = dataPath(CACHE_NAME)
  * as a rectangle and only became a globe once the first poll landed: it was
  * yesterday's format on screen, not today's.
  */
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 
 /** RainViewer's index. Only the fields we use are described. */
 interface Index {
@@ -60,10 +65,19 @@ interface Persisted {
 
 const LAYERS: WeatherLayer[] = ['cloud', 'rain']
 
-/** The newest frame we have for each layer, whether from the network or the
- * cache. Kept so a later-connecting window, or a failed poll, still has a
- * picture to show. */
-const latest = new Map<WeatherLayer, WeatherFrame>()
+/**
+ * The newest SERIES we have for each layer, whether from the network or the
+ * cache — one entry per animation step, in loop order. Kept so a
+ * later-connecting window, or a failed poll, still has weather to show.
+ */
+const latest = new Map<WeatherLayer, WeatherFrame[]>()
+
+/** The newest moment in a layer's series, epoch ms. */
+function seriesTime(frames: WeatherFrame[]): number {
+  let t = 0
+  for (const f of frames) t = Math.max(t, f.time)
+  return t
+}
 
 let timer: ReturnType<typeof setTimeout> | null = null
 let stopped = true
@@ -77,13 +91,13 @@ let failures = 0
 
 /** What is on screen right now, for a window that has just connected. */
 export function weatherFrames(): WeatherFrame[] {
-  return [...latest.values()]
+  return [...latest.values()].flat()
 }
 
 /** How old the newest frame is, in ms — what the dome caption counts. */
 export function weatherAge(): number | null {
   let newest = 0
-  for (const f of latest.values()) newest = Math.max(newest, f.time)
+  for (const frames of latest.values()) newest = Math.max(newest, seriesTime(frames))
   return newest ? Date.now() - newest : null
 }
 
@@ -92,9 +106,18 @@ function loadCache(): void {
     try {
       const data = JSON.parse(readFileSync(path, 'utf8')) as Persisted
       if (data.version !== CACHE_VERSION || !Array.isArray(data.frames)) continue
-      for (const f of data.frames) if (f?.layer && f.tiles?.length) latest.set(f.layer, f)
+      for (const f of data.frames) {
+        if (!f?.layer || !f.tiles?.length) continue
+        const series = latest.get(f.layer) ?? []
+        series.push(f)
+        latest.set(f.layer, series)
+      }
+      for (const series of latest.values()) series.sort((a, b) => (a.step ?? 0) - (b.step ?? 0))
       const age = Math.round((Date.now() - data.saved) / 60_000)
-      opsLog(`[weather] ${latest.size} frames from cache (${age}분 전) — showing those until a poll lands`)
+      opsLog(
+        `[weather] ${weatherFrames().length} frames from cache (${age}분 전) — ` +
+          `showing those until a poll lands`
+      )
       return
     } catch {
       /* no cache, or a corrupt one: neither is a reason not to start */
@@ -118,7 +141,7 @@ let savedAt = 0
 function saveCache(): void {
   if (!latest.size) return
   let newest = 0
-  for (const f of latest.values()) newest = Math.max(newest, f.time)
+  for (const frames of latest.values()) newest = Math.max(newest, seriesTime(frames))
   if (newest === savedAt) return // nothing new since the last write
   savedAt = newest
   const data: Persisted = { version: CACHE_VERSION, saved: Date.now(), frames: weatherFrames() }
@@ -201,6 +224,174 @@ async function fetchFrame(
   return { layer, projection: 'mercator', z: WEATHER_ZOOM, time: time * 1000, tiles }
 }
 
+// ---------------------------------------------------------------------------
+// MapTiler Weather — the primary source when a key is configured.
+// ---------------------------------------------------------------------------
+
+/** `latest.json`. Only the fields we use are described; the shape is taken from
+ * the published @maptiler/weather types. */
+interface MtIndex {
+  variables?: {
+    tile_format?: string
+    metadata?: {
+      maxzoom?: number
+      weather_variable?: {
+        name?: string
+        unit?: string
+        attribution?: string
+        variable_id?: string
+        decoding?: { min?: number; max?: number; channels?: string }
+      }
+    }
+    keyframes?: { id: string; timestamp: string }[]
+  }[]
+}
+
+/** One data tile. Same envelope as the imagery tiles — a data: URL, so the
+ * packaged app's file:// origin never taints the canvas. */
+async function fetchMtTile(
+  tilesetId: string,
+  format: string,
+  x: number,
+  y: number
+): Promise<{ x: number; y: number; url: string } | null> {
+  const url =
+    `${MAPTILER_TILE_BASE}/${encodeURIComponent(tilesetId)}/` +
+    `${WEATHER_ZOOM}/${x}/${y}.${format}?key=${encodeURIComponent(MAPTILER_KEY)}`
+  try {
+    const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
+    if (!res.ok) {
+      // Never log the URL: it carries the key.
+      lastTileError = `HTTP ${res.status} on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
+      return null
+    }
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (!buf.length) {
+      lastTileError = `empty 200 body on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
+      return null
+    }
+    const mime = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png'
+    return { x, y, url: `data:${mime};base64,${buf.toString('base64')}` }
+  } catch (err) {
+    lastTileError = `${(err as Error).message} on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
+    return null
+  }
+}
+
+/** Every tile of one keyframe, a few sockets at a time. */
+async function fetchMtKeyframe(
+  layer: WeatherLayer,
+  tilesetId: string,
+  format: string,
+  time: number,
+  decode: WeatherDecode,
+  step: number,
+  steps: number
+): Promise<WeatherFrame | null> {
+  const n = 1 << WEATHER_ZOOM
+  const wanted: { x: number; y: number }[] = []
+  for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) wanted.push({ x, y })
+
+  const tiles: WeatherFrame['tiles'] = []
+  const BATCH = 8
+  for (let i = 0; i < wanted.length; i += BATCH) {
+    if (stopped) return null
+    const got = await Promise.all(
+      wanted.slice(i, i + BATCH).map((t) => fetchMtTile(tilesetId, format, t.x, t.y))
+    )
+    for (const t of got) if (t) tiles.push(t)
+  }
+  if (!tiles.length) return null
+  return { layer, projection: 'mercator', blend: 'data', decode, z: WEATHER_ZOOM, time, tiles, step, steps }
+}
+
+/**
+ * One layer's animation series from MapTiler.
+ *
+ * The index hands back a whole time series per variable; we take the newest
+ * WEATHER_FRAME_COUNT keyframes, oldest first, so the renderer can walk them in
+ * order. Every fact needed to read the pixels — the packing channels and the
+ * value range — comes from the index rather than being hard-coded here, because
+ * the one thing that cannot be checked from a sandbox is what the service
+ * actually sends.
+ */
+async function fetchMaptilerLayer(
+  index: MtIndex,
+  layer: WeatherLayer
+): Promise<WeatherFrame[] | null> {
+  const wantId = MAPTILER_VARIABLES[layer]
+  const v = index.variables?.find((x) => x.metadata?.weather_variable?.variable_id === wantId)
+  if (!v) {
+    const had = (index.variables ?? [])
+      .map((x) => x.metadata?.weather_variable?.variable_id)
+      .filter(Boolean)
+    opsLog(`[weather] ${layer}: no "${wantId}" in the index. It offered: ${had.join(', ') || 'nothing'}`)
+    return null
+  }
+  const wv = v.metadata?.weather_variable
+  const d = wv?.decoding
+  if (!d || typeof d.min !== 'number' || typeof d.max !== 'number' || !d.channels) {
+    opsLog(`[weather] ${layer}: "${wantId}" carries no decoding block — cannot read its pixels`)
+    return null
+  }
+  const keys = v.keyframes ?? []
+  if (!keys.length) {
+    opsLog(`[weather] ${layer}: "${wantId}" has no keyframes`)
+    return null
+  }
+  const decode: WeatherDecode = { min: d.min, max: d.max, channels: d.channels, unit: wv?.unit }
+  const format = v.tile_format && v.tile_format !== 'pbf' ? v.tile_format : 'png'
+  const wanted = keys.slice(Math.max(0, keys.length - WEATHER_FRAME_COUNT))
+
+  const series: WeatherFrame[] = []
+  for (const [i, k] of wanted.entries()) {
+    if (stopped) return null
+    const time = Date.parse(k.timestamp)
+    const frame = await fetchMtKeyframe(
+      layer,
+      k.id,
+      format,
+      Number.isFinite(time) ? time : Date.now(),
+      decode,
+      i,
+      wanted.length
+    )
+    if (frame) series.push(frame)
+  }
+  if (!series.length) {
+    opsLog(`[weather] ${layer}: every tile failed. Last error: ${lastTileError || 'none recorded'}`)
+    return null
+  }
+  const bytes = series.reduce((n, f) => n + f.tiles.reduce((m, t) => m + t.url.length, 0), 0)
+  opsLog(
+    `[weather] ${layer}: ${wv?.name ?? wantId} — ${series.length}/${wanted.length} keyframes, ` +
+      `${series[0].tiles.length}/${1 << (WEATHER_ZOOM * 2)} tiles each, ${(bytes / 1e6).toFixed(1)}MB, ` +
+      `${d.min}–${d.max} ${wv?.unit ?? ''} packed in "${d.channels}"`
+  )
+  return series
+}
+
+/** One poll of MapTiler: index, then both layers' series. */
+async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
+  const url = `${MAPTILER_WEATHER_INDEX}?key=${encodeURIComponent(MAPTILER_KEY)}`
+  const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
+  // The key is in the URL, so the message says the status and nothing else.
+  if (!res.ok) throw new Error(`weather index HTTP ${res.status} (key rejected?)`)
+  const index = (await res.json()) as MtIndex
+  if (!Array.isArray(index?.variables)) throw new Error('index has no variables — the API shape has changed')
+
+  for (const layer of LAYERS) {
+    if (stopped) return
+    const series = await fetchMaptilerLayer(index, layer)
+    if (!series) continue
+    // Same moment as what is already on screen: nothing to send.
+    if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
+    latest.set(layer, series)
+    for (const f of series) onFrame(f)
+  }
+  saveCache()
+}
+
 /**
  * The cloud picture, from NASA GIBS.
  *
@@ -272,6 +463,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
 }
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
+  if (MAPTILER_KEY) return pollMaptiler(onFrame)
   const res = await fetchWithTimeout(WEATHER_INDEX_URL, WEATHER_TIMEOUT_MS)
   if (!res.ok) throw new Error(`index HTTP ${res.status}`)
   const index = (await res.json()) as Index
@@ -292,7 +484,7 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
       if (WEATHER_CLOUD_SOURCE === 'off') continue
       const frame = await fetchGibsCloud()
       if (frame) {
-        latest.set('cloud', frame)
+        latest.set('cloud', [frame])
         onFrame(frame)
       }
       continue
@@ -306,7 +498,7 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
       continue
     }
     // Already showing this exact picture: don't re-download it.
-    if (latest.get(layer)?.time === newest.time * 1000) continue
+    if (seriesTime(latest.get(layer) ?? []) === newest.time * 1000) continue
     const frame = await fetchFrame(index.host, layer, newest.time, newest.path)
     if (!frame) {
       opsLog(
@@ -315,7 +507,7 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
       )
       continue
     }
-    latest.set(layer, frame)
+    latest.set(layer, [frame])
     onFrame(frame)
     const bytes = frame.tiles.reduce((n, t) => n + t.url.length, 0)
     const age = Math.round((Date.now() - frame.time) / 60_000)
@@ -340,10 +532,15 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   // empty earth while a poll is in flight — but NOT on this tick. Each frame is
   // several base64'd satellite images, and stringifying them is the hub's only
   // thread; doing it inline made the mode change itself arrive late.
-  const replay = [...latest.values()]
+  const replay = weatherFrames()
   setImmediate(() => {
     for (const f of replay) if (!stopped) onFrame(f)
   })
+  opsLog(
+    MAPTILER_KEY
+      ? '[weather] source: MapTiler (구름+비 한 곳에서, 애니메이션)'
+      : '[weather] source: NASA GIBS + RainViewer — no MAPTILER_KEY in .env, running on the fallback'
+  )
 
   const loop = async (): Promise<void> => {
     if (stopped) {

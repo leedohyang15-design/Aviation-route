@@ -589,6 +589,16 @@ body,
   width: 92px;
   height: 8px;
   border-radius: 4px;
-  /* RainViewer "Universal Blue": light blue → blue → green → yellow → red. */
-  background: linear-gradient(90deg, #8ad3ff, #2a7fe0, #23c552, #f2d43a, #f24b3a);
+  /* Must match rainRamp() in globe.ts — the key is a promise about the map.
+     Blue (15 dBZ) → cyan → green → yellow → orange → red → violet (70 dBZ). */
+  background: linear-gradient(
+    90deg,
+    #3d8cf2,
+    #33d9d9,
+    #4dd95a,
+    #fae040,
+    #fa852a,
+    #eb3347,
+    #dc5cea
+  );
 }

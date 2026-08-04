@@ -111,9 +111,57 @@ export const OBSERVER_LON = Number(readEnv('OBSERVER_LON') ?? 126.978)
 // ---------------------------------------------------------------------------
 
 /**
- * RainViewer's free public index: the last two hours of frames for both the
- * global geostationary infrared (clouds) and the ground-radar precipitation
- * products, plus the tile host to fetch them from. No key, no registration.
+ * MapTiler Weather — cloud AND rain from one place, which is the whole point.
+ *
+ * The previous arrangement took cloud from NASA GIBS and rain from RainViewer,
+ * and it showed: two products from two sensors at two resolutions that
+ * disagreed with each other and with the official numbers. GIBS gives infrared
+ * brightness, from which cloud has to be GUESSED by a luminance heuristic —
+ * which is why Korea never matched its published cloud cover. RainViewer's free
+ * tier has no satellite at all, and its radar only exists over countries with
+ * ground radar, so Africa and the oceans were simply blank.
+ *
+ * MapTiler serves both as GFS model fields on one key: real cloud-cover percent
+ * and real radar reflectivity, global, on the same grid, in one tile scheme.
+ * They are DATA tiles — the value is packed into the pixel, not painted — so
+ * the colour ramp is ours, and a wrong-looking rain colour is now a number in
+ * this file rather than somebody else's palette.
+ *
+ * Requires a key (free, non-commercial): https://cloud.maptiler.com/account/keys
+ * Put it in .env as MAPTILER_KEY. Without one the exhibit falls back to the old
+ * GIBS + RainViewer pair rather than showing an empty sky.
+ */
+export const MAPTILER_KEY = readEnv('MAPTILER_KEY') ?? ''
+export const MAPTILER_WEATHER_INDEX =
+  readEnv('MAPTILER_WEATHER_INDEX') ?? 'https://api.maptiler.com/weather/latest.json'
+export const MAPTILER_TILE_BASE =
+  readEnv('MAPTILER_TILE_BASE') ?? 'https://api.maptiler.com/tiles'
+/**
+ * Which GFS variable each of our two layers is.
+ *
+ * `radar-composite` rather than `precipitation-1h`: reflectivity is the picture
+ * people recognise as "where it is raining right now", and being a model field
+ * it covers the whole globe instead of only the countries that own radars.
+ */
+export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
+  cloud: readEnv('MAPTILER_CLOUD_VARIABLE') ?? 'cloud_cover-total:gfs',
+  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'radar-composite:gfs'
+}
+/**
+ * How many keyframes to bring back, newest first.
+ *
+ * The index carries a whole time series, which is what makes the tab stop
+ * looking like a photograph: the renderer cross-fades through them so the
+ * weather actually drifts. Each extra keyframe is another full tile grid, so
+ * this is the one knob that trades bandwidth for motion. 1 = a still picture.
+ */
+export const WEATHER_FRAME_COUNT = Number(readEnv('WEATHER_FRAME_COUNT') ?? 4)
+/** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
+export const WEATHER_FRAME_HOLD_MS = Number(readEnv('WEATHER_FRAME_HOLD_MS') ?? 1600)
+
+/**
+ * RainViewer's free public index — the fallback rain source, used only when no
+ * MapTiler key is configured.
  */
 export const WEATHER_INDEX_URL =
   readEnv('WEATHER_INDEX_URL') ?? 'https://api.rainviewer.com/public/weather-maps.json'

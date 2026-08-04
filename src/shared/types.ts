@@ -36,10 +36,30 @@ export interface Aircraft {
 /** Which layer the exhibit is showing. Tabs switch between them. */
 export type ExhibitMode = 'flight' | 'satellite' | 'weather'
 
-/** The two weather products, each its own chip on the control screen.
- * `cloud` is geostationary infrared and covers the whole globe; `rain` is
- * ground radar and only exists where there are radars to see with. */
+/** The two weather products, each its own chip on the control screen. Both are
+ * global: `cloud` is total cloud cover in percent, `rain` is radar
+ * reflectivity. */
 export type WeatherLayer = 'cloud' | 'rain'
+
+/**
+ * How to turn a data tile's pixel back into a real-world number.
+ *
+ * MapTiler's weather tiles are measurements, not pictures: the value is packed
+ * big-endian across one to three colour channels and linearly mapped onto
+ * [min, max] in the variable's own unit (percent for cloud, dBZ for radar).
+ * Alpha is the no-data mask. The renderer decodes it and applies OUR colour
+ * ramp, which is why the rain is no longer somebody else's shade of red.
+ */
+export interface WeatherDecode {
+  /** Real-world value at the bottom of the packed range. */
+  min: number
+  /** Real-world value at the top of it. */
+  max: number
+  /** Which channels carry the value, most significant first, e.g. "r", "rgb". */
+  channels: string
+  /** The variable's unit, for the log and the caption. */
+  unit?: string
+}
 
 /** One assembled weather picture: a grid of Mercator tiles at one zoom level,
  * each carried as a data URL so the renderer can draw it into a canvas without
@@ -62,13 +82,25 @@ export interface WeatherFrame {
    * to its own horizon and useless past it, so the cloud has to be lifted out
    * of it and the edge faded away.
    */
-  blend?: 'photo' | 'cloud'
+  blend?: 'photo' | 'cloud' | 'data'
+  /** Present when `blend` is `data`: how to read a value out of a pixel. */
+  decode?: WeatherDecode
   /** Tile pyramid level; the grid is 2^z by 2^z. A single full-frame image is
    * z=0, and several of them at (0,0) composite in the order they arrive —
    * which is how the geostationary discs are stitched into one globe. */
   z: number
   /** When the imagery was taken, epoch ms. */
   time: number
+  /**
+   * Where this frame sits in the animation loop, and how long the loop is.
+   *
+   * The source publishes a time series, and the tab looked like a photograph
+   * until we used it. The renderer holds every step of a layer's series and
+   * cross-fades through them in `step` order, so the weather drifts instead of
+   * sitting still between polls. Absent (or steps=1) means a single picture.
+   */
+  step?: number
+  steps?: number
   tiles: {
     x: number
     y: number

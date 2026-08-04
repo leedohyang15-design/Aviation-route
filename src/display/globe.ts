@@ -21,11 +21,17 @@ import type {
   OverlayKey,
   Satellite,
   ViewState,
+  WeatherDecode,
   WeatherFrame,
   WeatherLayer
 } from '@shared/types'
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
-import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL, WEATHER_CLOUD_OPACITY } from '@shared/config'
+import {
+  EARTH_TEXTURE_URL,
+  EARTH_NIGHT_URL,
+  WEATHER_CLOUD_OPACITY,
+  WEATHER_FRAME_HOLD_MS
+} from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 import { categoryKey } from '../common/flightClass'
 import {
@@ -327,6 +333,18 @@ export class Globe {
   // If set, the canvas renders at this exact pixel size (top-left), rest black —
   // for a projector that expects the equirect frame in a fixed region.
   private fixedSize: { w: number; h: number } | null = null
+  /**
+   * One decoded animation series per weather layer.
+   *
+   * `token` is what keeps a slow series from overwriting a fast one: switching
+   * chips or landing a new poll while sixty tiles are still decoding used to
+   * leave whichever finished LAST on screen, which is not necessarily the one
+   * that was asked for.
+   */
+  private wx: Record<WeatherLayer, { textures: THREE.Texture[]; token: number }> = {
+    cloud: { textures: [], token: 0 },
+    rain: { textures: [], token: 0 }
+  }
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -364,6 +382,26 @@ export class Globe {
       uRain: { value: null },
       uHasRain: { value: 0 },
       uRainMerc: { value: 1 },
+      // --- Animated data layers -------------------------------------------
+      // The source publishes a time series, so each layer holds TWO textures
+      // and a blend between them; the loop walks the series and the picture
+      // drifts instead of standing still for the whole poll interval.
+      uCloudB: { value: null },
+      uCloudMix: { value: 0 },
+      uRainB: { value: null },
+      uRainMix: { value: 0 },
+      // 1 = the tile is a measurement, not a picture: the value is packed into
+      // the channels and coloured HERE, so the palette is ours.
+      uCloudData: { value: 0 },
+      uRainData: { value: 0 },
+      // Channel weights that pack the bytes back into one integer, and the
+      // largest that integer can be. Both come from the service's own index.
+      uCloudChanW: { value: new THREE.Vector3(1, 0, 0) },
+      uCloudPacked: { value: 255 },
+      uCloudRange: { value: new THREE.Vector2(0, 100) },
+      uRainChanW: { value: new THREE.Vector3(1, 0, 0) },
+      uRainPacked: { value: 255 },
+      uRainRange: { value: new THREE.Vector2(-30, 75) },
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -383,7 +421,36 @@ export class Globe {
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudPhoto; uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
+        uniform sampler2D uCloudB; uniform float uCloudMix;
+        uniform sampler2D uRainB; uniform float uRainMix;
+        uniform float uCloudData; uniform float uRainData;
+        uniform vec3 uCloudChanW; uniform float uCloudPacked; uniform vec2 uCloudRange;
+        uniform vec3 uRainChanW; uniform float uRainPacked; uniform vec2 uRainRange;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
+
+        // Unpack one data pixel into [real value, coverage]. The channels are
+        // big-endian bytes of one integer; alpha is the no-data mask.
+        vec2 unpack(vec4 c, vec3 w, float packed, vec2 range) {
+          float v = dot(c.rgb * 255.0, w) / max(packed, 1.0);
+          return vec2(mix(range.x, range.y, v), c.a);
+        }
+        // Two steps of the series, decoded THEN blended. Blending the packed
+        // bytes instead would mix the high byte of one frame with the low byte
+        // of another, which is not a halfway value, it is noise.
+        vec2 readData(sampler2D a, sampler2D b, float m, vec2 uv, vec3 w, float p, vec2 r) {
+          vec2 A = unpack(texture2D(a, uv), w, p, r);
+          vec2 B = unpack(texture2D(b, uv), w, p, r);
+          return mix(A, B, m);
+        }
+        // Radar reflectivity, in the colours everyone already reads as rain.
+        vec3 rainRamp(float dbz) {
+          vec3 c = mix(vec3(0.24, 0.55, 0.95), vec3(0.20, 0.85, 0.85), smoothstep(15.0, 25.0, dbz));
+          c = mix(c, vec3(0.30, 0.85, 0.35), smoothstep(25.0, 35.0, dbz));
+          c = mix(c, vec3(0.98, 0.88, 0.25), smoothstep(35.0, 45.0, dbz));
+          c = mix(c, vec3(0.98, 0.52, 0.16), smoothstep(45.0, 52.0, dbz));
+          c = mix(c, vec3(0.92, 0.20, 0.28), smoothstep(52.0, 62.0, dbz));
+          return mix(c, vec3(0.86, 0.36, 0.92), smoothstep(62.0, 70.0, dbz));
+        }
         void main() {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
           // huge UV derivative at the wrap, which picks the wrong mip level and
@@ -458,7 +525,21 @@ export class Globe {
           // is exactly what it looked like. And it is drawn toward white rather
           // than toward the sensor's own grey, because a grey cloud over a dark
           // ocean is a grey nobody can see.
-          if (uHasCloud > 0.5) {
+          if (uHasCloud > 0.5 && uCloudData > 0.5) {
+            // Total cloud cover, in percent, straight from the model — not a
+            // brightness the code has to guess cloud out of. Below about a
+            // tenth of the sky nobody would call it cloudy, so that is where
+            // the white starts; solid overcast is solid white.
+            vec2 d = readData(uCloud, uCloudB, uCloudMix,
+                              uCloudMerc > 0.5 ? mercUV : flatUV,
+                              uCloudChanW, uCloudPacked, uCloudRange);
+            // Stops just short of opaque so a downpour still reads through
+            // solid overcast — which is the pair of facts a visitor came to
+            // see, and hiding one behind the other helps nobody.
+            float a = smoothstep(10.0, 88.0, d.x) * 0.88
+                      * d.y * (uCloudMerc > 0.5 ? inMerc : 1.0);
+            col = mix(col, vec3(0.97, 0.98, 1.0), a);
+          } else if (uHasCloud > 0.5) {
             vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
             float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
             float mx = max(c.r, max(c.g, c.b));
@@ -476,7 +557,17 @@ export class Globe {
 
           // Rain goes in last: it is a data overlay, not a photograph, and a
           // storm that vanishes at sunset is a storm nobody can point at.
-          if (uHasRain > 0.5) {
+          if (uHasRain > 0.5 && uRainData > 0.5) {
+            // Reflectivity in dBZ. Under 12 is drizzle the eye cannot pick out
+            // of a cloud deck anyway, and drawing it turned whole oceans a flat
+            // wash; the ramp fades in from there and saturates at a downpour.
+            vec2 d = readData(uRain, uRainB, uRainMix,
+                              uRainMerc > 0.5 ? mercUV : flatUV,
+                              uRainChanW, uRainPacked, uRainRange);
+            float a = smoothstep(12.0, 26.0, d.x) * d.y
+                      * (uRainMerc > 0.5 ? inMerc : 1.0);
+            col = mix(col, rainRamp(d.x), a * 0.92);
+          } else if (uHasRain > 0.5) {
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
             col = mix(col, r.rgb, r.a * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
@@ -1628,34 +1719,12 @@ export class Globe {
    * half-built picture — and the previous frame stays up until then, which is
    * also what happens when a poll fails.
    */
-  setWeather(frame: WeatherFrame | null, layer: WeatherLayer): void {
-    const mapKey = layer === 'cloud' ? 'uCloud' : 'uRain'
-    const hasKey = layer === 'cloud' ? 'uHasCloud' : 'uHasRain'
-    const mercKey = layer === 'cloud' ? 'uCloudMerc' : 'uRainMerc'
-    if (!frame || !frame.tiles.length) {
-      const old = this.bgUniforms[mapKey].value as THREE.Texture | null
-      old?.dispose()
-      this.bgUniforms[mapKey].value = null
-      this.bgUniforms[hasKey].value = 0
-      return
-    }
+  private buildWeatherTexture(frame: WeatherFrame): Promise<THREE.Texture | null> {
     const n = 1 << frame.z
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')!
     let drawn = 0
     let side = 0
-    const finish = (): void => {
-      const tex = new THREE.CanvasTexture(canvas)
-      this.tuneTexture(tex)
-      const old = this.bgUniforms[mapKey].value as THREE.Texture | null
-      this.bgUniforms[mapKey].value = tex
-      this.bgUniforms[hasKey].value = 1
-      this.bgUniforms[mercKey].value = frame.projection === 'mercator' ? 1 : 0
-      if (layer === 'cloud') {
-        this.bgUniforms.uCloudPhoto.value = frame.blend === 'photo' ? 1 : 0
-      }
-      old?.dispose()
-    }
     /**
      * A geostationary sensor sees a disc, and the disc ends in a hard edge —
      * three of them stacked drew three visible outlines across the globe. Fade
@@ -1705,28 +1774,149 @@ export class Globe {
       return out
     }
 
-    for (const t of frame.tiles) {
-      const img = new Image()
-      img.onload = () => {
-        // The grid's tile size isn't known until the first one decodes; size the
-        // canvas from it rather than assuming what the server asked for.
-        if (!side) {
-          side = img.width || 256
-          canvas.width = canvas.height = side * n
+    return new Promise((resolve) => {
+      const finish = (): void => {
+        if (!side) return resolve(null)
+        const tex = new THREE.CanvasTexture(canvas)
+        this.tuneTexture(tex)
+        // A data tile is a measurement. Averaging four neighbouring
+        // measurements to build a mip is meaningless once they are packed
+        // big-endian across channels — the average of two high bytes is not
+        // the high byte of the average — so the pyramid is simply not built.
+        if (frame.blend === 'data') {
+          tex.generateMipmaps = false
+          tex.minFilter = THREE.LinearFilter
         }
-        ctx.drawImage(
-          t.centerLon == null ? img : feather(img, t.centerLon),
-          t.x * side,
-          t.y * side,
-          side,
-          side
-        )
-        if (++drawn === frame.tiles.length) finish()
+        resolve(tex)
       }
-      img.onerror = () => {
-        if (++drawn === frame.tiles.length && side) finish()
+      for (const t of frame.tiles) {
+        const img = new Image()
+        img.onload = () => {
+          // The grid's tile size isn't known until the first one decodes; size
+          // the canvas from it rather than assuming what the server asked for.
+          if (!side) {
+            side = img.width || 256
+            canvas.width = canvas.height = side * n
+          }
+          ctx.drawImage(
+            t.centerLon == null ? img : feather(img, t.centerLon),
+            t.x * side,
+            t.y * side,
+            side,
+            side
+          )
+          if (++drawn === frame.tiles.length) finish()
+        }
+        img.onerror = () => {
+          if (++drawn === frame.tiles.length) finish()
+        }
+        img.src = t.url
       }
-      img.src = t.url
+    })
+  }
+
+  /**
+   * Put one layer's whole animation series on the globe.
+   *
+   * Every step is decoded into its own texture and the set is swapped in as a
+   * unit, so the map never shows a half-built picture and the previous series
+   * stays up until the new one is complete — which is also what happens when a
+   * poll fails. The walk through the series happens per render frame in
+   * `tickWeather`, not here.
+   */
+  setWeatherSeries(frames: WeatherFrame[] | null, layer: WeatherLayer): void {
+    const slot = this.wx[layer]
+    const token = ++slot.token
+    const usable = (frames ?? []).filter((f) => f && f.tiles.length)
+    if (!usable.length) {
+      for (const t of slot.textures) t.dispose()
+      slot.textures = []
+      this.bgUniforms[layer === 'cloud' ? 'uHasCloud' : 'uHasRain'].value = 0
+      this.bgUniforms[layer === 'cloud' ? 'uCloud' : 'uRain'].value = null
+      this.bgUniforms[layer === 'cloud' ? 'uCloudB' : 'uRainB'].value = null
+      return
+    }
+    void Promise.all(usable.map((f) => this.buildWeatherTexture(f))).then((built) => {
+      // A newer series started while this one was decoding: throw this away.
+      if (token !== slot.token) {
+        for (const t of built) t?.dispose()
+        return
+      }
+      const textures = built.filter((t): t is THREE.Texture => !!t)
+      if (!textures.length) return
+      for (const t of slot.textures) t.dispose()
+      slot.textures = textures
+      const head = usable[0]
+      const isData = head.blend === 'data'
+      if (layer === 'cloud') {
+        this.bgUniforms.uHasCloud.value = 1
+        this.bgUniforms.uCloudMerc.value = head.projection === 'mercator' ? 1 : 0
+        this.bgUniforms.uCloudPhoto.value = head.blend === 'photo' ? 1 : 0
+        this.bgUniforms.uCloudData.value = isData ? 1 : 0
+      } else {
+        this.bgUniforms.uHasRain.value = 1
+        this.bgUniforms.uRainMerc.value = head.projection === 'mercator' ? 1 : 0
+        this.bgUniforms.uRainData.value = isData ? 1 : 0
+      }
+      if (isData && head.decode) this.applyDecode(head.decode, layer)
+      this.tickWeather()
+    })
+  }
+
+  /** Teach the shader how to read this variable's pixels — packing weights and
+   * value range both come from the service's index, never guessed here. */
+  private applyDecode(d: WeatherDecode, layer: WeatherLayer): void {
+    const order = d.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
+    const w = new THREE.Vector3(0, 0, 0)
+    const idx: Record<string, 'x' | 'y' | 'z'> = { r: 'x', g: 'y', b: 'z' }
+    for (let i = 0; i < order.length; i++) {
+      // Big-endian: the first channel named is the most significant byte.
+      w[idx[order[i]]] = 256 ** (order.length - 1 - i)
+    }
+    const packed = 256 ** order.length - 1
+    if (layer === 'cloud') {
+      this.bgUniforms.uCloudChanW.value = w
+      this.bgUniforms.uCloudPacked.value = packed
+      this.bgUniforms.uCloudRange.value = new THREE.Vector2(d.min, d.max)
+    } else {
+      this.bgUniforms.uRainChanW.value = w
+      this.bgUniforms.uRainPacked.value = packed
+      this.bgUniforms.uRainRange.value = new THREE.Vector2(d.min, d.max)
+    }
+  }
+
+  /**
+   * Walk each layer through its series.
+   *
+   * One step is held for WEATHER_FRAME_HOLD_MS and the last third of that is a
+   * cross-fade into the next, so the weather drifts rather than cutting. Both
+   * windows drive this off the same wall clock, so the dome and the control
+   * screen show the same moment without a byte of hub traffic.
+   */
+  private tickWeather(): void {
+    for (const layer of ['cloud', 'rain'] as WeatherLayer[]) {
+      const tex = this.wx[layer].textures
+      const a = layer === 'cloud' ? 'uCloud' : 'uRain'
+      const b = layer === 'cloud' ? 'uCloudB' : 'uRainB'
+      const m = layer === 'cloud' ? 'uCloudMix' : 'uRainMix'
+      if (!tex.length) continue
+      if (tex.length === 1) {
+        this.bgUniforms[a].value = tex[0]
+        this.bgUniforms[b].value = tex[0]
+        this.bgUniforms[m].value = 0
+        continue
+      }
+      const hold = WEATHER_FRAME_HOLD_MS
+      const phase = (Date.now() % (hold * tex.length)) / hold
+      const i = Math.min(tex.length - 1, Math.floor(phase))
+      const t = phase - i
+      // Hold, then ease across. A linear blend over the whole step makes every
+      // moment a half-dissolve, which reads as blur rather than movement.
+      const FADE = 0.34
+      const raw = t < 1 - FADE ? 0 : (t - (1 - FADE)) / FADE
+      this.bgUniforms[a].value = tex[i]
+      this.bgUniforms[b].value = tex[(i + 1) % tex.length]
+      this.bgUniforms[m].value = raw * raw * (3 - 2 * raw)
     }
   }
 
@@ -2155,6 +2345,7 @@ export class Globe {
     this.camera.updateProjectionMatrix()
 
     this.updateSun()
+    this.tickWeather()
     this.renderer.render(this.scene, this.camera)
     this.raf = requestAnimationFrame(this.frame)
   }

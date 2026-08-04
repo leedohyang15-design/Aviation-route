@@ -143,11 +143,11 @@ export function DisplayApp(): JSX.Element {
   // instantly instead of waiting for the next poll.
   useEffect(() => {
     const on = !(state.hiddenWeather ?? []).includes('cloud')
-    globeRef.current?.setWeather(isWeather && on ? weather.cloud : null, 'cloud')
+    globeRef.current?.setWeatherSeries(isWeather && on ? weather.cloud : null, 'cloud')
   }, [isWeather, weather.cloud, state.hiddenWeather])
   useEffect(() => {
     const on = !(state.hiddenWeather ?? []).includes('rain')
-    globeRef.current?.setWeather(isWeather && on ? weather.rain : null, 'rain')
+    globeRef.current?.setWeatherSeries(isWeather && on ? weather.rain : null, 'rain')
   }, [isWeather, weather.rain, state.hiddenWeather])
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])

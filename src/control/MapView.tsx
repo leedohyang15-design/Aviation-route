@@ -19,8 +19,8 @@ interface Props {
   /** Which layer to render; switching clears the other one's objects. */
   mode?: ExhibitMode
   satellites?: Satellite[]
-  /** The assembled weather pictures, and which of them the operator has on. */
-  weather?: { cloud: WeatherFrame | null; rain: WeatherFrame | null }
+  /** Each layer's animation series, and which of them the operator has on. */
+  weather?: { cloud: WeatherFrame[]; rain: WeatherFrame[] }
   hiddenWeather?: WeatherLayer[]
   aircraft: Aircraft[]
   selected: string | null
@@ -109,11 +109,11 @@ export function MapView({
   const showCloud = mode === 'weather' && !(hiddenWeather ?? []).includes('cloud')
   const showRain = mode === 'weather' && !(hiddenWeather ?? []).includes('rain')
   useEffect(
-    () => globeRef.current?.setWeather(showCloud ? weather?.cloud ?? null : null, 'cloud'),
+    () => globeRef.current?.setWeatherSeries(showCloud ? weather?.cloud ?? null : null, 'cloud'),
     [showCloud, weather?.cloud]
   )
   useEffect(
-    () => globeRef.current?.setWeather(showRain ? weather?.rain ?? null : null, 'rain'),
+    () => globeRef.current?.setWeatherSeries(showRain ? weather?.rain ?? null : null, 'rain'),
     [showRain, weather?.rain]
   )
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
