@@ -188,6 +188,20 @@ async function fetchFrame(
  * Which layers actually exist is the one thing that cannot be checked from
  * here, so each candidate is tried in turn and the log names the winner.
  */
+/**
+ * Where a geostationary layer is parked, from its name. Approximate on purpose:
+ * it only decides where the cross-fade is centred, and a degree either way is
+ * invisible once the fade spans forty of them.
+ */
+function subSatelliteLon(layer: string): number | undefined {
+  const n = layer.toUpperCase()
+  if (n.includes('GOES-EAST')) return -75
+  if (n.includes('GOES-WEST')) return -137
+  if (n.includes('HIMAWARI')) return 140.7
+  if (n.includes('MSG') || n.includes('METEOSAT')) return n.includes('IODC') ? 45.5 : 0
+  return undefined
+}
+
 async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   const W = WEATHER_GIBS_WIDTH
   const H = Math.round(W / 2)
@@ -224,7 +238,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     const got: WeatherFrame['tiles'] = []
     for (const layer of set) {
       const url = await get(layer)
-      if (url) got.push({ x: 0, y: 0, url })
+      if (url) got.push({ x: 0, y: 0, url, centerLon: subSatelliteLon(layer) })
       // The first set is discs meant to be stacked; the second is whole-globe
       // mosaics where one is enough.
       if (url && set === WEATHER_GIBS_FALLBACK_LAYERS) break

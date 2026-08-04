@@ -60,7 +60,19 @@ export interface WeatherFrame {
   z: number
   /** When the imagery was taken, epoch ms. */
   time: number
-  tiles: { x: number; y: number; url: string }[]
+  tiles: {
+    x: number
+    y: number
+    url: string
+    /**
+     * For a geostationary disc: the longitude it sits over. The sensor sees
+     * less and less as you go round the limb and then nothing at all, and the
+     * "nothing" arrives as a hard edge in the image. Knowing where the disc is
+     * centred lets the renderer fade each one out toward its own horizon, so
+     * neighbouring sensors cross-blend instead of butting up against each other.
+     */
+    centerLon?: number
+  }[]
 }
 
 /** Orbit class — drives colour and the filter chips. */

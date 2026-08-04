@@ -103,31 +103,48 @@ function placeCard(a: SelectionAnchor): Placement {
 
   const clampX = (x: number) => Math.max(M, Math.min(vw - W - M, x))
   const clampY = (y: number) => Math.max(M, Math.min(vh - H - M, y))
-  const beside = clampY(a.y - H / 2)
   // Beside the object first, then the corners — a corner is further from what
   // it describes, but a card that hides the flight path is worse than one that
   // is a hand's width away from it.
-  // `bias` ranks otherwise-equal slots: beside the object first, then the two
-  // bottom corners, then the top ones — the top of the frame carries the title
-  // block, the chips and the search on the left and the compass and the zoom
-  // controls on the right, and a card up there hides those instead.
-  const slots = [
-    { x: clampX(a.x + gap), y: beside, bias: 0 },
-    { x: clampX(a.x - gap - W), y: beside, bias: 0 },
-    { x: vw - W - M, y: vh - H - M, bias: 2 },
-    { x: M, y: vh - H - M, bias: 2 },
-    { x: vw - W - M, y: M, bias: 6 },
-    { x: M, y: M, bias: 6 }
+  // Candidates, nearest first: eight directions around the object at a few
+  // distances, then the corners as a last resort. The old version offered only
+  // "left of it, right of it, or a corner", so anything that did not fit beside
+  // the object jumped to the far side of the screen — the card ended up a
+  // hand's width from the aircraft it was describing. A ring lets it slide just
+  // far enough to clear the route and stop there.
+  const slots: { x: number; y: number; bias: number }[] = []
+  const DIRS = [
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [1, -0.7], [-1, -0.7], [1, 0.7], [-1, 0.7]
   ]
+  for (const step of [1, 1.6, 2.4, 3.4]) {
+    for (const [dx, dy] of DIRS) {
+      const d = gap * step
+      slots.push({
+        x: clampX(a.x + dx * (d + W / 2) - W / 2),
+        y: clampY(a.y + dy * (d + H / 2) - H / 2),
+        bias: 0
+      })
+    }
+  }
+  // The corners carry a penalty so they are only taken when the ring is full —
+  // the top ones more so, since that is where the title, the chips and the zoom
+  // controls live.
+  slots.push({ x: vw - W - M, y: vh - H - M, bias: 3 })
+  slots.push({ x: M, y: vh - H - M, bias: 3 })
+  slots.push({ x: vw - W - M, y: M, bias: 8 })
+  slots.push({ x: M, y: M, bias: 8 })
 
   let best = slots[0]
   let bestCost = Infinity
   let bestHidden = 0
   for (const s of slots) {
     const hidden = hiddenBy({ x: s.x, y: s.y, w: W, h: H }, avoid, a)
-    // Among equally clear slots, take the least awkward, then the nearest.
+    // Covering something is always worse than being further away, but among
+    // slots that cover nothing the nearest one wins outright — distance is
+    // counted in real pixels now, not divided into insignificance.
     const cost =
-      hidden * 1000 + s.bias * 20 + Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y) / 100
+      hidden * 100_000 + s.bias * 1_000 + Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y)
     if (cost < bestCost) {
       bestCost = cost
       best = s

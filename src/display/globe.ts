@@ -1613,6 +1613,55 @@ export class Globe {
       this.bgUniforms[mercKey].value = frame.projection === 'mercator' ? 1 : 0
       old?.dispose()
     }
+    /**
+     * A geostationary sensor sees a disc, and the disc ends in a hard edge —
+     * three of them stacked drew three visible outlines across the globe. Fade
+     * each one out toward its own horizon and the neighbours cross-blend into
+     * one picture instead.
+     *
+     * The mask is the angular distance from the sub-satellite point, which is
+     * exactly the geometry that decides what the sensor can see. It is built
+     * small and drawn scaled up: it is a smooth gradient, so a coarse one
+     * upscales perfectly, and 256x128 costs nothing where 2048x1024 would
+     * hitch the frame every time a picture arrives.
+     */
+    const feather = (img: HTMLImageElement, centerLon: number): HTMLCanvasElement => {
+      const w = img.width || 2048
+      const h = img.height || Math.round(w / 2)
+      const out = document.createElement('canvas')
+      out.width = w
+      out.height = h
+      const octx = out.getContext('2d')!
+      octx.drawImage(img, 0, 0)
+
+      const MW = 256
+      const MH = 128
+      const mask = document.createElement('canvas')
+      mask.width = MW
+      mask.height = MH
+      const mctx = mask.getContext('2d')!
+      const data = mctx.createImageData(MW, MH)
+      const RAD = Math.PI / 180
+      // Full weight within 55 degrees of the sub-satellite point, nothing past
+      // 78 — a real disc runs out at about 81, and stopping short of that hides
+      // the noisy limb as well as the edge.
+      const NEAR = Math.cos(55 * RAD)
+      const FAR = Math.cos(78 * RAD)
+      for (let j = 0; j < MH; j++) {
+        const lat = (90 - ((j + 0.5) / MH) * 180) * RAD
+        for (let i = 0; i < MW; i++) {
+          const lon = (((i + 0.5) / MW) * 360 - 180 - centerLon) * RAD
+          const cosD = Math.cos(lat) * Math.cos(lon)
+          const t = Math.max(0, Math.min(1, (cosD - FAR) / (NEAR - FAR)))
+          data.data[(j * MW + i) * 4 + 3] = Math.round(255 * t * t * (3 - 2 * t))
+        }
+      }
+      mctx.putImageData(data, 0, 0)
+      octx.globalCompositeOperation = 'destination-in'
+      octx.drawImage(mask, 0, 0, w, h)
+      return out
+    }
+
     for (const t of frame.tiles) {
       const img = new Image()
       img.onload = () => {
@@ -1622,7 +1671,13 @@ export class Globe {
           side = img.width || 256
           canvas.width = canvas.height = side * n
         }
-        ctx.drawImage(img, t.x * side, t.y * side, side, side)
+        ctx.drawImage(
+          t.centerLon == null ? img : feather(img, t.centerLon),
+          t.x * side,
+          t.y * side,
+          side,
+          side
+        )
         if (++drawn === frame.tiles.length) finish()
       }
       img.onerror = () => {
