@@ -253,12 +253,53 @@ export function orbitTrack(id: string, samples = 180): GeoPoint[] | null {
   const periodMs = e.periodMin * 60_000
   const start = Date.now() - periodMs / 2
   const step = periodMs / samples
-  const pts: GeoPoint[] = []
-  for (let i = 0; i <= samples; i++) {
-    const p = fixAt(e.rec, new Date(start + i * step))
-    if (p) pts.push({ lon: p.lon, lat: p.lat })
+
+  const at = (ms: number): (GeoPoint & { t: number }) | null => {
+    const p = fixAt(e.rec, new Date(ms))
+    return p ? { lon: p.lon, lat: p.lat, t: ms } : null
   }
-  return pts.length > 2 ? pts : null
+
+  const pts: (GeoPoint & { t: number })[] = []
+  for (let i = 0; i <= samples; i++) {
+    const p = at(start + i * step)
+    if (p) pts.push(p)
+  }
+  if (pts.length <= 2) return null
+
+  // Even time steps are not even steps on the map. Near the poles a polar orbit
+  // — which is most of what is up there once Starlink is off — sweeps a whole
+  // hemisphere of longitude in two or three samples, so on an equirectangular
+  // frame the turn came out as a handful of long chords with visibly chopped
+  // corners while the rest of the track was smooth. Subdividing by distance in
+  // MAP degrees (not on the sphere: a chord's length on screen is what's being
+  // fixed) puts the extra samples exactly where the projection stretches, and
+  // costs nothing along the parts that were already fine.
+  const MAX_GAP_DEG = 4 // ≈18px of a 1664px-wide frame
+  const MAX_DEPTH = 6
+  const gapTooBig = (a: GeoPoint, b: GeoPoint): boolean => {
+    let dLon = b.lon - a.lon
+    if (dLon > 180) dLon -= 360
+    else if (dLon < -180) dLon += 360
+    return Math.hypot(dLon, b.lat - a.lat) > MAX_GAP_DEG
+  }
+
+  const out: GeoPoint[] = [{ lon: pts[0].lon, lat: pts[0].lat }]
+  for (let i = 1; i < pts.length; i++) {
+    const refine = (a: typeof pts[0], b: typeof pts[0], depth: number): void => {
+      if (depth < MAX_DEPTH && gapTooBig(a, b)) {
+        const mid = at((a.t + b.t) / 2)
+        if (mid) {
+          refine(a, mid, depth + 1)
+          out.push({ lon: mid.lon, lat: mid.lat })
+          refine(mid, b, depth + 1)
+          return
+        }
+      }
+    }
+    refine(pts[i - 1], pts[i], 0)
+    out.push({ lon: pts[i].lon, lat: pts[i].lat })
+  }
+  return out
 }
 
 /**

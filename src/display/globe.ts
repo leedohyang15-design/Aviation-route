@@ -26,9 +26,9 @@ import {
   pinTexture,
   textTexture,
   glowTexture,
-  wingLightTexture,
-  WING_LIGHT_SCALE,
-  LIGHT_POS,
+  lightTexture,
+  LIGHT_QUAD_SCALE,
+  LIGHT_SPOTS,
   calloutTexture,
   categoryColor,
   orbitColor,
@@ -117,6 +117,7 @@ export class Globe {
    * the marker for "this is the one you picked". */
   private selectedLights!: THREE.Mesh
   private planeLightTex!: THREE.CanvasTexture
+  private satLightTex!: THREE.CanvasTexture
   /** Halo behind the selection, which lights up as the map goes dark. */
   private selectedGlow!: THREE.Mesh
   // Sun position for this frame, shared by the background shader and the
@@ -286,7 +287,7 @@ export class Globe {
       // the frame really is half lit and half dark with a terminator between.
       uSunLon: { value: 0 },
       uSunDecl: { value: 0 },
-      uNightFloor: { value: 0.34 }, // how much of the day map survives at night
+      uNightFloor: { value: 0.22 }, // how much of the day map survives at night
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -404,9 +405,8 @@ export class Globe {
 
     // Additive, so the lights add to the icon under them rather than pasting a
     // disc over it, and so turning them down turns them off completely.
-    this.planeLightTex = this.tuneSprite(
-      wingLightTexture(LIGHT_POS.aircraft.x, LIGHT_POS.aircraft.y)
-    )
+    this.planeLightTex = this.tuneSprite(lightTexture(LIGHT_SPOTS.aircraft))
+    this.satLightTex = this.tuneSprite(lightTexture(LIGHT_SPOTS.satellite))
     this.selectedLights = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
       new THREE.MeshBasicMaterial({
@@ -1122,6 +1122,12 @@ export class Globe {
     selMat.map = kind === 'satellite' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
+    // An aircraft's lights are out on the wingtips, a satellite's beacon is on
+    // its nose — nowhere near each other in icon space, so each kind gets its
+    // own texture rather than one shared set of spots.
+    const litMat = this.selectedLights.material as THREE.MeshBasicMaterial
+    litMat.map = kind === 'satellite' ? this.satLightTex : this.planeLightTex
+    litMat.needsUpdate = true
     if (kind === 'satellite') {
       for (const m of [
         this.originMarker,
@@ -1464,17 +1470,17 @@ export class Globe {
           const glowMat = this.selectedGlow.material as THREE.MeshBasicMaterial
           glowMat.opacity = 0.1 + this.nightAt(e.lon, e.lat) * (0.25 + 0.6 * this.pulse)
           this.selectedGlow.visible = true
-          // Red navigation lights on the wingtips, blinking — an aircraft in
-          // the dark, which is when a real one shows them. Only on the targeted
-          // plane: every plane carrying them turned the night side into a field
-          // of red specks and hid the one thing the visitor is meant to be
-          // following. Additive over the icon, so as the plane crosses back
-          // into daylight they fade out with the local night rather than
-          // switching off.
+          // Blinking red lights — wingtips on an aircraft, a nose beacon on a
+          // satellite — shown in the dark, which is when a real one shows them.
+          // Only on the targeted object: every plane carrying them turned the
+          // night side into a field of red specks and hid the one thing the
+          // visitor is meant to be following. Additive over the icon, so as it
+          // crosses back into daylight they fade out with the local night
+          // rather than switching off.
           const night = this.nightAt(e.lon, e.lat)
-          if (this.kind === 'aircraft' && night > 0.01) {
+          if (night > 0.01) {
             this.selectedLights.matrix.copy(
-              this.setSpriteMatrix(au, ay, 0.72, SEL_H * ps * WING_LIGHT_SCALE, ang, alat)
+              this.setSpriteMatrix(au, ay, 0.72, SEL_H * ps * LIGHT_QUAD_SCALE, ang, alat)
             )
             this.selectedLights.matrixWorldNeedsUpdate = true
             const lit = night * (0.25 + 0.75 * this.pulse)

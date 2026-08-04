@@ -91,28 +91,27 @@ export function glowTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Two lights out at the tips of whatever the icon's wings are — an aircraft's
- * wingtips, a satellite's solar panels.
- *
- * Drawn white and tinted where it's used, and only ever for the selected
+ * The lights an object carries in the dark, drawn as soft dots on a transparent
+ * quad — an aircraft's two wingtip lights, a satellite's single beacon on its
+ * nose. Drawn white and tinted where it's used, and only ever for the selected
  * object: this marks what the operator has targeted, so it says "this one"
  * rather than decorating the whole swarm.
  *
- * `x` and `y` place the pair in icon-relative coordinates, where the icon spans
- * -1..1 in both axes (y down, since that is how the silhouettes are drawn). The
- * quad is larger than the icon by WING_LIGHT_SCALE so the glow can bloom past
- * the tips the way a real light does; the icon still maps to the middle of it,
- * so the lights sit exactly on the tips whatever that scale is.
+ * Spots are in icon-relative coordinates, where the icon spans -1..1 in both
+ * axes (y down, since that is how the silhouettes are drawn). The quad is
+ * larger than the icon by LIGHT_QUAD_SCALE so the glow can bloom past the
+ * silhouette the way a real light does; the icon still maps to the middle of
+ * it, so a spot lands exactly where it was placed whatever that scale is.
  */
-export function wingLightTexture(x: number, y: number): THREE.CanvasTexture {
+export function lightTexture(spots: readonly { x: number; y: number }[]): THREE.CanvasTexture {
   const S = 160
   const c = document.createElement('canvas')
   c.width = c.height = S
   const g = c.getContext('2d')!
-  const half = S / 2 / WING_LIGHT_SCALE // half-width of the icon inside this quad
-  for (const sign of [-1, 1]) {
-    const cx = S / 2 + sign * x * half
-    const cy = S / 2 + y * half
+  const half = S / 2 / LIGHT_QUAD_SCALE // half-width of the icon inside this quad
+  for (const spot of spots) {
+    const cx = S / 2 + spot.x * half
+    const cy = S / 2 + spot.y * half
     const r = S * 0.13
     const grad = g.createRadialGradient(cx, cy, 0, cx, cy, r)
     grad.addColorStop(0, 'rgba(255,255,255,1)')
@@ -129,16 +128,20 @@ export function wingLightTexture(x: number, y: number): THREE.CanvasTexture {
 }
 
 /**
- * Where the lights sit on the icon, in those icon-relative coordinates — taken
- * from the silhouette itself: PLANE_SVG's wings reach x=5.5 and 58.5 of a 64
- * box, at y=42.
+ * Where the lights sit on each icon, read off the silhouettes themselves:
+ * PLANE_SVG's wings reach x=5.5 and 58.5 of a 64 box at y=42, and
+ * satelliteTexture's dish sits at the top of the body, at y=-24 of 128.
  */
-export const LIGHT_POS = {
-  aircraft: { x: (32 - 5.5) / 32, y: (42 - 32) / 32 }
+export const LIGHT_SPOTS = {
+  aircraft: [
+    { x: -(32 - 5.5) / 32, y: (42 - 32) / 32 },
+    { x: (32 - 5.5) / 32, y: (42 - 32) / 32 }
+  ],
+  satellite: [{ x: 0, y: -24 / 64 }]
 } as const
 
-/** How much larger the wing-light quad is than the aircraft icon. */
-export const WING_LIGHT_SCALE = 1.7
+/** How much larger the light quad is than the icon it rides on. */
+export const LIGHT_QUAD_SCALE = 1.7
 
 /** A CanvasTexture of a text label (white with dark outline). Returns aspect w/h. */
 export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
