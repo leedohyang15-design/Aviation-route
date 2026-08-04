@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type {
   Aircraft,
   ClientMessage,
+  FlightDetail,
   ExhibitMode,
   PresentationState,
   ServerMessage
@@ -76,15 +77,19 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   // firewall prompt that a 0.0.0.0 bind would trigger).
   const wss = new WebSocketServer({ port, host: '127.0.0.1' })
 
-  wss.on('listening', () => console.log('[hub] window can now connect'))
+  wss.on('listening', () => opsLog('[hub] window can now connect'))
+  // opsLog, not console.error: the packaged exe has no console, so a hub that
+  // fails to bind used to leave NOTHING in the log — and because this listener
+  // marks the error handled, the crash dialog in electron/main.ts never fired
+  // either. Both windows just sat on "connecting" with no way to find out why.
   wss.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      console.error(
-        `[hub] port ${port} is already in use — a previous run is still alive. ` +
-          `Close all Electron/node processes and start again.`
+      opsLog(
+        `[hub] FATAL: port ${port} is already in use — a previous run is still alive. ` +
+          `The windows will never connect. Close all Electron/node processes and start again.`
       )
     } else {
-      console.error('[hub] server error:', err.message)
+      opsLog(`[hub] FATAL: server error: ${err.message} — the windows will never connect.`)
     }
   })
 
@@ -111,6 +116,15 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   // network) and push both the route line and the rich detail. Guarding on the
   // selection value (not a shared counter) means concurrent connect-time sends
   // and broadcasts don't cancel each other.
+  // The last detail that actually said something about the selection. During
+  // holdSelection's grace window the aircraft is gone from the feed's own map,
+  // so buildDetail returns a shell with no callsign, airline, endpoints or ETA —
+  // and the card and the dome fall back to "정보가 없는 비행기예요", which is the
+  // exact blanking the grace window exists to prevent.
+  let lastGoodDetail: FlightDetail | null = null
+  const saysSomething = (d: FlightDetail | null): boolean =>
+    !!d && (!!d.route || !!d.origin || !!d.destination || !!d.airline)
+
   const sendDetail = async (ws: WebSocket | null) => {
     const icao24 = state.selected
     try {
@@ -128,8 +142,15 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
       // "mock", the detail came from the simulation and can never have a route.
       if (icao24) opsLog(`[detail] feed=${feed.source} points=${detail?.route?.length ?? 0}`)
       if (state.selected !== icao24) return // selection changed mid-fetch
-      const route: ServerMessage = { type: 'route', icao24: icao24 ?? '', points: detail?.route ?? null }
-      const det: ServerMessage = { type: 'detail', detail }
+      let out = detail
+      if (saysSomething(out)) {
+        lastGoodDetail = out
+      } else if (icao24 && lastGoodDetail?.icao24 === icao24 && missedSnapshots > 0) {
+        // Missing from this snapshot only: keep showing what it was showing.
+        out = lastGoodDetail
+      }
+      const route: ServerMessage = { type: 'route', icao24: icao24 ?? '', points: out?.route ?? null }
+      const det: ServerMessage = { type: 'detail', detail: out }
       if (ws) {
         send(ws, route)
         send(ws, det)
@@ -185,6 +206,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
 
   /** Drop the current selection and clear every trace of it on both windows. */
   function clearSelection(why: string): void {
+    lastGoodDetail = null
     if (!state.selected) return
     opsLog(`[hub] selection ${state.selected} ${why} — cleared`)
     state.selected = null

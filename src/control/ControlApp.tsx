@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
@@ -6,6 +6,7 @@ import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
 import type { Aircraft, OrbitClass, Satellite } from '@shared/types'
 import { MapView } from './MapView'
+import type { SelectionAnchor } from '../display/globe'
 import { SatelliteSearch } from './SatelliteSearch'
 import { FlightSearch } from './FlightSearch'
 
@@ -13,7 +14,9 @@ import { FlightSearch } from './FlightSearch'
  * inside the window when it is anchored to a tapped object. */
 const SHEET_W = 360
 const SHEET_H = 660
-const GAP = 28
+/** How far the card keeps off the object it describes. Generous: at the old
+ * 28px it crowded the icon, and on a satellite it sat right on the panels. */
+const GAP = 64
 
 export function ControlApp(): JSX.Element {
   const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
@@ -31,6 +34,7 @@ export function ControlApp(): JSX.Element {
     return c
   }, [satellites])
   const toggleOrbit = (o: OrbitClass) => {
+    poke()
     const next = hiddenOrbits.includes(o) ? hiddenOrbits.filter((x) => x !== o) : [...hiddenOrbits, o]
     send({ type: 'setHiddenOrbits', orbits: next })
   }
@@ -38,6 +42,7 @@ export function ControlApp(): JSX.Element {
    * thirds of the sky), so a search that lands in a hidden class has to unhide
    * it — otherwise the selection would point at something not on screen. */
   const pickSatellite = (s: Satellite) => {
+    poke()
     if (hiddenOrbits.includes(s.orbit)) {
       send({ type: 'setHiddenOrbits', orbits: hiddenOrbits.filter((x) => x !== s.orbit) })
     }
@@ -47,6 +52,7 @@ export function ControlApp(): JSX.Element {
    * 자가용·기타 is off by default, so a search for a private registration would
    * otherwise select something that isn't on screen. */
   const pickFlight = (a: Aircraft) => {
+    poke()
     const cat = categoryKey(a.callsign, null, a.hasRoute)
     if (hidden.includes(cat)) {
       send({
@@ -74,18 +80,46 @@ export function ControlApp(): JSX.Element {
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
-  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [anchor, setAnchor] = useState<SelectionAnchor | null>(null)
+  const pokeRef = useRef<(() => void) | null>(null)
+  /** Any tap on the overlay UI counts as a visitor being present. Those
+   * controls sit on a pointer-events island above the canvas, so they never
+   * reached the renderer's own input handlers — a visitor could search for the
+   * ISS, tap the hit, and have the attract cycle throw it away a second later
+   * because its 30s countdown had been running the whole time. */
+  const poke = () => pokeRef.current?.()
+
   const sheetStyle = useMemo<React.CSSProperties>(() => {
     if (!anchor) return {}
-    const W = SHEET_W
-    const H = SHEET_H
+    // Shrink as the map zooms in. Zoomed out the card is one object among
+    // thousands; zoomed in it is a slab over a nearly empty map, and it covered
+    // the very route the visitor had just zoomed in to look at.
+    const t = Math.max(0, Math.min(1, (anchor.span - 0.15) / 0.55))
+    const scale = 0.74 + 0.26 * t
+    const W = SHEET_W * scale
+    const H = SHEET_H * scale
     const vw = window.innerWidth
     const vh = window.innerHeight
-    // Prefer the side with room; the card never covers the object it describes.
-    const right = anchor.x + GAP + W <= vw - 12
-    const left = right ? anchor.x + GAP : Math.max(12, anchor.x - GAP - W)
+    const gap = GAP * scale
+    // The route and the destination marker run off to one side; put the card on
+    // the other one, and only override that if there genuinely isn't room.
+    const fits = (x: number) => x >= 12 && x + W <= vw - 12
+    const rightOf = anchor.x + gap
+    const leftOf = anchor.x - gap - W
+    const preferLeft = anchor.avoidX > 0
+    const first = preferLeft ? leftOf : rightOf
+    const second = preferLeft ? rightOf : leftOf
+    const left = fits(first) ? first : fits(second) ? second : Math.max(12, Math.min(vw - W - 12, first))
     const top = Math.max(12, Math.min(vh - H - 12, anchor.y - H / 2))
-    return { left, top, right: 'auto', bottom: 'auto' }
+    return {
+      left,
+      top,
+      right: 'auto',
+      bottom: 'auto',
+      width: SHEET_W,
+      transform: `scale(${scale})`,
+      transformOrigin: 'top left'
+    }
   }, [anchor])
 
 
@@ -93,6 +127,7 @@ export function ControlApp(): JSX.Element {
   // the categories to hide; clicking a chip toggles it.
   const hidden = state.filter.hiddenCategories ?? []
   const toggleCat = (cat: string) => {
+    poke()
     const next = hidden.includes(cat) ? hidden.filter((c) => c !== cat) : [...hidden, cat]
     send({ type: 'setFilter', filter: { ...state.filter, hiddenCategories: next } })
   }
@@ -126,6 +161,7 @@ export function ControlApp(): JSX.Element {
         onView={(view) => send({ type: 'setView', view })}
         onAttract={setAttract}
         onAnchor={setAnchor}
+        pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
         destCity={d?.destination?.city ?? null}
@@ -162,7 +198,10 @@ export function ControlApp(): JSX.Element {
             role="tab"
             aria-selected={!isSat}
             className={'feed-tab' + (!isSat ? ' on' : '')}
-            onClick={() => send({ type: 'setMode', mode: 'flight' })}
+            onClick={() => {
+              poke()
+              send({ type: 'setMode', mode: 'flight' })
+            }}
           >
             ✈ 비행기
           </button>
@@ -170,7 +209,10 @@ export function ControlApp(): JSX.Element {
             role="tab"
             aria-selected={isSat}
             className={'feed-tab' + (isSat ? ' on' : '')}
-            onClick={() => send({ type: 'setMode', mode: 'satellite' })}
+            onClick={() => {
+              poke()
+              send({ type: 'setMode', mode: 'satellite' })
+            }}
           >
             🛰 위성
           </button>

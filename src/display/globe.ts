@@ -44,6 +44,17 @@ const STORY_ALT_M = 6000
 const IDLE_RELEASE_MS = 90_000
 const HOME_LON = 127.5
 const HOME_LAT = 37.5
+/** Where the selected object is on screen, and what the card needs to know to
+ * sit next to it without covering anything. */
+export interface SelectionAnchor {
+  x: number
+  y: number
+  /** Current view span (1 = whole world, MIN_SPAN = fully zoomed in). */
+  span: number
+  /** Screen-x direction of the route from the object: -1, 0 or +1. */
+  avoidX: number
+}
+
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 
@@ -262,8 +273,11 @@ export class Globe {
    * screen can put its card next to the thing that was tapped instead of always
    * in the same corner. Null when nothing is selected or it isn't on screen.
    */
-  onSelectedAnchor: ((p: { x: number; y: number } | null) => void) | null = null
-  private lastAnchor: { x: number; y: number } | null = null
+  onSelectedAnchor: ((p: SelectionAnchor | null) => void) | null = null
+  private lastAnchor: SelectionAnchor | null = null
+  /** Screen-x direction the route runs in from the selected object: -1 left,
+   * +1 right, 0 unknown. The card is placed on the other side. */
+  private routeSideX = 0
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
   private iCenterLon = 127.5
@@ -811,14 +825,24 @@ export class Globe {
     let wx = worldX
     while (wx < L - 0.5) wx += 1
     while (wx > R + 0.5) wx -= 1
-    const p = {
+    const p: SelectionAnchor = {
       x: r.left + ((wx - L) / (R - L || 1)) * r.width,
-      y: r.top + ((T - worldY) / (T - B || 1)) * r.height
+      y: r.top + ((T - worldY) / (T - B || 1)) * r.height,
+      span: this.targetSpan,
+      avoidX: this.routeSideX
     }
     const prev = this.lastAnchor
     // Only when it actually moved: this runs every frame, and a card that
     // re-lays-out sixty times a second jitters.
-    if (prev && Math.abs(prev.x - p.x) < 3 && Math.abs(prev.y - p.y) < 3) return
+    if (
+      prev &&
+      Math.abs(prev.x - p.x) < 3 &&
+      Math.abs(prev.y - p.y) < 3 &&
+      prev.avoidX === p.avoidX &&
+      Math.abs(prev.span - p.span) < 0.01
+    ) {
+      return
+    }
     this.lastAnchor = p
     this.onSelectedAnchor(p)
   }
@@ -1690,6 +1714,18 @@ export class Globe {
           const de = this.routePoints[this.routePoints.length - 1]
           const op = projectNorm(o.lon, o.lat, this.lonOffset)
           const dp = projectNorm(de.lon, de.lat, this.lonOffset)
+          // Which side of the object the rest of the journey lies on, so the
+          // control card can be put on the other one — a card that covers the
+          // route and the destination hides the two things the visitor tapped
+          // the aircraft to see.
+          let side = 0
+          for (const q of [op, dp]) {
+            let dx = q.u - u
+            if (dx > 0.5) dx -= 1
+            else if (dx < -0.5) dx += 1
+            side += Math.sign(dx)
+          }
+          this.routeSideX = Math.sign(side)
           const markH = MARKER_H * ps
           const pinH = PIN_H * ps
           const oStretch = this.poleStretch(o.lat, MAX_PLATE_STRETCH)
@@ -1822,6 +1858,7 @@ export class Globe {
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
+      this.routeSideX = 0
       this.clearAnchor()
       this.selectedPlane.visible = false
       this.selectedGlow.visible = false

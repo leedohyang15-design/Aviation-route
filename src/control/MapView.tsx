@@ -5,7 +5,7 @@
 import { useEffect, useRef } from 'react'
 import type { Aircraft, GeoPoint, ViewState, ExhibitMode, Satellite } from '@shared/types'
 import { CompassRose } from '../common/CompassRose'
-import { Globe } from '../display/globe'
+import { Globe, type SelectionAnchor } from '../display/globe'
 
 interface Props {
   /** Which layer to render; switching clears the other one's objects. */
@@ -19,7 +19,10 @@ interface Props {
   onView: (view: ViewState) => void
   onAttract?: (active: boolean) => void
   /** Where the selected object is on screen, so the card can sit beside it. */
-  onAnchor?: (p: { x: number; y: number } | null) => void
+  onAnchor?: (p: SelectionAnchor | null) => void
+  /** Filled with a function that re-arms the attract countdown, so taps on the
+   * overlay UI (search, chips, tabs) count as operator activity too. */
+  pokeRef?: React.MutableRefObject<(() => void) | null>
   dayNightHour?: number | null
   originCity?: string | null
   destCity?: string | null
@@ -38,6 +41,7 @@ export function MapView({
   onView,
   onAttract,
   onAnchor,
+  pokeRef,
   dayNightHour = null,
   originCity = null,
   destCity = null,
@@ -63,6 +67,7 @@ export function MapView({
     globe.onSelectChange = (s) => onSelectRef.current(s)
     globe.onAttractChange = (a) => onAttractRef.current?.(a)
     globe.onSelectedAnchor = (p) => onAnchorRef.current?.(p)
+    if (pokeRef) pokeRef.current = () => globe.pokeActivity()
     globeRef.current = globe
     globe.start()
     // Refit/recenter whenever the map area changes size (also fixes the initial

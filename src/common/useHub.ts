@@ -35,6 +35,35 @@ export interface HubView {
   satDetail: SatelliteDetail | null
 }
 
+/**
+ * A new state object, but with every sub-object that didn't actually change
+ * kept at its OLD identity.
+ *
+ * The hub answers every setView with the whole PresentationState, and a drag
+ * emits ten of those a second. Each arrives as fresh JSON, so `filter`,
+ * `hiddenOrbits` and `view` were new objects every time even when only `view`
+ * had changed — which invalidated every useMemo keyed on them and made both
+ * windows re-filter six thousand aircraft, or rebuild sixteen thousand
+ * satellites, ten times a second while somebody was spinning the globe.
+ * Comparing by value here is a few string compares; the work it saves is the
+ * whole downstream pipeline.
+ */
+function reuseUnchanged<T extends object>(prev: T, next: T): T {
+  const out = { ...next } as Record<string, unknown>
+  let same = true
+  for (const key of Object.keys(out)) {
+    const a = (prev as Record<string, unknown>)[key]
+    const b = out[key]
+    if (a === b) continue
+    if (typeof b === 'object' && b !== null && JSON.stringify(a) === JSON.stringify(b)) {
+      out[key] = a // unchanged in value — keep the identity memos are keyed on
+    } else {
+      same = false
+    }
+  }
+  return same && Object.keys(prev).length === Object.keys(out).length ? prev : (out as T)
+}
+
 export function useHub(role: 'control' | 'display'): HubView {
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
   const [state, setState] = useState<PresentationState>(DEFAULT_PRESENTATION_STATE)
@@ -59,7 +88,7 @@ export function useHub(role: 'control' | 'display'): HubView {
           setAircraft(msg.data)
           break
         case 'state':
-          setState(msg.state)
+          setState((prev) => reuseUnchanged(prev, msg.state))
           break
         case 'status':
           setSource(msg.source)

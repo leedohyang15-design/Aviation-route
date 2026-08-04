@@ -168,20 +168,56 @@ export function createOpenSkyFeed(): FlightFeed {
     }
   }
 
+  // One poll chain, ever.
+  //
+  // stop() cannot cancel a request already in flight — a window up to 15s wide
+  // on every cycle, and unbounded on the token fetch. Without a guard, a
+  // satellite→flight toggle inside that window left the orphaned poll alive; it
+  // resolved, saw `stopped` false again, and re-armed ALONGSIDE the chain
+  // start() had just begun. `timer` holds one handle, so stop() could then only
+  // ever cancel one of them. Two chains double the credit burn, and the day's
+  // budget is sized for exactly one (see OPENSKY_POLL_INTERVAL_MS): the exhibit
+  // would run out around lunchtime and spend the rest of the day on simulation.
+  //
+  // `running` is owned by the chain, not by start(): a chain sets it on entry
+  // and clears it only when it decides not to re-arm, so a second start() while
+  // one is alive is a no-op and the surviving chain just carries on.
+  let running = false
+  let lastPollAt = 0
+
   return {
     source: 'opensky',
     start(onSnapshot, onStatus) {
       stopped = false // allow a restart after stop() (satellite mode pauses us)
+      if (running) return // a chain is already alive (its poll may be in flight)
+      running = true
       const loop = async () => {
-        if (stopped) return
+        if (stopped) {
+          running = false
+          return
+        }
+        lastPollAt = Date.now()
         const wait = await poll(onSnapshot, onStatus)
-        if (!stopped) timer = setTimeout(loop, wait)
+        if (stopped) {
+          running = false
+          return
+        }
+        timer = setTimeout(loop, wait)
       }
-      void loop()
+      // Returning to flight mode must not buy a fresh snapshot at full price if
+      // the last one is still current: each /states/all is 4 of the day's 4000
+      // credits, and the mode tabs are buttons a visitor can press repeatedly.
+      const since = Date.now() - lastPollAt
+      if (lastPollAt && since < OPENSKY_POLL_INTERVAL_MS) {
+        timer = setTimeout(loop, OPENSKY_POLL_INTERVAL_MS - since)
+      } else {
+        void loop()
+      }
     },
     stop() {
       stopped = true
       if (timer) clearTimeout(timer)
+      timer = null
     },
     getDetail(icao24: string) {
       return buildDetail(icao24, latest, detailCache)

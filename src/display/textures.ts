@@ -313,18 +313,20 @@ export function categoryColor(cat: CategoryKey): THREE.Color {
 
 /** Colour per orbit class, so the shells read apart at a glance: low orbit
  * cyan, the Starlink shells violet (they're most of the sky), navigation gold,
- * geostationary a warm red that sits still over the equator. */
+ * geostationary a warm red that sits still over the equator.
+ *
+ * Shared constants, like CAT_COLOR — this used to parse a hex string per call,
+ * and the call is per satellite per refresh, so a drag over a sixteen-thousand
+ * object catalogue spent whole frames building Colors that were then only ever
+ * read (frame() copies into a scratch before scaling, and never mutates these). */
+const ORBIT_COLOR: Record<string, THREE.Color> = {
+  starlink: new THREE.Color('#b48cff'),
+  meo: new THREE.Color('#ffd166'),
+  geo: new THREE.Color('#ff7b6b'),
+  leo: new THREE.Color('#5ce1e6')
+}
 export function orbitColor(orbit: string): THREE.Color {
-  switch (orbit) {
-    case 'starlink':
-      return new THREE.Color('#b48cff')
-    case 'meo':
-      return new THREE.Color('#ffd166')
-    case 'geo':
-      return new THREE.Color('#ff7b6b')
-    default:
-      return new THREE.Color('#5ce1e6')
-  }
+  return ORBIT_COLOR[orbit] ?? ORBIT_COLOR.leo
 }
 
 /** A plain filled dot — what unselected satellites are drawn as. Sixteen

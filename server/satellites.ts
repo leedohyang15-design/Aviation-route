@@ -212,11 +212,25 @@ export function snapshot(): Satellite[] {
   return latest
 }
 
+/** True while a loop body is alive, including across its awaits. */
+let running = false
+
 export function startSatellites(onSnapshot: (s: Satellite[]) => void): void {
-  if (!stopped) return
   stopped = false
+  // Guarding on `stopped` alone was not enough: a full pass takes a second or
+  // two and propagateAll never checks it, so a 🛰→✈→🛰 tap sequence completed
+  // inside one pass found `stopped` true again and started a SECOND loop. The
+  // first then resumed past its own post-await check, broadcast, and rescheduled
+  // — two loops propagating sixteen thousand satellites on the main process,
+  // racing to write `latest` and overwriting each other's timer handle. The
+  // flag has to be owned by the loop body, not by the start/stop pair.
+  if (running) return
+  running = true
   const loop = async (): Promise<void> => {
-    if (stopped) return
+    if (stopped) {
+      running = false
+      return
+    }
     const started = Date.now()
     try {
       latest = await propagateAll()
@@ -224,7 +238,10 @@ export function startSatellites(onSnapshot: (s: Satellite[]) => void): void {
     } catch (err) {
       opsLog(`[sat] propagation failed: ${(err as Error).message}`)
     }
-    if (stopped) return
+    if (stopped) {
+      running = false
+      return
+    }
     // Aim for a steady period: a full catalogue takes a second or two to
     // propagate, and adding the interval on top of that would stretch the gap
     // between updates instead of holding it.

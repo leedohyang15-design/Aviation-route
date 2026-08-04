@@ -336,11 +336,9 @@ body,
   bottom: 24px;
   width: min(360px, 92vw);
   pointer-events: none;
-  /* An inline left/top overrides these when the card is anchored to a tapped
-     object; the transition carries it from one object to the next instead of
-     teleporting. */
-  transition: left 0.28s cubic-bezier(0.2, 0.85, 0.25, 1),
-    top 0.28s cubic-bezier(0.2, 0.85, 0.25, 1);
+  /* An inline left/top/transform overrides these when the card is anchored to a
+     tapped object. No transition on those: the anchor updates as the map moves,
+     and an easing on top of that made the card swim around behind the drag. */
 }
 .sheet-card {
   pointer-events: auto;
