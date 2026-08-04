@@ -105,3 +105,36 @@ export const SAT_SLICE_MS = Number(readEnv('SAT_SLICE_MS') ?? 8)
 /** Where the exhibit is, for "when does it pass over us?" (Seoul). */
 export const OBSERVER_LAT = Number(readEnv('OBSERVER_LAT') ?? 37.5665)
 export const OBSERVER_LON = Number(readEnv('OBSERVER_LON') ?? 126.978)
+
+// ---------------------------------------------------------------------------
+// Weather mode
+// ---------------------------------------------------------------------------
+
+/**
+ * RainViewer's free public index: the last two hours of frames for both the
+ * global geostationary infrared (clouds) and the ground-radar precipitation
+ * products, plus the tile host to fetch them from. No key, no registration.
+ */
+export const WEATHER_INDEX_URL =
+  readEnv('WEATHER_INDEX_URL') ?? 'https://api.rainviewer.com/public/weather-maps.json'
+
+/**
+ * How often to look for a newer frame. The source publishes every ten minutes,
+ * so five is often enough to pick one up promptly without asking twice for the
+ * same picture.
+ */
+export const WEATHER_POLL_MS = Number(readEnv('WEATHER_POLL_MS') ?? 5 * 60_000)
+
+/**
+ * Tile pyramid level. z=3 is an 8x8 grid — 64 tiles, 2048x2048 once assembled,
+ * which is 5.7 pixels per degree against the dome frame's 4.6, so the imagery
+ * is at the frame's own resolution and no finer. z=4 quadruples both the
+ * request count and the texture memory for detail the dome cannot show.
+ */
+export const WEATHER_ZOOM = Number(readEnv('WEATHER_ZOOM') ?? 3)
+/** Tile edge in pixels. RainViewer serves 256 and 512. */
+export const WEATHER_TILE_PX = Number(readEnv('WEATHER_TILE_PX') ?? 256)
+/** Per-request timeout for the index and for each tile. */
+export const WEATHER_TIMEOUT_MS = Number(readEnv('WEATHER_TIMEOUT_MS') ?? 12_000)
+/** How stale a cached frame may be before it is described as old on screen. */
+export const WEATHER_MAX_AGE_MS = Number(readEnv('WEATHER_MAX_AGE_MS') ?? 30 * 60_000)

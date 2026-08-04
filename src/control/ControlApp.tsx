@@ -4,7 +4,7 @@ import { applyFilter } from '../common/filter'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
-import type { Aircraft, OrbitClass, Satellite } from '@shared/types'
+import type { Aircraft, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
 import { SatelliteSearch } from './SatelliteSearch'
@@ -150,9 +150,31 @@ function placeCard(a: SelectionAnchor): Placement {
 }
 
 export function ControlApp(): JSX.Element {
-  const { send, aircraft, state, connected, source, credentials, route, detail, satellites, satDetail } =
-    useHub('control')
-  const isSat = state.mode === 'satellite'
+  const {
+    send,
+    aircraft,
+    state,
+    connected,
+    source,
+    credentials,
+    route,
+    detail,
+    satellites,
+    satDetail,
+    weather,
+    weatherAgeMin
+  } = useHub('control')
+  const mode = state.mode
+  const isSat = mode === 'satellite'
+  const isWeather = mode === 'weather'
+  const hiddenWeather = state.hiddenWeather ?? []
+  const toggleWeather = (l: WeatherLayer) => {
+    poke()
+    const next = hiddenWeather.includes(l)
+      ? hiddenWeather.filter((x) => x !== l)
+      : [...hiddenWeather, l]
+    send({ type: 'setHiddenWeather', layers: next })
+  }
   // Orbit-class filter, mirroring how the aircraft category chips work.
   const hiddenOrbits = state.hiddenOrbits ?? []
   const satVisible = useMemo(
@@ -304,6 +326,8 @@ export function ControlApp(): JSX.Element {
       <MapView
         mode={state.mode}
         satellites={satVisible}
+        weather={weather}
+        hiddenWeather={hiddenWeather}
         aircraft={visible}
         selected={state.selected}
         route={route.points}
@@ -325,7 +349,17 @@ export function ControlApp(): JSX.Element {
         <h1>실시간 항공 경로</h1>
         <div className="sub">Real-time Global Air Traffic</div>
         <div className="count">
-          {isSat ? (
+          {isWeather ? (
+            <>
+              {weatherAgeMin == null ? (
+                '날씨 영상을 불러오는 중…'
+              ) : (
+                <>
+                  <b>{weatherAgeMin}</b>분 전 지구의 하늘
+                </>
+              )}
+            </>
+          ) : isSat ? (
             <>
               지금 지구 위에 🛰 <b>{satVisible.length.toLocaleString()}</b>개
             </>
@@ -339,8 +373,8 @@ export function ControlApp(): JSX.Element {
             simulation — for up to a minute or so after launch. That used to be a
             line of small grey text, which is how a whole evaluation session got
             spent on simulated aircraft. Make it a badge nobody can miss. */}
-        <div className={'src ' + (isSat || live ? 'ok' : 'pending')}>
-          {isSat ? '위성 궤도 · 실시간 계산' : statusText}
+        <div className={'src ' + (isWeather ? (weatherAgeMin == null ? 'pending' : 'ok') : isSat || live ? 'ok' : 'pending')}>
+          {isWeather ? 'RainViewer · 10분마다 갱신' : isSat ? '위성 궤도 · 실시간 계산' : statusText}
         </div>
 
         {/* Layer tabs — aircraft or satellites. */}
@@ -367,13 +401,42 @@ export function ControlApp(): JSX.Element {
           >
             🛰 위성
           </button>
+          <button
+            role="tab"
+            aria-selected={isWeather}
+            className={'feed-tab' + (isWeather ? ' on' : '')}
+            onClick={() => {
+              poke()
+              send({ type: 'setMode', mode: 'weather' })
+            }}
+          >
+            ☁ 날씨
+          </button>
         </div>
         {/* The simulation/live tabs are gone: the exhibit picks for itself. It
             runs live whenever OpenSky is answering and falls back to simulation
             on its own when it isn't, so the choice was one an operator never
             needed to make — and one a visitor could make by accident. FEED=mock
             in .env still pins simulation for a demo. */}
-        {isSat ? (
+        {isWeather ? (
+          <div className="legend">
+            {(
+              [
+                ['cloud', '☁ 구름', '#dfe8f5'],
+                ['rain', '🌧 비 · 눈', '#5aa9ff']
+              ] as [WeatherLayer, string, string][]
+            ).map(([key, label, color]) => (
+              <button
+                key={key}
+                className={'leg' + (hiddenWeather.includes(key) ? ' off' : '')}
+                onClick={() => toggleWeather(key)}
+              >
+                <i style={{ background: color }} />
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : isSat ? (
           <div className="legend">
             {(
               [
@@ -444,24 +507,26 @@ export function ControlApp(): JSX.Element {
           Keyed by icao24 so it re-mounts and replays the pop-up on every new
           selection. */}
       <div className="sheet" style={sheetStyle}>
-        {isSat
+        {isWeather
+          ? null
+          : isSat
           ? state.selected && (
               <div className="sheet-card" key={state.selected}>
                 <SatelliteDetailCard detail={satDetail} />
               </div>
             )
-          : sel && (
-              <div className="sheet-card" key={state.selected ?? ''}>
-                <FlightDetailCard aircraft={sel} detail={d} />
-              </div>
-            )}
+            : sel && (
+                <div className="sheet-card" key={state.selected ?? ''}>
+                  <FlightDetailCard aircraft={sel} detail={d} />
+                </div>
+              )}
       </div>
 
       {/* Touch hint (bottom-center) — invites visitors to interact; hidden once
           a plane is selected so it doesn't fight the boarding-pass card. */}
       {(!state.selected || attract) && (
         <div className="touch-hint">
-          🖐 지구를 돌리고, {isSat ? '위성을' : '비행기를'} 눌러보세요!
+          🖐 지구를 돌려{isWeather ? '보세요!' : `보고, ${isSat ? '위성을' : '비행기를'} 눌러보세요!`}
         </div>
       )}
     </div>

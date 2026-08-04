@@ -3,7 +3,15 @@
 // on-screen +/− zoom, click selects the nearest aircraft. Map-anchored controls
 // (compass, zoom, reset) live here since this owns the renderer.
 import { useEffect, useRef } from 'react'
-import type { Aircraft, GeoPoint, ViewState, ExhibitMode, Satellite } from '@shared/types'
+import type {
+  Aircraft,
+  GeoPoint,
+  ViewState,
+  ExhibitMode,
+  Satellite,
+  WeatherFrame,
+  WeatherLayer
+} from '@shared/types'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -11,6 +19,9 @@ interface Props {
   /** Which layer to render; switching clears the other one's objects. */
   mode?: ExhibitMode
   satellites?: Satellite[]
+  /** The assembled weather pictures, and which of them the operator has on. */
+  weather?: { cloud: WeatherFrame | null; rain: WeatherFrame | null }
+  hiddenWeather?: WeatherLayer[]
   aircraft: Aircraft[]
   selected: string | null
   route: GeoPoint[] | null
@@ -33,6 +44,8 @@ interface Props {
 export function MapView({
   mode = 'flight',
   satellites,
+  weather,
+  hiddenWeather,
   aircraft,
   selected,
   route,
@@ -93,6 +106,16 @@ export function MapView({
   useEffect(() => {
     if (mode === 'satellite' && satellites) globeRef.current?.setSatellites(satellites)
   }, [mode, satellites])
+  const showCloud = mode === 'weather' && !(hiddenWeather ?? []).includes('cloud')
+  const showRain = mode === 'weather' && !(hiddenWeather ?? []).includes('rain')
+  useEffect(
+    () => globeRef.current?.setWeather(showCloud ? weather?.cloud ?? null : null, 'cloud'),
+    [showCloud, weather?.cloud]
+  )
+  useEffect(
+    () => globeRef.current?.setWeather(showRain ? weather?.rain ?? null : null, 'rain'),
+    [showRain, weather?.rain]
+  )
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
   useEffect(() => globeRef.current?.setRoute(route), [route])
   useEffect(

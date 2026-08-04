@@ -15,7 +15,15 @@ import * as THREE from 'three'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
-import type { Aircraft, GeoPoint, OverlayKey, Satellite, ViewState } from '@shared/types'
+import type {
+  Aircraft,
+  GeoPoint,
+  OverlayKey,
+  Satellite,
+  ViewState,
+  WeatherFrame,
+  WeatherLayer
+} from '@shared/types'
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
@@ -334,6 +342,11 @@ export class Globe {
       uSunLon: { value: 0 },
       uSunDecl: { value: 0 },
       uNightFloor: { value: 0.22 }, // how much of the day map survives at night
+      // Weather. Two Mercator mosaics, remapped to this frame in the shader.
+      uCloud: { value: null },
+      uHasCloud: { value: 0 },
+      uRain: { value: null },
+      uHasRain: { value: 0 },
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -350,6 +363,8 @@ export class Globe {
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
+        uniform sampler2D uCloud; uniform float uHasCloud;
+        uniform sampler2D uRain; uniform float uHasRain;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
@@ -389,6 +404,27 @@ export class Globe {
             sin(plat) * sin(sdecl) + cos(plat) * cos(sdecl) * cos(plon - slon);
           float uNight = smoothstep(0.10, -0.10, cosZenith);
 
+          // Weather arrives as Web Mercator tiles. Mercator's x is linear in
+          // longitude, so the same uv.x works (offset and seam wrap included)
+          // and only the row has to be remapped. Outside |lat| 85.05 Mercator
+          // has no data at all, which is why the poles stay bare.
+          float latDeg = vUv.y * 180.0 - 90.0;
+          float mercY = 0.5 - log(tan(0.78539816 + plat * 0.5)) / 6.28318531;
+          float inMerc = step(abs(latDeg), 85.05);
+          // uv.x directly, no fract() — same reasoning as the earth map above:
+          // RepeatWrapping tiles it, and fract() would blow up the derivative
+          // at the wrap and pick the wrong mip level, drawing a seam.
+          vec2 wuv = vec2(uv.x, mercY);
+
+          // Clouds go in BEFORE the day/night mix: they are a photograph of the
+          // earth, so they belong to the daylight, and the night side's cloud
+          // deck goes dark with the ground under it — which also lets the city
+          // lights show through the gaps.
+          if (uHasCloud > 0.5) {
+            vec4 c = texture2D(uCloud, wuv);
+            day = mix(day, c.rgb, c.a * inMerc);
+          }
+
           // Night = moonlit earth + city lights (from the night texture) glowing.
           //
           // The floor used to be 0.10, which left the land indistinguishable
@@ -401,6 +437,12 @@ export class Globe {
           vec3 lights = uHasNight > 0.5 ? texture2D(uNightMap, uv).rgb * 1.6 : vec3(0.0);
           vec3 night = moonlit + lights;
           vec3 col = mix(day, night, uNight);
+          // Rain goes in AFTER: it is a data overlay, not a photograph, and a
+          // storm that vanishes at sunset is a storm nobody can point at.
+          if (uHasRain > 0.5) {
+            vec4 r = texture2D(uRain, wuv);
+            col = mix(col, r.rgb, r.a * inMerc);
+          }
           gl_FragColor = vec4(col, 1.0);
         }
       `
@@ -1510,6 +1552,57 @@ export class Globe {
     if (pts.length >= 2) this.addRouteLines(pts, this.routeCasingMat, 0.18)
     if (remaining.length >= 2) this.addRouteLines(remaining, this.remainMat, 0.2)
     if (flown.length >= 2) this.addRouteLines(flown, this.flownMat, 0.22)
+  }
+
+  /**
+   * Assemble one weather frame into a texture.
+   *
+   * The tiles are a Mercator grid; they are drawn into one canvas here and the
+   * fragment shader does the remap onto the equirectangular frame. The texture
+   * is only swapped in once every tile has decoded, so the map never shows a
+   * half-built picture — and the previous frame stays up until then, which is
+   * also what happens when a poll fails.
+   */
+  setWeather(frame: WeatherFrame | null, layer: WeatherLayer): void {
+    const mapKey = layer === 'cloud' ? 'uCloud' : 'uRain'
+    const hasKey = layer === 'cloud' ? 'uHasCloud' : 'uHasRain'
+    if (!frame || !frame.tiles.length) {
+      const old = this.bgUniforms[mapKey].value as THREE.Texture | null
+      old?.dispose()
+      this.bgUniforms[mapKey].value = null
+      this.bgUniforms[hasKey].value = 0
+      return
+    }
+    const n = 1 << frame.z
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')!
+    let drawn = 0
+    let side = 0
+    const finish = (): void => {
+      const tex = new THREE.CanvasTexture(canvas)
+      this.tuneTexture(tex)
+      const old = this.bgUniforms[mapKey].value as THREE.Texture | null
+      this.bgUniforms[mapKey].value = tex
+      this.bgUniforms[hasKey].value = 1
+      old?.dispose()
+    }
+    for (const t of frame.tiles) {
+      const img = new Image()
+      img.onload = () => {
+        // The grid's tile size isn't known until the first one decodes; size the
+        // canvas from it rather than assuming what the server asked for.
+        if (!side) {
+          side = img.width || 256
+          canvas.width = canvas.height = side * n
+        }
+        ctx.drawImage(img, t.x * side, t.y * side, side, side)
+        if (++drawn === frame.tiles.length) finish()
+      }
+      img.onerror = () => {
+        if (++drawn === frame.tiles.length && side) finish()
+      }
+      img.src = t.url
+    }
   }
 
   /** Override the day/night clock (KST hour 0–24), or null for live time. */

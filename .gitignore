@@ -11,3 +11,6 @@ aviation-route-routes.json
 
 # Orbital elements cached next to a packaged build at runtime
 aviation-route-tle.txt
+
+# Weather imagery cached next to a packaged build at runtime
+aviation-route-weather.json

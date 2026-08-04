@@ -27,7 +27,7 @@ export interface SwitchableFeed extends FlightFeed {
   setMode(mode: FeedMode): void
   /** Stop/resume upstream polling entirely — used while the exhibit is showing
    * satellites, so those minutes don't spend the daily OpenSky credit budget. */
-  setPaused(paused: boolean): void
+  setPaused(paused: boolean, why?: string): void
   /**
    * Called when the feed on screen changes between the simulation and live
    * data. The two have no aircraft in common, so anything holding an icao24 —
@@ -107,14 +107,17 @@ export function createResilientFeed(): SwitchableFeed {
         emit?.(lastRealData)
       }
     },
-    setPaused(next: boolean) {
+    setPaused(next: boolean, why = '다른 화면') {
       if (next === paused) return
       paused = next
       if (paused) {
         pausedAt = Date.now()
         opensky?.stop()
         mock.stop()
-        opsLog('[feed] paused (satellite mode) — no OpenSky credits are being spent')
+        // Say WHICH screen paused it. The log is the only thing anyone can read
+        // on the packaged exe, and "why did polling stop" is a question it has
+        // to answer honestly once there is more than one layer that pauses it.
+        opsLog(`[feed] paused (${why}) — no OpenSky credits are being spent`)
       } else {
         // Carry the freshness clock over the pause, so the first poll after
         // resuming isn't racing a fallback that shouldn't have armed.

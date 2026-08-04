@@ -9,6 +9,7 @@ import type {
   Aircraft,
   ClientMessage,
   FlightDetail,
+  WeatherFrame,
   ExhibitMode,
   PresentationState,
   ServerMessage
@@ -28,6 +29,7 @@ import {
   stopRouteResolver
 } from './routes'
 import { isKnownFlight } from '../src/common/flightClass'
+import { startWeather, stopWeather, weatherFrames } from './weather'
 import {
   initSatellites,
   startSatellites,
@@ -261,12 +263,25 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   function applyMode(next: ExhibitMode): void {
     state.mode = next
     state.selected = null // an icao24 means nothing to the other layer
-    if (next === 'satellite') {
-      feed.setPaused(true)
-      startSatellites(onSatellites)
-    } else {
-      stopSatellites()
-      feed.setPaused(false)
+    // A switch, not an if/else: the else used to mean "anything that isn't
+    // satellite resumes OpenSky", which quietly made a third layer start
+    // spending credits on aircraft nobody was looking at.
+    switch (next) {
+      case 'satellite':
+        stopWeather()
+        feed.setPaused(true, '위성 모드')
+        startSatellites(onSatellites)
+        break
+      case 'weather':
+        stopSatellites()
+      stopWeather()
+        feed.setPaused(true, '날씨 모드')
+        startWeather(onWeather)
+        break
+      default:
+        stopSatellites()
+        stopWeather()
+        feed.setPaused(false)
     }
     broadcast({ type: 'state', state })
     // Clear the other layer's selection artefacts on both screens.
@@ -285,6 +300,11 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   onDetailEnriched((icao24) => {
     if (state.selected === icao24) void sendDetail(null)
   })
+
+  const onWeather = (frame: WeatherFrame) => {
+    if (state.mode !== 'weather') return
+    broadcast({ type: 'weather', frame })
+  }
 
   feed.start(
     (snapshot) => {
@@ -305,7 +325,11 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     console.log(`[hub] window connected (${wss.clients.size} total)`)
     // Bring the new window fully up to date immediately.
     send(ws, { type: 'state', state })
-    if (state.mode === 'satellite') {
+    if (state.mode === 'weather') {
+      // Whatever is already assembled, so a window that connects (or reloads)
+      // mid-session doesn't sit on a bare earth until the next poll.
+      for (const frame of weatherFrames()) send(ws, { type: 'weather', frame })
+    } else if (state.mode === 'satellite') {
       const sats = satSnapshot()
       send(ws, { type: 'satellites', data: sats, serverTime: Date.now() })
       if (state.selected) {
@@ -334,6 +358,8 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
 
   /** Whether this id names something on the layer currently being shown. */
   function belongsToLayer(id: string): boolean {
+    // Weather is a picture, not a set of objects — there is nothing to select.
+    if (state.mode === 'weather') return false
     if (state.mode === 'satellite') return satDetail(id) != null
     // An aircraft that has just blinked out of one snapshot is still the
     // visitor's selection (see holdSelection), so the grace window counts too.
@@ -402,6 +428,10 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         state.hiddenOrbits = msg.orbits
         broadcast({ type: 'state', state })
         return
+      case 'setHiddenWeather':
+        state.hiddenWeather = msg.layers
+        broadcast({ type: 'state', state })
+        return
       case 'setFeedMode':
         state.feedMode = msg.mode
         feed.setMode(msg.mode)
@@ -419,6 +449,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     close() {
       feed.stop()
       stopSatellites()
+      stopWeather()
       stopRouteResolver()
       saveRouteCache()
       wss.close()

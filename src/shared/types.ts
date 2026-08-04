@@ -34,7 +34,24 @@ export interface Aircraft {
 }
 
 /** Which layer the exhibit is showing. Tabs switch between them. */
-export type ExhibitMode = 'flight' | 'satellite'
+export type ExhibitMode = 'flight' | 'satellite' | 'weather'
+
+/** The two weather products, each its own chip on the control screen.
+ * `cloud` is geostationary infrared and covers the whole globe; `rain` is
+ * ground radar and only exists where there are radars to see with. */
+export type WeatherLayer = 'cloud' | 'rain'
+
+/** One assembled weather picture: a grid of Mercator tiles at one zoom level,
+ * each carried as a data URL so the renderer can draw it into a canvas without
+ * tripping over cross-origin tainting (the packaged app runs from file://). */
+export interface WeatherFrame {
+  layer: WeatherLayer
+  /** Tile pyramid level; the grid is 2^z by 2^z. */
+  z: number
+  /** When the imagery was taken, epoch ms. */
+  time: number
+  tiles: { x: number; y: number; url: string }[]
+}
 
 /** Orbit class — drives colour and the filter chips. */
 export type OrbitClass = 'leo' | 'starlink' | 'meo' | 'geo'
@@ -186,6 +203,8 @@ export interface PresentationState {
   mode: ExhibitMode
   /** Orbit classes to hide in satellite mode (empty = show all). */
   hiddenOrbits: OrbitClass[]
+  /** Weather products to hide in weather mode (empty = show both). */
+  hiddenWeather: WeatherLayer[]
 }
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
@@ -214,7 +233,12 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   // Starlink is roughly two thirds of the catalogue and swamps everything else,
   // so it starts hidden; turning the chip on makes the shells appear at once,
   // which reads as a reveal rather than as noise.
-  hiddenOrbits: ['starlink']
+  hiddenOrbits: ['starlink'],
+  // Clouds cover the whole globe and read as "a photograph of the earth right
+  // now"; radar only exists over the countries that have radars, so on a world
+  // map it starts as scattered patches with nothing between them. Clouds first,
+  // rain on a tap.
+  hiddenWeather: ['rain']
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +253,7 @@ export type ServerMessage =
   | { type: 'detail'; detail: FlightDetail | null }
   | { type: 'satellites'; data: Satellite[]; serverTime: number }
   | { type: 'satDetail'; detail: SatelliteDetail | null }
+  | { type: 'weather'; frame: WeatherFrame }
   | {
       type: 'status'
       /** Which feed is actually painting the screen right now. */
@@ -250,4 +275,5 @@ export type ClientMessage =
   | { type: 'setFeedMode'; mode: FeedMode }
   | { type: 'setMode'; mode: ExhibitMode }
   | { type: 'setHiddenOrbits'; orbits: OrbitClass[] }
+  | { type: 'setHiddenWeather'; layers: WeatherLayer[] }
   | { type: 'hello'; role: 'control' | 'display' }

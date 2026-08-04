@@ -33,8 +33,11 @@ const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
-  const { aircraft, state, route, detail, satellites, satDetail } = useHub('display')
-  const isSat = state.mode === 'satellite'
+  const { aircraft, state, route, detail, satellites, satDetail, weather, weatherAgeMin } =
+    useHub('display')
+  const mode = state.mode
+  const isSat = mode === 'satellite'
+  const isWeather = mode === 'weather'
   const satVisible = useMemo(
     () => satellites.filter((x) => !(state.hiddenOrbits ?? []).includes(x.orbit)),
     [satellites, state.hiddenOrbits]
@@ -58,6 +61,13 @@ export function DisplayApp(): JSX.Element {
    * gets there, or until it passes over us.
    */
   const callout = useMemo<Callout>(() => {
+    // Weather has nothing to select, so the plate says what the picture is and
+    // how old it is — the one thing that stops a still image reading as a
+    // decoration rather than as today's sky.
+    if (isWeather) {
+      if (!weatherAgeMin) return { ...NOTHING, title: '지금 지구의 날씨', prefix: '영상을 불러오는 중이에요' }
+      return { ...NOTHING, title: '지금 지구의 날씨', prefix: `${weatherAgeMin}분 전 위성 영상` }
+    }
     // Satellites carry no caption at all: the orbit line is the whole story on
     // the dome, and the pass forecast is on the control screen where it can be
     // read properly.
@@ -101,7 +111,7 @@ export function DisplayApp(): JSX.Element {
       return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
     return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
-  }, [isSat, state.selected, satDetail, sel, d])
+  }, [isSat, isWeather, weatherAgeMin, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -122,13 +132,23 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => {
     globeRef.current?.setObjectKind(isSat ? 'satellite' : 'aircraft')
     globeRef.current?.clearObjects()
-  }, [isSat])
+  }, [mode, isSat])
   useEffect(() => {
-    if (!isSat) globeRef.current?.setAircraft(visible)
-  }, [isSat, visible])
+    if (mode === 'flight') globeRef.current?.setAircraft(visible)
+  }, [mode, visible])
   useEffect(() => {
     if (isSat) globeRef.current?.setSatellites(satVisible)
   }, [isSat, satVisible])
+  // Each layer is hung on or taken off the earth on its own, so a chip toggles
+  // instantly instead of waiting for the next poll.
+  useEffect(() => {
+    const on = !(state.hiddenWeather ?? []).includes('cloud')
+    globeRef.current?.setWeather(isWeather && on ? weather.cloud : null, 'cloud')
+  }, [isWeather, weather.cloud, state.hiddenWeather])
+  useEffect(() => {
+    const on = !(state.hiddenWeather ?? []).includes('rain')
+    globeRef.current?.setWeather(isWeather && on ? weather.rain : null, 'rain')
+  }, [isWeather, weather.rain, state.hiddenWeather])
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])

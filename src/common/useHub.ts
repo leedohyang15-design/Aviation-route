@@ -18,7 +18,8 @@ import {
   type GeoPoint,
   type PresentationState,
   type Satellite,
-  type SatelliteDetail
+  type SatelliteDetail,
+  type WeatherFrame
 } from '@shared/types'
 
 export interface HubView {
@@ -33,6 +34,10 @@ export interface HubView {
   detail: FlightDetail | null
   satellites: Satellite[]
   satDetail: SatelliteDetail | null
+  /** The newest assembled picture for each weather layer. */
+  weather: { cloud: WeatherFrame | null; rain: WeatherFrame | null }
+  /** How old the newest weather picture is, in whole minutes (null = none yet). */
+  weatherAgeMin: number | null
 }
 
 /**
@@ -77,6 +82,16 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [detail, setDetail] = useState<FlightDetail | null>(null)
   const [satellites, setSatellites] = useState<Satellite[]>([])
   const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
+  const [weather, setWeather] = useState<{ cloud: WeatherFrame | null; rain: WeatherFrame | null }>(
+    { cloud: null, rain: null }
+  )
+  // Recomputed on a slow tick rather than per render: the caption counts whole
+  // minutes, so anything faster is work nobody can see.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
   const busRef = useRef<Bus | null>(null)
 
   useEffect(() => {
@@ -106,6 +121,9 @@ export function useHub(role: 'control' | 'display'): HubView {
         case 'satDetail':
           setSatDetail(msg.detail)
           break
+        case 'weather':
+          setWeather((prev) => ({ ...prev, [msg.frame.layer]: msg.frame }))
+          break
       }
     })
     bus.onStatus(setConnected)
@@ -128,6 +146,11 @@ export function useHub(role: 'control' | 'display'): HubView {
     route,
     detail,
     satellites,
-    satDetail
+    satDetail,
+    weather,
+    weatherAgeMin: (() => {
+      const newest = Math.max(weather.cloud?.time ?? 0, weather.rain?.time ?? 0)
+      return newest ? Math.max(0, Math.round((now - newest) / 60_000)) : null
+    })()
   }
 }
