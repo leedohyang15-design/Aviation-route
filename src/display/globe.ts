@@ -921,7 +921,12 @@ export class Globe {
     // runs, not to trace it — and always include both ends, which carry the
     // markers, the place names and the flags.
     const avoid: SelectionAnchor['avoid'] = []
-    const pts = this.routePoints
+    // An orbit is not a route. A flight path is the answer to "where is it
+    // going", so a card over it hides the point of tapping; an orbit is a ring
+    // round the whole globe that says the same thing everywhere, and treating
+    // it as sacred meant no spot on the screen was ever clear and the card fled
+    // to a corner. So the orbit is simply not something to avoid.
+    const pts = this.kind === 'satellite' ? null : this.routePoints
     if (pts && pts.length) {
       const step = Math.max(1, Math.ceil(pts.length / 40))
       for (let i = 0; i < pts.length; i += step) {
@@ -1930,7 +1935,20 @@ export class Globe {
             this.lastRouteIdx = 0
             this.lastRouteOffset = this.lonOffset
           }
-          placeChipBeside(u, 1 - v)
+          // Put the icon ON its orbit, the way a selected aircraft is put on its
+          // route. The dot's own position is eased and dead-reckoned between
+          // ticks, and at 7.6 km/s that lag is a visible gap — the satellite
+          // appeared to be flying alongside its own track rather than on it.
+          // The track is where it actually is, so snap to the nearest point.
+          const oi = nearestRouteIndex(this.routePoints, { lon: e.lon, lat: e.lat })
+          if (oi >= 0) {
+            const on = this.routePoints[oi]
+            const sp = projectNorm(on.lon, on.lat, this.lonOffset)
+            placeSelected(sp.u, 1 - sp.v, 0, on.lat)
+            placeChipBeside(sp.u, 1 - sp.v)
+          } else {
+            placeChipBeside(u, 1 - v)
+          }
         } else if (this.routePoints) {
           const o = this.routePoints[0]
           const de = this.routePoints[this.routePoints.length - 1]

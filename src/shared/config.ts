@@ -153,37 +153,41 @@ export const WEATHER_CLOUD_SOURCE = readEnv('WEATHER_CLOUD_SOURCE') ?? 'gibs'
 export const WEATHER_GIBS_URL =
   readEnv('WEATHER_GIBS_URL') ?? 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi'
 /**
- * Candidate layers, tried in order until one answers with a real image — the
- * same "try each until one loads" shape the earth texture uses. The exhibit
- * machine is the only place these can be verified, so the log names the one
- * that answered rather than assuming.
+ * The geostationary sensors, as `longitude:name|name|name` slots.
  *
- * The global true-colour mosaics come first. They are a few hours behind, but
- * they are ONE seamless picture of the whole earth, which is what a visitor
- * expects to see; the geostationary discs are fresher and, being three
- * overlapping photographs with hard horizons, never quite stop looking like
- * three photographs.
+ * One picture per slot, the first name that answers; the renderer fades each
+ * one out at its own horizon so neighbours cross-blend. FIVE slots, because
+ * four leaves a hole: GOES East and West cover the Americas and the Pacific,
+ * Himawari covers Asia, and without the two Meteosats there is nothing at all
+ * over Africa and the Indian Ocean — which is the black gap that made the
+ * first attempt look broken.
+ *
+ * Clean Infrared rather than GeoColor: it sees cloud at night as well as by
+ * day, and being greyscale it separates from the ground far more cleanly than
+ * a colour composite full of city lights and deserts. GeoColor is listed
+ * second in each slot in case a Band 13 name is not the one GIBS uses.
+ *
+ * Which names exist is the one thing that cannot be checked from here, so the
+ * log names the layer that answered in each slot. Trim this list once the
+ * exhibit machine has told us.
  */
-export const WEATHER_GIBS_LAYERS = (
-  readEnv('WEATHER_GIBS_LAYERS') ??
-  'VIIRS_NOAA20_CorrectedReflectance_TrueColor,VIIRS_SNPP_CorrectedReflectance_TrueColor,MODIS_Terra_CorrectedReflectance_TrueColor'
+export const WEATHER_GIBS_SLOTS = (
+  readEnv('WEATHER_GIBS_SLOTS') ??
+  [
+    '-75:GOES-East_ABI_Band13_Clean_Infrared|GOES-East_ABI_GeoColor',
+    '-137:GOES-West_ABI_Band13_Clean_Infrared|GOES-West_ABI_GeoColor',
+    '140.7:Himawari_AHI_Band13_Clean_Infrared|Himawari_AHI_GeoColor',
+    '0:MSG_Meteosat_11_Band13_Clean_Infrared|Meteosat-11_Band13_Clean_Infrared|MSG_Band13_Clean_Infrared',
+    '45.5:MSG_Meteosat_9_Band13_Clean_Infrared|Meteosat-9_Band13_Clean_Infrared|MSG_IODC_Band13_Clean_Infrared'
+  ].join(',')
 )
   .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
-/**
- * Used when none of the above answer: the geostationary discs. Ten minutes old
- * rather than a few hours, but three separate sensors that have to be lifted
- * out of their own pictures and faded into each other — which is why the
- * seamless mosaic is tried first even though it is older.
- */
-export const WEATHER_GIBS_FALLBACK_LAYERS = (
-  readEnv('WEATHER_GIBS_FALLBACK_LAYERS') ??
-  'GOES-East_ABI_GeoColor,GOES-West_ABI_GeoColor,Himawari_AHI_GeoColor'
-)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
+  .map((entry) => {
+    const [lon, names] = entry.split(':')
+    return { lon: Number(lon), names: (names ?? '').split('|').filter(Boolean) }
+  })
+  .filter((s) => Number.isFinite(s.lon) && s.names.length)
+
 /**
  * RainViewer's colour scheme for the rain tiles. 2 is Universal Blue, the one
  * the free tier serves, and the one the legend on the control screen is drawn

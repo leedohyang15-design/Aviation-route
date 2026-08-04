@@ -22,8 +22,7 @@ import {
   WEATHER_ZOOM,
   WEATHER_CLOUD_SOURCE,
   WEATHER_GIBS_URL,
-  WEATHER_GIBS_LAYERS,
-  WEATHER_GIBS_FALLBACK_LAYERS,
+  WEATHER_GIBS_SLOTS,
   WEATHER_GIBS_WIDTH,
   WEATHER_RAIN_COLOR
 } from '../src/shared/config'
@@ -188,20 +187,6 @@ async function fetchFrame(
  * Which layers actually exist is the one thing that cannot be checked from
  * here, so each candidate is tried in turn and the log names the winner.
  */
-/**
- * Where a geostationary layer is parked, from its name. Approximate on purpose:
- * it only decides where the cross-fade is centred, and a degree either way is
- * invisible once the fade spans forty of them.
- */
-function subSatelliteLon(layer: string): number | undefined {
-  const n = layer.toUpperCase()
-  if (n.includes('GOES-EAST')) return -75
-  if (n.includes('GOES-WEST')) return -137
-  if (n.includes('HIMAWARI')) return 140.7
-  if (n.includes('MSG') || n.includes('METEOSAT')) return n.includes('IODC') ? 45.5 : 0
-  return undefined
-}
-
 async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   const W = WEATHER_GIBS_WIDTH
   const H = Math.round(W / 2)
@@ -216,46 +201,48 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
       if (!res.ok || !type.includes('image')) {
         // GIBS answers a service exception as XML with a 200, so the content
         // type is what tells a picture from a complaint.
-        lastTileError = `${res.status} ${type || 'no content-type'} — ${url}`
+        lastTileError = `${res.status} ${type || 'no content-type'} — ${layer}`
         return null
       }
       const buf = Buffer.from(await res.arrayBuffer())
-      // A fully transparent tile is a valid PNG and a useless picture; a disc
-      // that does not cover us comes back tiny.
+      // A fully transparent image is a valid PNG and a useless picture.
       if (buf.length < 20_000) {
-        lastTileError = `only ${buf.length} bytes (blank?) — ${url}`
+        lastTileError = `only ${buf.length} bytes (blank?) — ${layer}`
         return null
       }
       opsLog(`[weather] cloud: ${layer} answered, ${(buf.length / 1e6).toFixed(1)}MB`)
       return `data:image/png;base64,${buf.toString('base64')}`
     } catch (err) {
-      lastTileError = `${(err as Error).message} — ${url}`
+      lastTileError = `${(err as Error).message} — ${layer}`
       return null
     }
   }
 
-  for (const set of [WEATHER_GIBS_LAYERS, WEATHER_GIBS_FALLBACK_LAYERS]) {
-    const got: WeatherFrame['tiles'] = []
-    for (const layer of set) {
-      const url = await get(layer)
-      if (url) got.push({ x: 0, y: 0, url, centerLon: subSatelliteLon(layer) })
-      // A whole-globe mosaic is complete on its own; the discs are meant to be
-      // stacked, so all of them are fetched.
-      if (url && set === WEATHER_GIBS_LAYERS) break
+  const got: WeatherFrame['tiles'] = []
+  for (const slot of WEATHER_GIBS_SLOTS) {
+    if (stopped) return null
+    let filled = false
+    for (const name of slot.names) {
+      const url = await get(name)
+      if (!url) continue
+      got.push({ x: 0, y: 0, url, centerLon: slot.lon })
+      filled = true
+      break // one picture per slot; the rest of its names are spares
     }
-    if (got.length) {
-      return {
-        layer: 'cloud',
-        projection: 'equirect',
-        blend: set === WEATHER_GIBS_LAYERS ? 'photo' : 'cloud',
-        z: 0,
-        time: Date.now(),
-        tiles: got
-      }
+    if (!filled) {
+      opsLog(`[weather] cloud: nothing at ${slot.lon}° — tried ${slot.names.join(', ')}. Last: ${lastTileError}`)
     }
-    opsLog(`[weather] cloud: none of [${set.join(', ')}] answered. Last: ${lastTileError}`)
   }
-  return null
+  if (!got.length) return null
+  opsLog(`[weather] cloud: ${got.length}/${WEATHER_GIBS_SLOTS.length} sensors — composited`)
+  return {
+    layer: 'cloud',
+    projection: 'equirect',
+    blend: 'cloud',
+    z: 0,
+    time: Date.now(),
+    tiles: got
+  }
 }
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
@@ -357,7 +344,15 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
 
 export function stopWeather(): void {
   stopped = true
-  if (timer) clearTimeout(timer)
-  timer = null
+  // Clearing the pending timer means the loop body is ASLEEP, not running, so
+  // nobody is left to clear `running` — and while it stays set, start() sees a
+  // live loop and returns, so the layer never updates again. A tab away and
+  // back was enough to kill it silently. When the body IS mid-flight `timer` is
+  // null and it clears the flag itself on the next check.
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+    running = false
+  }
   saveCache()
 }

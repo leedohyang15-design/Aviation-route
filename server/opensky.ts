@@ -216,8 +216,16 @@ export function createOpenSkyFeed(): FlightFeed {
     },
     stop() {
       stopped = true
-      if (timer) clearTimeout(timer)
-      timer = null
+      // Clearing the pending timer means the loop body is ASLEEP, not running, so
+      // nobody is left to clear `running` — and while it stays set, start() sees a
+      // live loop and returns, so the layer never updates again. A tab away and
+      // back was enough to kill it silently. When the body IS mid-flight `timer` is
+      // null and it clears the flag itself on the next check.
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+        running = false
+      }
     },
     getDetail(icao24: string) {
       return buildDetail(icao24, latest, detailCache)

@@ -115,7 +115,7 @@ function stillClear(a: SelectionAnchor, rect: Placement['rect']): boolean {
   const h = hiddenBy(rect, keepOut(a), a)
   // A token overlap is not worth moving the card for. Moving it is the thing
   // the visitor notices; a corner of the line under a corner of the card is not.
-  return h.hard === 0 && h.soft < 0.12
+  return h.hard === 0 && h.soft < 0.04
 }
 
 function placeCard(a: SelectionAnchor): Placement {
@@ -180,13 +180,13 @@ function placeCard(a: SelectionAnchor): Placement {
     // counted in real pixels now, not divided into insignificance.
     const cost =
       h.hard * 100_000 +
-      h.soft * 6_000 +
+      h.soft * 60_000 +
       s.bias * 1_000 +
       Math.hypot(s.x + W / 2 - a.x, s.y + H / 2 - a.y)
     if (cost < bestCost) {
       bestCost = cost
       best = s
-      bestHidden = h.hard + (h.soft >= 0.12 ? 1 : 0)
+      bestHidden = h.hard + (h.soft >= 0.04 ? 1 : 0)
     }
   }
   return {

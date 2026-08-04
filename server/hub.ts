@@ -200,10 +200,22 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
 
   // Satellites are propagated locally once a second; only broadcast them while
   // that's the layer on screen, so flight mode carries no extra traffic.
+  // The orbit line is only true for the moment it was computed: the ground
+  // track slides west as the earth turns beneath it, so a line drawn once at
+  // selection drifts away from the satellite that is meant to be on it. Cheap
+  // to recompute, so it goes out again every so often.
+  const ORBIT_REFRESH_MS = 20_000
+  let lastOrbitAt = 0
   const onSatellites = () => {
     if (state.mode !== 'satellite') return
     broadcast({ type: 'satellites', data: satSnapshot(), serverTime: Date.now() })
-    if (state.selected) broadcast({ type: 'satDetail', detail: satDetail(state.selected) })
+    if (!state.selected) return
+    const d = satDetail(state.selected)
+    broadcast({ type: 'satDetail', detail: d })
+    if (Date.now() - lastOrbitAt > ORBIT_REFRESH_MS) {
+      lastOrbitAt = Date.now()
+      broadcast({ type: 'route', icao24: state.selected, points: d?.track ?? null })
+    }
   }
 
   /** Drop the current selection and clear every trace of it on both windows. */
@@ -398,6 +410,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         broadcast({ type: 'state', state })
         if (state.mode === 'satellite') {
           const d = msg.icao24 ? satDetail(msg.icao24) : null
+          lastOrbitAt = Date.now()
           broadcast({ type: 'satDetail', detail: d })
           broadcast({ type: 'route', icao24: msg.icao24 ?? '', points: d?.track ?? null })
         } else {
