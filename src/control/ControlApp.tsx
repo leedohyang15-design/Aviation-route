@@ -35,7 +35,9 @@ const SETTLE_MS = 2500
  * aircraft that have none — means it is only ever drawn once, in its final
  * place.
  */
-const ROUTE_WAIT_MS = 900
+const ROUTE_WAIT_MS = 6000
+/** Backstop for an object still enough that no further anchor ever arrives. */
+const CAMERA_QUIET_MS = 2500
 
 
 /**
@@ -49,6 +51,19 @@ const ROUTE_WAIT_MS = 900
  */
 interface Placement {
   style: React.CSSProperties
+  /**
+   * Where the card sits RELATIVE TO THE OBJECT, in pixels.
+   *
+   * This is the whole trick. Pinning the card to the screen meant that panning
+   * the map slid the aircraft out from under it while the card stayed where it
+   * was — which from the other side of the glass is the card following your
+   * hand. Holding an offset from the object instead makes the card travel with
+   * the thing it describes: move the map and they move together, and the only
+   * time the offset is reconsidered is when it has started covering something.
+   */
+  off: { dx: number; dy: number }
+  /** Where the camera was pointing when this was decided. */
+  cam: { span: number; lon: number }
   /** Where it actually is, so a later frame can ask whether it still works. */
   rect: { x: number; y: number; w: number; h: number }
   /** How many keep-out points this spot covers — 0 is a clean placement. */
@@ -191,6 +206,8 @@ function placeCard(a: SelectionAnchor): Placement {
   }
   return {
     hidden: bestHidden,
+    off: { dx: best.x - a.x, dy: best.y - a.y },
+    cam: { span: a.span, lon: a.viewLon },
     rect: { x: best.x, y: best.y, w: W, h: H },
     style: {
       left: best.x,
@@ -322,40 +339,79 @@ export function ControlApp(): JSX.Element {
     setSettled(true)
   }
 
+  /** Re-hang the card at its chosen offset from wherever the object is now. */
+  const follow = (a: SelectionAnchor, p: Placement) => {
+    const M = 12
+    const w = (p.rect.w * a.span) / p.cam.span // the scale tracks the zoom
+    const scale = w / SHEET_W
+    const h = SHEET_H * scale
+    const left = Math.max(M, Math.min(window.innerWidth - w - M, a.x + p.off.dx))
+    const top = Math.max(M, Math.min(window.innerHeight - h - M, a.y + p.off.dy))
+    setPlaced({
+      left,
+      top,
+      right: 'auto',
+      bottom: 'auto',
+      width: SHEET_W,
+      transform: `scale(${scale})`,
+      transformOrigin: 'top left'
+    })
+    placedRef.current = { ...p, rect: { ...p.rect, x: left, y: top, w, h: h } }
+  }
+
   useEffect(() => {
     placedRef.current = null
     openedAt.current = Date.now()
     setSettled(false)
     if (!state.selected) setPlaced({})
-    // A geostationary satellite barely moves, so its anchor may not fire again
-    // for a while — without this the card would wait forever for a route that
-    // is never coming.
-    const t = setTimeout(() => {
-      const a = anchorRef.current
-      if (a && !placedRef.current) apply(placeCard(a))
-    }, ROUTE_WAIT_MS + 50)
+  }, [state.selected])
+
+  /**
+   * Everything the card is waiting on has arrived.
+   *
+   * Selecting starts two things the card's position depends on — the route
+   * comes back from the hub, and the camera recentres on the object — and
+   * either landing after the card was drawn made it jump. So it waits for the
+   * route to actually be there (or for the detail to say there will never be
+   * one), with a long stop so nothing can hang.
+   */
+  const [waitTick, setWaitTick] = useState(0)
+  useEffect(() => {
+    if (!state.selected) return
+    const t = setTimeout(() => setWaitTick((n) => n + 1), ROUTE_WAIT_MS + 100)
     return () => clearTimeout(t)
   }, [state.selected])
+  void waitTick
+  const routeReady =
+    !!state.selected &&
+    (isSat ||
+      (route.icao24 === state.selected && !!route.points) ||
+      (!!d && !d.route) ||
+      Date.now() - openedAt.current > ROUTE_WAIT_MS)
 
   useEffect(() => {
     anchorRef.current = anchor
     if (!anchor) return
-    // No placement yet for this selection. Hold off until the route has landed
-    // — an anchor that already carries the line is the signal — or until the
-    // wait runs out, which is how a route-less aircraft still gets a card.
+
     if (!placedRef.current) {
-      const hasLine = anchor.avoid.length > 0
-      if (hasLine || Date.now() - openedAt.current > ROUTE_WAIT_MS) apply(placeCard(anchor))
+      if (!routeReady) return
+      // Wait for the camera to park: selecting recentres and zooms, so a card
+      // placed mid-ease is placed against a map about to be somewhere else.
+      if (anchor.moving) return
+      apply(placeCard(anchor))
       return
     }
-    // Otherwise wait for the map to stop moving, then only move if we have to.
+
+    // Placed: ride along with the object, every frame it moves.
+    follow(anchor, placedRef.current)
+
+    // And only ever reconsider the OFFSET — never the fact that it is attached
+    // — once the map has been still a good while and the spot has gone bad.
     if (settleRef.current) clearTimeout(settleRef.current)
     settleRef.current = setTimeout(() => {
       const a = anchorRef.current
       const cur = placedRef.current
-      if (!a || !cur) return
-      // Is where it is STILL clear, against the route as it is now? Only if not
-      // does it get to move, and only to somewhere better.
+      if (!a || !cur || a.moving) return
       if (stillClear(a, cur.rect)) return
       const next = placeCard(a)
       if (next.hidden > 0) return // nowhere better to go
@@ -364,7 +420,19 @@ export function ControlApp(): JSX.Element {
     return () => {
       if (settleRef.current) clearTimeout(settleRef.current)
     }
-  }, [anchor])
+  }, [anchor, routeReady])
+
+  // A geostationary satellite can sit still enough that no further anchor ever
+  // arrives, so the wait needs its own alarm clock as a backstop.
+  useEffect(() => {
+    if (!state.selected || placedRef.current || !routeReady) return
+    const t = setTimeout(() => {
+      const a = anchorRef.current
+      if (a && !placedRef.current) apply(placeCard(a))
+    }, CAMERA_QUIET_MS)
+    return () => clearTimeout(t)
+  }, [state.selected, routeReady])
+
   const sheetStyle = placed
 
 

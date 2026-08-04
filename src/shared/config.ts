@@ -195,5 +195,15 @@ export const WEATHER_GIBS_SLOTS = (
  */
 export const WEATHER_RAIN_COLOR = Number(readEnv('WEATHER_RAIN_COLOR') ?? 2)
 
+/**
+ * How strongly the cloud reads against the earth under it.
+ *
+ * Infrared is a measurement, not a photograph: thin high cirrus and a deep
+ * thunderhead differ by a lot in the data and by very little in brightness once
+ * it is drawn, so straight extraction comes out as a pale wash. Above 1 the
+ * cloud is pushed toward what it looks like from a plane window.
+ */
+export const WEATHER_CLOUD_OPACITY = Number(readEnv('WEATHER_CLOUD_OPACITY') ?? 1.45)
+
 /** Width of the requested plate-carrée image; height is half, always. */
 export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 2048)

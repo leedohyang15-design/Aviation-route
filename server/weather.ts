@@ -32,7 +32,17 @@ import { opsLog } from './log'
 
 const CACHE_NAME = 'aviation-route-weather.json'
 const CACHE_PATH = dataPath(CACHE_NAME)
-const CACHE_VERSION = 1
+/**
+ * Bump this whenever the shape of a frame changes.
+ *
+ * A cached frame is replayed at startup so an offline exhibit still has a sky,
+ * but a frame made by an older build is made differently — the mosaic era wrote
+ * a single full-frame picture with no sub-satellite longitude on it, which the
+ * renderer draws as an unfeathered rectangle. That is why the weather started
+ * as a rectangle and only became a globe once the first poll landed: it was
+ * yesterday's format on screen, not today's.
+ */
+const CACHE_VERSION = 2
 
 /** RainViewer's index. Only the fields we use are described. */
 interface Index {

@@ -25,7 +25,7 @@ import type {
   WeatherLayer
 } from '@shared/types'
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
-import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL } from '@shared/config'
+import { EARTH_TEXTURE_URL, EARTH_NIGHT_URL, WEATHER_CLOUD_OPACITY } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 import { categoryKey } from '../common/flightClass'
 import {
@@ -67,6 +67,15 @@ export interface SelectionAnchor {
    * destination anyway.
    */
   avoid: { x: number; y: number; hard?: boolean }[]
+  /**
+   * True while the camera is still easing toward its target — selecting
+   * recentres and zooms, and that takes a second. A card placed against a
+   * moving camera is placed against a map that is about to be somewhere else.
+   */
+  moving: boolean
+  /** Where the camera itself is pointing. The object drifts on its own; this
+   * changes only when someone moves the map. */
+  viewLon: number
 }
 
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
@@ -351,6 +360,7 @@ export class Globe {
       // 1 = a seamless photograph of the earth, drawn where it has data;
       // 0 = a geostationary disc the cloud has to be lifted out of.
       uCloudPhoto: { value: 0 },
+      uCloudAmt: { value: WEATHER_CLOUD_OPACITY },
       uRain: { value: null },
       uHasRain: { value: 0 },
       uRainMerc: { value: 1 },
@@ -371,7 +381,7 @@ export class Globe {
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
-        uniform float uCloudPhoto;
+        uniform float uCloudPhoto; uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
@@ -447,7 +457,12 @@ export class Globe {
             float mx = max(c.r, max(c.g, c.b));
             float mn = min(c.r, min(c.g, c.b));
             float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
-            float lifted = smoothstep(0.22, 0.62, lum) * (1.0 - smoothstep(0.30, 0.65, sat));
+            // A wider, earlier ramp and a gain on top: infrared cloud sits in a
+            // narrow band of greys, and mapping it one-to-one leaves the sky
+            // looking like a smear rather than weather.
+            float lifted =
+              clamp(smoothstep(0.16, 0.52, lum) * uCloudAmt, 0.0, 1.0)
+              * (1.0 - smoothstep(0.30, 0.65, sat));
             // A seamless mosaic IS the earth, so it goes on as a photograph and
             // keeps its land, its sea and its clouds together — which is what
             // stops it looking like grey smudges pasted over a map. Only a disc
@@ -946,7 +961,23 @@ export class Globe {
       avoid.push({ ...p, hard: true })
     }
     const c = toClient(worldX, worldY)
-    const p: SelectionAnchor = { x: c.x, y: c.y, span: this.targetSpan, avoid }
+    const near = (a: number, b: number) => Math.abs(a - b) < 5e-4
+    const parked =
+      !this.pendingRecenter &&
+      near(this.viewRect.left, this.targetRect.left) &&
+      near(this.viewRect.right, this.targetRect.right) &&
+      near(this.viewRect.top, this.targetRect.top) &&
+      near(this.viewRect.bottom, this.targetRect.bottom) &&
+      near(this.lonOffset, this.targetLonOffset) &&
+      Math.abs(this.uiScale - this.targetSpan) < 2e-3
+    const p: SelectionAnchor = {
+      x: c.x,
+      y: c.y,
+      span: this.targetSpan,
+      viewLon: -this.targetLonOffset,
+      avoid,
+      moving: !parked
+    }
     const prev = this.lastAnchor
     // Only when it actually moved: this runs every frame, and a card that
     // re-lays-out sixty times a second jitters.
@@ -955,6 +986,8 @@ export class Globe {
       Math.abs(prev.x - p.x) < 3 &&
       Math.abs(prev.y - p.y) < 3 &&
       prev.avoid.length === p.avoid.length &&
+      prev.moving === p.moving &&
+      Math.abs(prev.viewLon - p.viewLon) < 0.05 &&
       Math.abs(prev.span - p.span) < 0.01
     ) {
       return
