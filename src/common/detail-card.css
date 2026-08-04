@@ -211,3 +211,16 @@
   font-weight: 600;
   text-align: center;
 }
+
+/* The altitude, said in something a child can picture. Quiet — it sits under
+   the figures it explains, not beside them. */
+.bp-scale {
+  margin: 2px 0 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #eef4fb;
+  color: #3d5875;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-align: center;
+}

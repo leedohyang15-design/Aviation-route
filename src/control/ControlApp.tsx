@@ -223,7 +223,9 @@ export function ControlApp(): JSX.Element {
       {/* Touch hint (bottom-center) — invites visitors to interact; hidden once
           a plane is selected so it doesn't fight the boarding-pass card. */}
       {(!state.selected || attract) && (
-        <div className="touch-hint">🖐 지구를 돌리고, 비행기를 눌러보세요!</div>
+        <div className="touch-hint">
+          🖐 지구를 돌리고, {isSat ? '위성을' : '비행기를'} 눌러보세요!
+        </div>
       )}
     </div>
   )

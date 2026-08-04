@@ -14,11 +14,31 @@ function hhmm(sec: number): string {
 }
 
 interface Callout {
+  /** What the thing IS — the line that used to be missing. */
+  title: string
   prefix: string
   value: string
   suffix: string
 }
-const NOTHING: Callout = { prefix: '', value: '', suffix: '' }
+const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
+
+/**
+ * The colour key for the layer on screen. Kept here rather than in the
+ * renderer because these are the same colours and the same words the control
+ * screen's chips use — one list, two places to read it.
+ */
+const FLIGHT_LEGEND = [
+  { color: '#35c1ff', label: '여객기' },
+  { color: '#f5a623', label: '화물기' },
+  { color: '#74d16a', label: '군용기' },
+  { color: '#93a4b8', label: '자가용 · 기타' }
+] as const
+const SAT_LEGEND = [
+  { color: '#5ce1e6', label: '저궤도' },
+  { color: '#b48cff', label: '스타링크' },
+  { color: '#ffd166', label: '중궤도' },
+  { color: '#ff7b6b', label: '정지궤도' }
+] as const
 
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -51,20 +71,30 @@ export function DisplayApp(): JSX.Element {
     // Satellites carry no caption at all: the orbit line is the whole story on
     // the dome, and the pass forecast is on the control screen where it can be
     // read properly.
-    if (isSat) return NOTHING
+    // A satellite gets its name and nothing else. The pass forecast and the
+    // orbital figures live on the control screen; on the dome the orbit line is
+    // the whole story, and all the caption has to do is say whose it is.
+    if (isSat) return satDetail ? { ...NOTHING, title: satDetail.name } : NOTHING
     if (!sel) return NOTHING
     // Once something is selected the frame always says SOMETHING about it. An
     // empty callout used to be the outcome for two ordinary cases — a flight on
     // final approach with nothing left to count down, and one whose route we
     // don't have — and in both the dome just went quiet with a plane
     // highlighted on it and no explanation.
-    if (!d) return { ...NOTHING, prefix: '정보를 불러오는 중이에요' }
+    const flight = (sel.callsign || '').trim()
+    if (!d) return { ...NOTHING, title: flight, prefix: '정보를 불러오는 중이에요' }
     const where = d.destination?.city ?? d.destination?.code
-    if (!d.route) return { ...NOTHING, prefix: d.noRouteReason ?? '경로 정보가 없어요' }
+    const from = d.origin?.city ?? d.origin?.code
+    // The name line: the flight number, then where it is going, so the dome
+    // answers "what am I watching?" before it answers "how long?".
+    const title = [flight || d.airline, from && where ? `${from} → ${where}` : where ?? d.airline]
+      .filter(Boolean)
+      .join('   ')
+    if (!d.route) return { ...NOTHING, title, prefix: d.noRouteReason ?? '경로 정보가 없어요' }
     if (d.etaRemainingSec == null || d.etaRemainingSec < 60) {
-      return { ...NOTHING, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
+      return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
-    return { prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
+    return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
   }, [isSat, state.selected, satDetail, sel, d])
 
   useEffect(() => {
@@ -112,7 +142,15 @@ export function DisplayApp(): JSX.Element {
       d?.destination?.countryCode ?? null
     )
   }, [isSat, d])
-  useEffect(() => globeRef.current?.setCallout(callout.prefix, callout.value, callout.suffix), [callout])
+  useEffect(
+    () => globeRef.current?.setCallout(callout.title, callout.prefix, callout.value, callout.suffix),
+    [callout]
+  )
+  // The colour key, so the dome can be read without someone standing next to it.
+  useEffect(
+    () => globeRef.current?.setLegend(isSat ? SAT_LEGEND : FLIGHT_LEGEND),
+    [isSat]
+  )
 
   return (
     <div className="display-root">

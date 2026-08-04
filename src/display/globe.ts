@@ -30,12 +30,21 @@ import {
   LIGHT_QUAD_SCALE,
   LIGHT_SPOTS,
   calloutTexture,
+  legendTexture,
   categoryColor,
   orbitColor,
   plainDotTexture,
   satelliteTexture
 } from './textures'
 
+/** Below this altitude a flight is near one end of its journey, which is when
+ * it is worth showing. */
+const STORY_ALT_M = 6000
+/** Quiet time before the exhibit lets go of whatever the last visitor left
+ * selected and returns to the whole world. */
+const IDLE_RELEASE_MS = 90_000
+const HOME_LON = 127.5
+const HOME_LAT = 37.5
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 
@@ -134,6 +143,7 @@ export class Globe {
   private originLabel!: THREE.Mesh
   private destLabel!: THREE.Mesh
   private infoLabel!: THREE.Mesh
+  private legend!: THREE.Mesh
   private originFlag!: THREE.Mesh
   private destFlag!: THREE.Mesh
   private flagCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>()
@@ -208,6 +218,12 @@ export class Globe {
   /** Objects with something to show — a confirmed route, or (for a satellite)
    * an orbit, which is always. Only the attract cycle consults this. */
   private routed = new Set<string>()
+  /** Aircraft with a route that are low enough to be climbing out of, or
+   * settling into, an airport — the ones with something happening. */
+  private story = new Set<string>()
+  /** When the operator last touched anything, for the idle release. */
+  private lastActivity = Date.now()
+  private released = false
   private spriteMat = new THREE.Matrix4()
   private scratchColor = new THREE.Color()
   /** Rendered pixel width ÷ height (2:1 by construction). The world is [0,1]²,
@@ -464,6 +480,7 @@ export class Globe {
     this.infoLabel = label() // flight info chip next to the selected plane
     this.originFlag = label() // country flag above the origin marker
     this.destFlag = label() // country flag above the destination marker
+    this.legend = label() // colour key, pinned to a corner of the frame
 
     this.tryLoadEarth()
     this.resize()
@@ -670,8 +687,8 @@ export class Globe {
   /** Reset the interactive view to the home (whole-world, Korea-centered) view
    * and clear the selection. Wired to the "🌏 전체 보기" button. */
   home(): void {
-    this.iCenterLon = 127.5
-    this.iCenterLat = 37.5
+    this.iCenterLon = HOME_LON
+    this.iCenterLat = HOME_LAT
     this.iSpan = 1
     this.applyInteractiveView()
     this.emitView()
@@ -687,6 +704,18 @@ export class Globe {
   /** Auto-select a random flight, then keep cycling every 30s until a real
    * interaction resets the countdown. */
   private autoPick(): void {
+    // Before picking the next one, let go of the last. A selection pins the
+    // dome to that object's longitude, so whatever the last visitor tapped
+    // stayed on screen for everyone after them until someone found the reset
+    // button. One release, at the first auto-pick after the room goes quiet.
+    if (!this.released && Date.now() - this.lastActivity > IDLE_RELEASE_MS) {
+      this.released = true
+      this.iCenterLon = HOME_LON
+      this.iCenterLat = HOME_LAT
+      this.iSpan = 1
+      this.applyInteractiveView()
+      this.emitView()
+    }
     const next = this.randomPick(true)
     if (next) this.onSelectChange?.(next)
     // Reset BOTH timers through the single scheduler so they can't accumulate.
@@ -703,6 +732,8 @@ export class Globe {
 
   /** Operator input resets the attract countdown and hides the touch invite. */
   private resetAttract(): void {
+    this.lastActivity = Date.now()
+    this.released = false
     this.onAttractChange?.(false)
     this.startAttractTimer()
   }
@@ -754,7 +785,12 @@ export class Globe {
     const spanX = R - L || 1
     const spanY = T - B || 1
     let best: string | null = null
-    let bestPx = 14 // pixel threshold (zoom-independent)
+    // Sized for a child's fingertip on the exhibit's touchscreen, not a mouse
+    // pointer: 14px meant a miss unless you hit the dot almost exactly, and the
+    // miss reads as "it's broken" rather than "aim better". Nearest-within
+    // still applies, so a generous radius costs precision only where the dots
+    // are already too dense to aim at individually.
+    let bestPx = 34 // pixel threshold (zoom-independent)
     for (const [id, e] of this.eased) {
       const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
       const py = 1 - v
@@ -791,8 +827,11 @@ export class Globe {
   private randomPick(preferRouted: boolean): string | null {
     const all = [...this.eased.keys()]
     if (!all.length) return null
-    const routed = preferRouted ? all.filter((id) => this.routed.has(id)) : []
-    const ids = routed.length ? routed : all
+    // Best: something mid-story. Next: anything with a route at all. Last:
+    // whatever is up there.
+    const story = preferRouted ? all.filter((id) => this.story.has(id)) : []
+    const routed = preferRouted && !story.length ? all.filter((id) => this.routed.has(id)) : []
+    const ids = story.length ? story : routed.length ? routed : all
     if (ids.length === 1) return ids[0]
     let id = ids[Math.floor(Math.random() * ids.length)]
     while (id === this.selected) id = ids[Math.floor(Math.random() * ids.length)]
@@ -1053,7 +1092,17 @@ export class Globe {
       }
     }
     this.routed.clear()
-    for (const a of list) if (a.hasRoute) this.routed.add(a.icao24)
+    this.story.clear()
+    for (const a of list) {
+      if (!a.hasRoute) continue
+      this.routed.add(a.icao24)
+      // Below the cruise levels and still moving: just off a runway or on the
+      // way down to one. "That one took off a few minutes ago" is a story; an
+      // anonymous dot at 11 km over Siberia, three hours from anywhere, is not.
+      if (!a.onGround && a.altitude != null && a.altitude < STORY_ALT_M) {
+        this.story.add(a.icao24)
+      }
+    }
     // Drop aircraft no longer reported.
     for (const id of [...this.eased.keys()]) {
       if (!seen.has(id)) {
@@ -1100,6 +1149,7 @@ export class Globe {
     }
     // Every satellite has an orbit, so the attract cycle has no reason to prefer.
     this.routed.clear()
+    this.story.clear()
     for (const s of list) this.routed.add(s.id)
     for (const id of [...this.eased.keys()]) if (!seen.has(id)) this.eased.delete(id)
     this.order = this.order.filter((id) => this.eased.has(id))
@@ -1147,11 +1197,32 @@ export class Globe {
   clearObjects(): void {
     this.eased.clear()
     this.routed.clear()
+    this.story.clear()
     this.order = []
     this.selected = null
     this.selectedPlane.visible = false
     this.selectedGlow.visible = false
     this.selectedLights.visible = false
+    // And the route with them. The hub sends a route:null on the switch, but it
+    // arrives on its own schedule, and until it did an aircraft's flight path
+    // hung over the satellite map with no aircraft under it. Dropping it here
+    // makes the switch atomic from the renderer's side.
+    this.routePoints = null
+    this.lastRouteIdx = -1
+    this.lastRouteOffset = NaN
+    this.routeCenterLon = null
+    this.disposeRouteGroup()
+    for (const m of [
+      this.originMarker,
+      this.destMarker,
+      this.originLabel,
+      this.destLabel,
+      this.originFlag,
+      this.destFlag,
+      this.infoLabel
+    ]) {
+      m.visible = false
+    }
   }
 
   /** Set origin/destination place-name labels (null clears them). */
@@ -1224,13 +1295,13 @@ export class Globe {
     img.src = `flags/${code}.svg`
   }
 
-  /** The single line of text the dome carries — how long until the aircraft
-   * lands, or until the satellite passes overhead. Null clears it. */
-  setCallout(prefix: string, value: string, suffix: string): void {
+  /** The plate the dome carries: what the object is, and how long until it
+   * lands or passes overhead. All-empty clears it. */
+  setCallout(title: string, prefix: string, value: string, suffix: string): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
     mat.map?.dispose()
-    if (prefix || value || suffix) {
-      const { tex, aspect, screenH } = calloutTexture(prefix, value, suffix)
+    if (title || prefix || value || suffix) {
+      const { tex, aspect, screenH } = calloutTexture(title, prefix, value, suffix)
       mat.map = this.tuneSprite(tex)
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
@@ -1238,6 +1309,28 @@ export class Globe {
     } else {
       mat.map = null
       this.infoLabel.visible = false
+    }
+  }
+
+  /**
+   * The colour key in the corner of the frame. Null clears it.
+   *
+   * Pinned to the view rather than to the map, so panning and zooming leave it
+   * where it is — it is a reference for the frame, not a thing on the ground.
+   */
+  setLegend(items: readonly { color: string; label: string }[] | null): void {
+    const mat = this.legend.material as THREE.MeshBasicMaterial
+    mat.map?.dispose()
+    if (items && items.length) {
+      const { tex, aspect, screenH } = legendTexture(items)
+      mat.map = this.tuneSprite(tex)
+      mat.needsUpdate = true
+      this.legend.userData.aspect = aspect
+      this.legend.userData.screenH = screenH
+      this.legend.visible = true
+    } else {
+      mat.map = null
+      this.legend.visible = false
     }
   }
 
@@ -1385,6 +1478,17 @@ export class Globe {
     // world view and grow when zoomed in so the swarm stays readable.
     this.uiScale += (this.targetSpan - this.uiScale) * 0.28
     this.iconScale += (iconScaleFor(this.kind, this.targetSpan) - this.iconScale) * 0.28
+
+    // The colour key rides the view, not the map: bottom-left of whatever the
+    // camera is currently showing, at a constant on-screen size.
+    if (this.legend.visible) {
+      const lh = (this.legend.userData.screenH as number) * this.uiScale
+      const lw = this.quadWidth(lh, (this.legend.userData.aspect as number) || 2)
+      const { left, bottom } = this.viewRect
+      const m = 0.018 * this.uiScale
+      this.legend.scale.set(lw, lh, 1)
+      this.legend.position.set(left + m + lw / 2, bottom + m + lh / 2, 0.8)
+    }
 
     // Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
     this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.28

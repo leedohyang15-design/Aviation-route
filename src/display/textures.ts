@@ -194,16 +194,26 @@ const SS = 3 // supersample: canvas pixels per design unit
 const CALLOUT_FRAME_H = 780
 
 const CALLOUT_H = 50
+/** Height of the name line above the figure. */
+const TITLE_H = 27
 const CALLOUT_PAD = 17
 const EDGE_W = 5 // accent bar down the leading edge
 
 type Ctx = CanvasRenderingContext2D
 
 /**
- * One line on a plate: "도착까지 [11시간 37분] 남음", with the figure set large
- * and in the accent colour and the words around it smaller.
+ * The plate the dome carries.
+ *
+ * A title line naming the object — "KE902  인천 → 파리" — over the one figure a
+ * visitor wants from across a room: "도착까지 [11시간 37분] 남음", with the
+ * figure set large and in the accent colour and the words around it smaller.
+ *
+ * The title is what the dome was missing. The countdown alone told thirty
+ * people watching that something arrives in three hours without ever saying
+ * what, or where from — that answer only existed on the operator's screen.
  */
 export function calloutTexture(
+  title: string,
   prefix: string,
   value: string,
   suffix: string
@@ -211,18 +221,26 @@ export function calloutTexture(
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
   const valueFont = `700 ${27 * SS}px ${MONO}`
   const wordFont = `600 ${19 * SS}px ${SANS}`
+  const titleFont = `700 ${16 * SS}px ${SANS}`
   measuring.font = wordFont
   const preW = prefix ? measuring.measureText(prefix).width / SS : 0
   const sufW = suffix ? measuring.measureText(suffix).width / SS : 0
   measuring.font = valueFont
   const valW = value ? measuring.measureText(value).width / SS : 0
+  measuring.font = titleFont
+  const titleW = title ? measuring.measureText(title).width / SS : 0
   const gap = 9
   const gaps = (prefix && value ? gap : 0) + (value && suffix ? gap : 0)
-  const W = EDGE_W + CALLOUT_PAD + preW + valW + sufW + gaps + CALLOUT_PAD
+  const lineW = preW + valW + sufW + gaps
+  const hasLine = lineW > 0
+  const W = EDGE_W + CALLOUT_PAD + Math.max(lineW, titleW) + CALLOUT_PAD
+  const titleH = title ? TITLE_H : 0
+  const lineH = hasLine ? CALLOUT_H : 0
+  const H = titleH + lineH
 
   const c = document.createElement('canvas')
   c.width = Math.ceil(W * SS)
-  c.height = Math.ceil(CALLOUT_H * SS)
+  c.height = Math.ceil(H * SS)
   const g = c.getContext('2d') as Ctx
 
   const r = 6 * SS
@@ -241,8 +259,19 @@ export function calloutTexture(
   g.fillRect(0, 0, EDGE_W * SS, c.height)
   g.restore()
 
-  const baseline = 33.5 * SS
-  let x = (EDGE_W + CALLOUT_PAD) * SS
+  const left = (EDGE_W + CALLOUT_PAD) * SS
+  if (title) {
+    g.font = titleFont
+    g.fillStyle = INK
+    g.fillText(title, left, 20 * SS)
+    if (hasLine) {
+      // Hairline between the name and the figure, inset from the accent bar.
+      g.fillStyle = 'rgba(20,18,15,0.16)'
+      g.fillRect(left, titleH * SS - SS, c.width - left - CALLOUT_PAD * SS, SS)
+    }
+  }
+  let x = left
+  const baseline = (titleH + 33.5) * SS
   if (prefix) {
     g.font = wordFont
     g.fillStyle = INK
@@ -263,7 +292,62 @@ export function calloutTexture(
 
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
-  return { tex, aspect: W / CALLOUT_H, screenH: CALLOUT_H / CALLOUT_FRAME_H }
+  return { tex, aspect: W / H, screenH: H / CALLOUT_FRAME_H }
+}
+
+/**
+ * The colour key, in the corner of the dome.
+ *
+ * The map has always been colour-coded — cyan passenger, amber cargo, green
+ * military, grey everything else; cyan low orbit, violet Starlink and so on —
+ * and that key existed only as chips on the operator's screen. A visitor at the
+ * dome could see the colours and had no way to learn what they meant.
+ */
+export function legendTexture(
+  items: readonly { color: string; label: string }[]
+): { tex: THREE.CanvasTexture; aspect: number; screenH: number } {
+  const font = `600 ${15 * SS}px ${SANS}`
+  const measuring = document.createElement('canvas').getContext('2d') as Ctx
+  measuring.font = font
+  const ROW = 21
+  const DOT = 8
+  const PAD = 12
+  const textW = Math.max(...items.map((i) => measuring.measureText(i.label).width / SS))
+  const W = PAD + DOT + 8 + textW + PAD
+  const H = PAD + items.length * ROW + PAD - 4
+
+  const c = document.createElement('canvas')
+  c.width = Math.ceil(W * SS)
+  c.height = Math.ceil(H * SS)
+  const g = c.getContext('2d') as Ctx
+
+  const r = 7 * SS
+  g.beginPath()
+  g.moveTo(r, 0)
+  g.arcTo(c.width, 0, c.width, c.height, r)
+  g.arcTo(c.width, c.height, 0, c.height, r)
+  g.arcTo(0, c.height, 0, 0, r)
+  g.arcTo(0, 0, c.width, 0, r)
+  g.closePath()
+  // Darker and quieter than the callout: this is a reference, not the message.
+  g.fillStyle = 'rgba(8,12,20,0.72)'
+  g.fill()
+
+  g.font = font
+  items.forEach((item, i) => {
+    const cy = (PAD + i * ROW + ROW / 2 - 2) * SS
+    g.beginPath()
+    g.arc((PAD + DOT / 2) * SS, cy, (DOT / 2) * SS, 0, Math.PI * 2)
+    g.fillStyle = item.color
+    g.fill()
+    g.fillStyle = 'rgba(238,244,252,0.92)'
+    g.textBaseline = 'middle'
+    g.fillText(item.label, (PAD + DOT + 8) * SS, cy)
+  })
+
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return { tex, aspect: W / H, screenH: H / CALLOUT_FRAME_H }
 }
 
 // Icon color by flight category: passenger cyan, cargo amber, military green,

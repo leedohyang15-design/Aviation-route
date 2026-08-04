@@ -310,11 +310,29 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     })
   })
 
+  /** Whether this id names something on the layer currently being shown. */
+  function belongsToLayer(id: string): boolean {
+    if (state.mode === 'satellite') return satDetail(id) != null
+    // An aircraft that has just blinked out of one snapshot is still the
+    // visitor's selection (see holdSelection), so the grace window counts too.
+    return aircraft.some((a) => a.icao24 === id) || lastSelectedState?.icao24 === id
+  }
+
   function applyCommand(msg: ClientMessage): void {
     switch (msg.type) {
       case 'hello':
         return
       case 'select': {
+        // An id only means something to the layer it came from. A window whose
+        // mode change hasn't landed yet — or whose attract cycle fires in the
+        // gap — will happily offer an aircraft while the exhibit is showing
+        // satellites, and the hub used to accept it and broadcast that
+        // aircraft's flight path over the orbit map. Reject anything that isn't
+        // on the layer currently on screen.
+        if (msg.icao24 && !belongsToLayer(msg.icao24)) {
+          opsLog(`[hub] select ${msg.icao24} ignored — not on the ${state.mode} layer`)
+          return
+        }
         // Log what arrived, and whether the hub can even see that aircraft.
         // Without this there is no way to tell a click that never reached the
         // hub from one that did but had nothing to show.
