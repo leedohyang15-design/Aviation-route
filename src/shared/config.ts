@@ -138,3 +138,45 @@ export const WEATHER_TILE_PX = Number(readEnv('WEATHER_TILE_PX') ?? 256)
 export const WEATHER_TIMEOUT_MS = Number(readEnv('WEATHER_TIMEOUT_MS') ?? 12_000)
 /** How stale a cached frame may be before it is described as old on screen. */
 export const WEATHER_MAX_AGE_MS = Number(readEnv('WEATHER_MAX_AGE_MS') ?? 30 * 60_000)
+
+/**
+ * Where the cloud picture comes from.
+ *
+ * NOT from RainViewer: its free tier answers `satellite.infrared: []` — the
+ * product exists in the index and carries no frames, which is the polite way
+ * of saying it is a paid one. Rain still comes from there.
+ *
+ * NASA GIBS serves plate carrée directly, which is the frame's own projection,
+ * so a cloud picture is one request and no reprojection at all.
+ */
+export const WEATHER_CLOUD_SOURCE = readEnv('WEATHER_CLOUD_SOURCE') ?? 'gibs'
+export const WEATHER_GIBS_URL =
+  readEnv('WEATHER_GIBS_URL') ?? 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi'
+/**
+ * Candidate layers, tried in order until one answers with a real image — the
+ * same "try each until one loads" shape the earth texture uses. The exhibit
+ * machine is the only place these can be verified, so the log names the one
+ * that answered rather than assuming.
+ *
+ * The geostationary GeoColor discs come first: they are ten minutes old and
+ * together cover most of the globe, and several of them composite into one
+ * picture. The true-colour global mosaics are the fallback — a few hours
+ * behind, but seamless and always there.
+ */
+export const WEATHER_GIBS_LAYERS = (
+  readEnv('WEATHER_GIBS_LAYERS') ??
+  'GOES-East_ABI_GeoColor,GOES-West_ABI_GeoColor,Himawari_AHI_GeoColor'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+/** Used when none of the above answer: global, seamless, a few hours old. */
+export const WEATHER_GIBS_FALLBACK_LAYERS = (
+  readEnv('WEATHER_GIBS_FALLBACK_LAYERS') ??
+  'VIIRS_NOAA20_CorrectedReflectance_TrueColor,VIIRS_SNPP_CorrectedReflectance_TrueColor,MODIS_Terra_CorrectedReflectance_TrueColor'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+/** Width of the requested plate-carrée image; height is half, always. */
+export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 2048)

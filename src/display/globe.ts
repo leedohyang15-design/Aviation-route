@@ -345,8 +345,12 @@ export class Globe {
       // Weather. Two Mercator mosaics, remapped to this frame in the shader.
       uCloud: { value: null },
       uHasCloud: { value: 0 },
+      // 1 = the picture is Web Mercator and needs the row remap; 0 = it is
+      // already plate carrée, i.e. this frame's own projection.
+      uCloudMerc: { value: 1 },
       uRain: { value: null },
       uHasRain: { value: 0 },
+      uRainMerc: { value: 1 },
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -363,8 +367,8 @@ export class Globe {
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
-        uniform sampler2D uCloud; uniform float uHasCloud;
-        uniform sampler2D uRain; uniform float uHasRain;
+        uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
+        uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
         void main() {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
@@ -414,15 +418,16 @@ export class Globe {
           // uv.x directly, no fract() — same reasoning as the earth map above:
           // RepeatWrapping tiles it, and fract() would blow up the derivative
           // at the wrap and pick the wrong mip level, drawing a seam.
-          vec2 wuv = vec2(uv.x, mercY);
+          vec2 mercUV = vec2(uv.x, mercY);
+          vec2 flatUV = vec2(uv.x, vUv.y);
 
           // Clouds go in BEFORE the day/night mix: they are a photograph of the
           // earth, so they belong to the daylight, and the night side's cloud
           // deck goes dark with the ground under it — which also lets the city
           // lights show through the gaps.
           if (uHasCloud > 0.5) {
-            vec4 c = texture2D(uCloud, wuv);
-            day = mix(day, c.rgb, c.a * inMerc);
+            vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
+            day = mix(day, c.rgb, c.a * (uCloudMerc > 0.5 ? inMerc : 1.0));
           }
 
           // Night = moonlit earth + city lights (from the night texture) glowing.
@@ -440,8 +445,8 @@ export class Globe {
           // Rain goes in AFTER: it is a data overlay, not a photograph, and a
           // storm that vanishes at sunset is a storm nobody can point at.
           if (uHasRain > 0.5) {
-            vec4 r = texture2D(uRain, wuv);
-            col = mix(col, r.rgb, r.a * inMerc);
+            vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
+            col = mix(col, r.rgb, r.a * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
           gl_FragColor = vec4(col, 1.0);
         }
@@ -1566,6 +1571,7 @@ export class Globe {
   setWeather(frame: WeatherFrame | null, layer: WeatherLayer): void {
     const mapKey = layer === 'cloud' ? 'uCloud' : 'uRain'
     const hasKey = layer === 'cloud' ? 'uHasCloud' : 'uHasRain'
+    const mercKey = layer === 'cloud' ? 'uCloudMerc' : 'uRainMerc'
     if (!frame || !frame.tiles.length) {
       const old = this.bgUniforms[mapKey].value as THREE.Texture | null
       old?.dispose()
@@ -1584,6 +1590,7 @@ export class Globe {
       const old = this.bgUniforms[mapKey].value as THREE.Texture | null
       this.bgUniforms[mapKey].value = tex
       this.bgUniforms[hasKey].value = 1
+      this.bgUniforms[mercKey].value = frame.projection === 'mercator' ? 1 : 0
       old?.dispose()
     }
     for (const t of frame.tiles) {

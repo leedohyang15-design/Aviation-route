@@ -46,7 +46,17 @@ export type WeatherLayer = 'cloud' | 'rain'
  * tripping over cross-origin tainting (the packaged app runs from file://). */
 export interface WeatherFrame {
   layer: WeatherLayer
-  /** Tile pyramid level; the grid is 2^z by 2^z. */
+  /**
+   * How the imagery is laid out. Tile services hand out Web Mercator, which the
+   * renderer remaps; NASA's WMS hands out plate carrée, which is already the
+   * frame's own projection and must NOT be remapped. Getting this wrong slides
+   * everything toward or away from the equator, which is exactly the sort of
+   * thing that looks almost right.
+   */
+  projection: 'mercator' | 'equirect'
+  /** Tile pyramid level; the grid is 2^z by 2^z. A single full-frame image is
+   * z=0, and several of them at (0,0) composite in the order they arrive —
+   * which is how the geostationary discs are stitched into one globe. */
   z: number
   /** When the imagery was taken, epoch ms. */
   time: number

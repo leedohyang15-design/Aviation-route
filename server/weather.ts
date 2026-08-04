@@ -19,7 +19,12 @@ import {
   WEATHER_POLL_MS,
   WEATHER_TILE_PX,
   WEATHER_TIMEOUT_MS,
-  WEATHER_ZOOM
+  WEATHER_ZOOM,
+  WEATHER_CLOUD_SOURCE,
+  WEATHER_GIBS_URL,
+  WEATHER_GIBS_LAYERS,
+  WEATHER_GIBS_FALLBACK_LAYERS,
+  WEATHER_GIBS_WIDTH
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
 import { dataPath, dataPathCandidates } from './datadir'
@@ -167,7 +172,68 @@ async function fetchFrame(
     for (const t of got) if (t) tiles.push(t)
   }
   if (!tiles.length) return null
-  return { layer, z: WEATHER_ZOOM, time: time * 1000, tiles }
+  return { layer, projection: 'mercator', z: WEATHER_ZOOM, time: time * 1000, tiles }
+}
+
+/**
+ * The cloud picture, from NASA GIBS.
+ *
+ * One request per layer, plate carrée, full globe — no tile grid and no
+ * reprojection, because this is already the projection the frame is drawn in.
+ * The geostationary layers are discs, so several are requested and stacked at
+ * the same position; the renderer's mosaic canvas composites them in order,
+ * which is how three sensors become one globe.
+ *
+ * Which layers actually exist is the one thing that cannot be checked from
+ * here, so each candidate is tried in turn and the log names the winner.
+ */
+async function fetchGibsCloud(): Promise<WeatherFrame | null> {
+  const W = WEATHER_GIBS_WIDTH
+  const H = Math.round(W / 2)
+  const get = async (layer: string): Promise<string | null> => {
+    const url =
+      `${WEATHER_GIBS_URL}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
+      `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326&BBOX=-90,-180,90,180` +
+      `&WIDTH=${W}&HEIGHT=${H}&FORMAT=image%2Fpng&TRANSPARENT=TRUE`
+    try {
+      const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
+      const type = res.headers.get('content-type') ?? ''
+      if (!res.ok || !type.includes('image')) {
+        // GIBS answers a service exception as XML with a 200, so the content
+        // type is what tells a picture from a complaint.
+        lastTileError = `${res.status} ${type || 'no content-type'} — ${url}`
+        return null
+      }
+      const buf = Buffer.from(await res.arrayBuffer())
+      // A fully transparent tile is a valid PNG and a useless picture; a disc
+      // that does not cover us comes back tiny.
+      if (buf.length < 20_000) {
+        lastTileError = `only ${buf.length} bytes (blank?) — ${url}`
+        return null
+      }
+      opsLog(`[weather] cloud: ${layer} answered, ${(buf.length / 1e6).toFixed(1)}MB`)
+      return `data:image/png;base64,${buf.toString('base64')}`
+    } catch (err) {
+      lastTileError = `${(err as Error).message} — ${url}`
+      return null
+    }
+  }
+
+  for (const set of [WEATHER_GIBS_LAYERS, WEATHER_GIBS_FALLBACK_LAYERS]) {
+    const got: WeatherFrame['tiles'] = []
+    for (const layer of set) {
+      const url = await get(layer)
+      if (url) got.push({ x: 0, y: 0, url })
+      // The first set is discs meant to be stacked; the second is whole-globe
+      // mosaics where one is enough.
+      if (url && set === WEATHER_GIBS_FALLBACK_LAYERS) break
+    }
+    if (got.length) {
+      return { layer: 'cloud', projection: 'equirect', z: 0, time: Date.now(), tiles: got }
+    }
+    opsLog(`[weather] cloud: none of [${set.join(', ')}] answered. Last: ${lastTileError}`)
+  }
+  return null
 }
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
@@ -187,6 +253,15 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
 
   for (const layer of LAYERS) {
     if (stopped) return
+    if (layer === 'cloud' && WEATHER_CLOUD_SOURCE !== 'rainviewer') {
+      if (WEATHER_CLOUD_SOURCE === 'off') continue
+      const frame = await fetchGibsCloud()
+      if (frame) {
+        latest.set('cloud', frame)
+        onFrame(frame)
+      }
+      continue
+    }
     const newest = newestPath(index, layer)
     if (!newest) {
       opsLog(
