@@ -30,6 +30,10 @@ import {
   EARTH_TEXTURE_URL,
   EARTH_NIGHT_URL,
   EARTH_MIPMAPS,
+  WEATHER_WIND_PARTICLES,
+  WEATHER_WIND_TAIL,
+  WEATHER_WIND_LIFE,
+  WEATHER_WIND_SPEED,
   WEATHER_CLOUD_OPACITY,
   WEATHER_FRAME_HOLD_MS
 } from '@shared/config'
@@ -391,6 +395,16 @@ export class Globe {
   private needRainCalib = false
   /** Once per distinct picture: which cloud steps have been checked for a straight edge. */
   private edgeScanned = new Set<string>()
+  /** The wind field, resampled to a plain lon/lat grid so a particle can be
+   * advanced without re-projecting on every step. Null until one arrives. */
+  private windField: { w: number; h: number; u: Float32Array; v: Float32Array } | null = null
+  private windLon: Float32Array | null = null
+  private windLat: Float32Array | null = null
+  private windAge: Int32Array | null = null
+  private windLife: Int32Array | null = null
+  private windTrail: Float32Array | null = null
+  private windLines: THREE.LineSegments | null = null
+  private windLast = 0
   /** Once per series: the strongest rain and where it is. */
   private rainPeaksDone = false
   /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
@@ -664,23 +678,25 @@ export class Globe {
             col = mix(col, vec3(0.97, 0.98, 1.0), a);
           } else if (uHasCloud > 0.5) {
             /*
-             * White, with the cover read out of ALPHA.
+             * The mosaic already IS the answer, and alpha is not it.
              *
-             * The service paints its cloud white and puts how much of it there
-             * is in the alpha channel. Taking the tile's own colour instead —
-             * which is what treating it as a photograph did — laid a murky grey
-             * haze over the whole globe, because a thin cloud's pixel is a dark
-             * translucent grey and there is thin cloud almost everywhere.
-             *
-             * The threshold is the other half of that. A tenth of the sky is
-             * not a cloudy day and nobody would draw it, but its alpha is not
-             * zero, so without a floor the oceans never come out clean. Full
-             * white arrives at overcast, and stops a little short of opaque so
-             * a downpour still reads through it.
+             * Every sensor's picture was reduced to one number — how much cloud
+             * — and stretched onto a common scale while the mosaic was built,
+             * precisely so five instruments with five palettes would agree.
+             * That number is written into the colour channels. ALPHA is
+             * something else entirely: how much sensor coverage this pixel has,
+             * which is essentially everywhere. Reading the amount out of alpha
+             * therefore says "total overcast" for the whole planet, and the
+             * globe comes out solid white — which is what happened when a
+             * branch written for a service that paints white and puts the cover
+             * in alpha was left in place under a source that does neither.
              */
             vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            float amt = smoothstep(0.12, 0.85, c.a) * uCloudAmt;
-            float a = clamp(amt, 0.0, 1.0) * 0.92 * (uCloudMerc > 0.5 ? inMerc : 1.0);
+            float lifted = clamp(smoothstep(0.06, 0.46, c.r) * uCloudAmt, 0.0, 1.0);
+            float a = c.a * lifted * (uCloudMerc > 0.5 ? inMerc : 1.0);
+            // White, with none of the sensor's own hue: these layers carry a
+            // temperature palette, and letting it through scattered green and
+            // pink speckles through the cloud that looked like rain.
             col = mix(col, vec3(0.97, 0.98, 1.0), a);
           }
 
@@ -1450,6 +1466,241 @@ export class Globe {
     return worst
   }
 
+
+  /**
+   * Turn a wind mosaic into a field particles can be pushed through.
+   *
+   * Two conversions, both of which have to happen once rather than per particle
+   * per frame. The tiles are Web Mercator, so the rows are resampled onto a
+   * plain latitude grid; and the value is packed across channels, so it is
+   * decoded here into metres per second the way the shader would.
+   *
+   * The packing is the one part that cannot be checked from here — the index
+   * declares which channels carry the value but not which component is which —
+   * so the decoded extremes go in the log. A field whose fastest wind is
+   * hundreds of metres a second, or whose components never go negative, is a
+   * packing read wrong, and that line says so without anybody having to guess.
+   */
+  private decodeWindField(canvas: HTMLCanvasElement, frame: WeatherFrame): void {
+    const d = frame.decode
+    if (!d) return
+    let img: ImageData
+    try {
+      img = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height)
+    } catch {
+      return
+    }
+    const order = d.channels.toLowerCase().replace(/[^rgba]/g, '') || 'rg'
+    const off: Record<string, number> = { r: 0, g: 1, b: 2, a: 3 }
+    // Two components, so the channels split down the middle: the first half is
+    // one, the second half the other.
+    const half = Math.max(1, order.length >> 1)
+    const span = d.max - d.min
+    const comp = (px: Uint8ClampedArray, o: number, from: number, n: number): number => {
+      let v = 0
+      for (let i = 0; i < n; i++) v = v * 256 + px[o + off[order[from + i]]]
+      return d.min + (v / (256 ** n - 1)) * span
+    }
+    const W = 512
+    const H = 256
+    const fu = new Float32Array(W * H)
+    const fv = new Float32Array(W * H)
+    const px = img.data
+    const cw = canvas.width
+    const ch = canvas.height
+    let lo = Infinity
+    let hi = -Infinity
+    for (let y = 0; y < H; y++) {
+      const lat = 90 - ((y + 0.5) / H) * 180
+      let sy: number
+      if (frame.projection === 'mercator') {
+        if (Math.abs(lat) > 85) continue
+        const r = (lat * Math.PI) / 180
+        sy = (0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)) * ch
+      } else {
+        sy = ((90 - lat) / 180) * ch
+      }
+      const cy = Math.max(0, Math.min(ch - 1, Math.round(sy)))
+      for (let x = 0; x < W; x++) {
+        const cx = Math.max(0, Math.min(cw - 1, Math.round(((x + 0.5) / W) * cw)))
+        const o = (cy * cw + cx) * 4
+        if (px[o + 3] < 8) continue
+        const u = comp(px, o, 0, half)
+        const v = comp(px, o, half, order.length - half)
+        fu[y * W + x] = u
+        fv[y * W + x] = v
+        const sp = Math.hypot(u, v)
+        if (sp < lo) lo = sp
+        if (sp > hi) hi = sp
+      }
+    }
+    this.windField = { w: W, h: H, u: fu, v: fv }
+    this.onNote?.(
+      `[weather] wind: decoded ${W}x${H} from "${d.channels}" ${d.min}..${d.max} ${d.unit ?? ''}; ` +
+        `speed ${Number.isFinite(lo) ? lo.toFixed(1) : '?'}..${Number.isFinite(hi) ? hi.toFixed(1) : '?'} ` +
+        `(a sane field peaks around 40-80)`
+    )
+    this.ensureWind()
+  }
+
+  /** Build the particle buffers and the line mesh, once. */
+  private ensureWind(): void {
+    if (this.windLines) return
+    const N = WEATHER_WIND_PARTICLES
+    const T = WEATHER_WIND_TAIL
+    this.windLon = new Float32Array(N)
+    this.windLat = new Float32Array(N)
+    this.windAge = new Int32Array(N)
+    this.windLife = new Int32Array(N)
+    // Each particle keeps its recent positions so it can be drawn as a streak
+    // rather than a dot; a dot in a flow field reads as noise.
+    this.windTrail = new Float32Array(N * T * 2)
+    for (let i = 0; i < N; i++) this.respawnWind(i, true)
+    const segs = N * (T - 1)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segs * 2 * 3), 3))
+    geo.setAttribute('alpha', new THREE.BufferAttribute(new Float32Array(segs * 2), 1))
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      uniforms: { uColor: { value: new THREE.Color(0.82, 0.92, 1.0) }, uOpacity: { value: 1 } },
+      vertexShader: `
+        attribute float alpha; varying float vA;
+        void main() { vA = alpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+      `,
+      fragmentShader: `
+        precision mediump float; uniform vec3 uColor; uniform float uOpacity; varying float vA;
+        void main() { gl_FragColor = vec4(uColor, vA * uOpacity); }
+      `
+    })
+    this.windLines = new THREE.LineSegments(geo, mat)
+    this.windLines.renderOrder = 3
+    this.windLines.visible = false
+    this.windLines.frustumCulled = false
+    this.scene.add(this.windLines)
+  }
+
+  private respawnWind(i: number, spread: boolean): void {
+    if (!this.windLon || !this.windLat || !this.windAge || !this.windLife || !this.windTrail) return
+    const lon = Math.random() * 360 - 180
+    // Cosine-weighted so particles are not bunched at the poles, where an
+    // equirectangular map stretches a degree of longitude to nothing.
+    const lat = (Math.asin(Math.random() * 2 - 1) * 180) / Math.PI
+    this.windLon[i] = lon
+    this.windLat[i] = lat
+    this.windAge[i] = spread ? Math.floor(Math.random() * WEATHER_WIND_LIFE) : 0
+    this.windLife[i] = WEATHER_WIND_LIFE / 2 + Math.floor(Math.random() * WEATHER_WIND_LIFE)
+    const T = WEATHER_WIND_TAIL
+    for (let k = 0; k < T; k++) {
+      this.windTrail[(i * T + k) * 2] = lon
+      this.windTrail[(i * T + k) * 2 + 1] = lat
+    }
+  }
+
+  /** Sample the field, bilinear in longitude so the wrap is seamless. */
+  private windAt(lon: number, lat: number): [number, number] {
+    const f = this.windField
+    if (!f) return [0, 0]
+    const fx = ((lon + 180) / 360) * f.w - 0.5
+    const fy = ((90 - lat) / 180) * f.h - 0.5
+    const x0 = Math.floor(fx)
+    const y0 = Math.max(0, Math.min(f.h - 1, Math.floor(fy)))
+    const y1 = Math.max(0, Math.min(f.h - 1, y0 + 1))
+    const tx = fx - x0
+    const ty = fy - y0
+    const wrap = (x: number): number => ((x % f.w) + f.w) % f.w
+    const a = wrap(x0)
+    const b = wrap(x0 + 1)
+    const mix = (p: Float32Array): number =>
+      (p[y0 * f.w + a] * (1 - tx) + p[y0 * f.w + b] * tx) * (1 - ty) +
+      (p[y1 * f.w + a] * (1 - tx) + p[y1 * f.w + b] * tx) * ty
+    return [mix(f.u), mix(f.v)]
+  }
+
+  /**
+   * Advance the particles and rebuild the streaks.
+   *
+   * The speed is exaggerated on purpose and by a lot: ten metres a second is
+   * about a ten-thousandth of a degree per second, which on a world map is no
+   * motion at all. What the exhibit needs is the SHAPE of the flow — the jet
+   * streams, the way air turns around a low — and that reads correctly at any
+   * speed as long as fast air visibly outruns slow air.
+   */
+  private stepWind(): void {
+    const f = this.windField
+    const g = this.windLines
+    if (!f || !g || !this.windLon || !this.windLat || !this.windAge || !this.windLife || !this.windTrail)
+      return
+    const now = Date.now()
+    const dt = Math.min(0.05, (now - this.windLast) / 1000 || 0.016)
+    this.windLast = now
+    const N = WEATHER_WIND_PARTICLES
+    const T = WEATHER_WIND_TAIL
+    const trail = this.windTrail
+    for (let i = 0; i < N; i++) {
+      const lon = this.windLon[i]
+      const lat = this.windLat[i]
+      const [u, v] = this.windAt(lon, lat)
+      const cos = Math.max(0.15, Math.cos((lat * Math.PI) / 180))
+      const k = WEATHER_WIND_SPEED * dt
+      let nlon = lon + ((u / 111320) * k) / cos
+      let nlat = lat + (v / 110540) * k
+      if (nlat > 85 || nlat < -85 || ++this.windAge[i] > this.windLife[i]) {
+        this.respawnWind(i, false)
+        continue
+      }
+      if (nlon > 180) nlon -= 360
+      if (nlon < -180) nlon += 360
+      this.windLon[i] = nlon
+      this.windLat[i] = nlat
+      // Shift the streak and put the new head on the end.
+      for (let s = 0; s < T - 1; s++) {
+        trail[(i * T + s) * 2] = trail[(i * T + s + 1) * 2]
+        trail[(i * T + s) * 2 + 1] = trail[(i * T + s + 1) * 2 + 1]
+      }
+      trail[(i * T + T - 1) * 2] = nlon
+      trail[(i * T + T - 1) * 2 + 1] = nlat
+    }
+
+    const pos = g.geometry.getAttribute('position') as THREE.BufferAttribute
+    const al = g.geometry.getAttribute('alpha') as THREE.BufferAttribute
+    const pa = pos.array as Float32Array
+    const aa = al.array as Float32Array
+    let n = 0
+    for (let i = 0; i < N; i++) {
+      // Fade in and out over the particle's life so nothing pops.
+      const age = this.windAge[i] / Math.max(1, this.windLife[i])
+      const life = Math.min(1, Math.min(age, 1 - age) * 6)
+      for (let sgm = 0; sgm < T - 1; sgm++) {
+        const p0 = projectNorm(trail[(i * T + sgm) * 2], trail[(i * T + sgm) * 2 + 1], this.lonOffset)
+        const p1 = projectNorm(trail[(i * T + sgm + 1) * 2], trail[(i * T + sgm + 1) * 2 + 1], this.lonOffset)
+        const o = n * 6
+        // A streak that straddles the seam would be drawn right across the
+        // world, so it is dropped for the one frame it takes to cross.
+        const cut = Math.abs(p1.u - p0.u) > 0.5
+        pa[o] = p0.u
+        pa[o + 1] = 1 - p0.v
+        pa[o + 2] = 0.6
+        pa[o + 3] = p1.u
+        pa[o + 4] = 1 - p1.v
+        pa[o + 5] = 0.6
+        // Older parts of the streak are fainter, which is what gives direction.
+        const taper = ((sgm + 1) / (T - 1)) ** 2
+        aa[n * 2] = cut ? 0 : taper * life * 0.55
+        aa[n * 2 + 1] = cut ? 0 : ((sgm + 2) / (T - 1)) ** 2 * life * 0.55
+        n++
+      }
+    }
+    pos.needsUpdate = true
+    al.needsUpdate = true
+  }
+
+  /** Show or hide the flow. */
+  setWindVisible(on: boolean): void {
+    if (this.windLines) this.windLines.visible = on && !!this.windField
+  }
+
   private scanBackgroundSeam(): void {
     if (!this.onNote || !this.bg) return
     let rt: THREE.WebGLRenderTarget | null = null
@@ -1464,7 +1715,8 @@ export class Globe {
       // uv.x = vUv.x + 0.5, so it crosses a whole number at the middle column.
       this.bgUniforms.uLonOffset.value = -180
       this.renderer.setRenderTarget(rt)
-      this.renderer.render(this.scene, this.camera)
+      if (this.windLines?.visible) this.stepWind()
+    this.renderer.render(this.scene, this.camera)
       const buf = new Uint8Array(W * H * 4)
       this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf)
       this.renderer.setRenderTarget(null)
@@ -2904,6 +3156,25 @@ export class Globe {
     const slot = this.wx[layer]
     const token = ++slot.token
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
+    /*
+     * Wind is not drawn as a texture, so it never reaches the uniforms.
+     *
+     * It is a direction at every point rather than a picture of one, and what
+     * goes on screen is particles travelling through it. The mosaic is built
+     * the same way as any other — that machinery already handles the tile grid
+     * — and then read once into a field and thrown away.
+     */
+    if (layer === 'wind') {
+      const head = usable[usable.length - 1]
+      if (!head) return
+      void this.buildWeatherTexture(head).then((tex) => {
+        if (token !== slot.token) return
+        const img = tex?.image as HTMLCanvasElement | undefined
+        if (img) this.decodeWindField(img, head)
+        tex?.dispose()
+      })
+      return
+    }
     if (layer === 'rain') {
       this.rainPeaksDone = false
       this.needRainCalib = true

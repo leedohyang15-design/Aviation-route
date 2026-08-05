@@ -164,6 +164,11 @@ export function DisplayApp(): JSX.Element {
     const on = !(state.hiddenWeather ?? []).includes('rain')
     globeRef.current?.setWeatherSeries(isWeather && on ? weather.rain : null, 'rain')
   }, [isWeather, weather.rain, state.hiddenWeather])
+  useEffect(() => {
+    const on = !(state.hiddenWeather ?? []).includes('wind')
+    globeRef.current?.setWeatherSeries(isWeather && on ? weather.wind : null, 'wind')
+    globeRef.current?.setWindVisible(isWeather && on)
+  }, [isWeather, weather.wind, state.hiddenWeather])
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])

@@ -20,7 +20,7 @@ interface Props {
   mode?: ExhibitMode
   satellites?: Satellite[]
   /** Each layer's animation series, and which of them the operator has on. */
-  weather?: { cloud: WeatherFrame[]; rain: WeatherFrame[] }
+  weather?: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   hiddenWeather?: WeatherLayer[]
   aircraft: Aircraft[]
   selected: string | null
@@ -116,6 +116,11 @@ export function MapView({
     () => globeRef.current?.setWeatherSeries(showRain ? weather?.rain ?? null : null, 'rain'),
     [showRain, weather?.rain]
   )
+  const showWind = mode === 'weather' && !(hiddenWeather ?? []).includes('wind')
+  useEffect(() => {
+    globeRef.current?.setWeatherSeries(showWind ? weather?.wind ?? null : null, 'wind')
+    globeRef.current?.setWindVisible(showWind)
+  }, [showWind, weather?.wind])
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
   useEffect(() => globeRef.current?.setRoute(route), [route])
   useEffect(

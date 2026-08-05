@@ -201,6 +201,21 @@ export const WEATHER_FRAME_COUNT = Number(readEnv('WEATHER_FRAME_COUNT') ?? 4)
  * see behind moving particles.
  */
 export const WEATHER_WIND_FRAMES = Number(readEnv('WEATHER_WIND_FRAMES') ?? 1)
+
+/**
+ * The flow animation: how many particles, how long a streak, how long each
+ * lives, and how much the speed is exaggerated.
+ *
+ * The exaggeration is large and deliberate. Ten metres a second is about a
+ * ten-thousandth of a degree per second, which on a world map is no motion at
+ * all. What an exhibit needs from a wind layer is the SHAPE of the flow — the
+ * jet streams, the way air turns around a low — and that reads correctly at any
+ * speed so long as fast air visibly outruns slow air.
+ */
+export const WEATHER_WIND_PARTICLES = Number(readEnv('WEATHER_WIND_PARTICLES') ?? 2400)
+export const WEATHER_WIND_TAIL = Number(readEnv('WEATHER_WIND_TAIL') ?? 6)
+export const WEATHER_WIND_LIFE = Number(readEnv('WEATHER_WIND_LIFE') ?? 90)
+export const WEATHER_WIND_SPEED = Number(readEnv('WEATHER_WIND_SPEED') ?? 14000)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 /**
  * Wall clock per keyframe. Slower now that the wind carries the motion.

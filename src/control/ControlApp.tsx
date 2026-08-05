@@ -615,7 +615,8 @@ export function ControlApp(): JSX.Element {
             {(
               [
                 ['cloud', '☁ 구름', '#dfe8f5'],
-                ['rain', '🌧 비 · 눈', '#5aa9ff']
+                ['rain', '🌧 비 · 눈', '#5aa9ff'],
+                ['wind', '💨 바람', '#bfe3ff']
               ] as [WeatherLayer, string, string][]
             ).map(([key, label, color]) => (
               <button
