@@ -1008,20 +1008,26 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
 /**
  * One poll.
  *
- * MapTiler for the rain, which it serves as packed VALUES rather than a painted
- * picture — that is what the intensity ramp is anchored to, and what lets the
- * log report a storm in millimetres rather than in how strongly somebody
- * painted it. Its key carries no cloud variable of any kind, so the cloud falls
- * through to the geostationary satellites inside pollMaptiler, and the log says
- * so on every poll rather than leaving it to be guessed.
+ * The cloud needs no key and never did. It comes from the geostationary
+ * satellites — NASA GIBS and EUMETSAT, both open — so it runs whether or not
+ * MapTiler is configured. Requiring the key before doing anything took the
+ * cloud down with the rain, which is a fault of the plumbing rather than of the
+ * data: the two are simply not related.
  *
- * Nothing sits behind this any more. RainViewer and OpenWeatherMap were each a
- * different pairing of measurements with their own seams and their own clock,
- * and reconciling a second pairing cost far more than it ever covered for.
+ * With a key, MapTiler supplies the rain and the wind as packed VALUES rather
+ * than a painted picture, and the cloud follows the rain's timestamps so both
+ * describe the same moments. Without one, the cloud keeps its own clock and the
+ * log says the rain is missing and why.
  */
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
-  if (!mtKey()) throw new Error('no MAPTILER_KEY — put it in the .env beside the exe')
-  return pollMaptiler(onFrame)
+  if (mtKey()) return pollMaptiler(onFrame)
+  const frames = await fetchGibsCloud(null)
+  if (!frames) throw new Error(`no cloud: ${lastTileError || 'every sensor failed'}`)
+  if (seriesTime(latest.get('cloud') ?? []) !== seriesTime(frames)) {
+    latest.set('cloud', frames)
+    for (const f of frames) onFrame(f)
+    saveCache()
+  }
 }
 
 /**
@@ -1044,9 +1050,13 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   // Say which source is live, every time. "Is MapTiler actually on?" is not a
   // question anybody should have to answer by looking at the picture.
   opsLog(
-    `[weather] source: MapTiler ...${mtKey().slice(-4)} for rain, geostationary satellites ` +
-      `for cloud — ${WEATHER_FRAME_COUNT} keyframes, rain=${MAPTILER_VARIABLES.rain}`
+    mtKey()
+      ? `[weather] source: MapTiler ...${mtKey().slice(-4)} for rain and wind, geostationary ` +
+        `satellites for cloud — ${WEATHER_FRAME_COUNT} keyframes, rain=${MAPTILER_VARIABLES.rain}`
+      : '[weather] source: geostationary satellites for cloud only. No MAPTILER_KEY reached the ' +
+        'hub, so there is no rain and no wind — put MAPTILER_KEY="..." in the .env beside the exe.'
   )
+
 
 
   const loop = async (): Promise<void> => {
