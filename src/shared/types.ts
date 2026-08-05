@@ -113,6 +113,15 @@ export interface WeatherFrame {
      * neighbouring sensors cross-blend instead of butting up against each other.
      */
     centerLon?: number
+    /**
+     * The patch of the globe this image covers, `[west, south, east, north]` in
+     * degrees. Only for `z: 0` images that are NOT the whole world — a
+     * geostationary disc is requested over its own eighty degrees so the pixels
+     * go where the sensor can actually see, and this is what tells the renderer
+     * where to paste it. `west` may be below -180 or `east` above 180; the
+     * renderer wraps it.
+     */
+    bbox?: [number, number, number, number]
   }[]
 }
 
@@ -301,7 +310,12 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   // now"; radar only exists over the countries that have radars, so on a world
   // map it starts as scattered patches with nothing between them. Clouds first,
   // rain on a tap.
-  hiddenWeather: ['rain']
+  // Both layers on. Rain used to start hidden because it was ground radar —
+  // real only over countries that own radars, so most of the globe was blank
+  // and the chip mostly advertised an absence. It is a global model field now,
+  // and a weather tab whose rain is off by default is a weather tab where a
+  // visitor reports "비가 안 떠" and is right.
+  hiddenWeather: []
 }
 
 // ---------------------------------------------------------------------------

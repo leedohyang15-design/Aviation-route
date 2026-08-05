@@ -137,15 +137,19 @@ export const MAPTILER_WEATHER_INDEX =
 export const MAPTILER_TILE_BASE =
   readEnv('MAPTILER_TILE_BASE') ?? 'https://api.maptiler.com/tiles'
 /**
- * Which GFS variable each of our two layers is.
+ * Which variable each layer is, as `id|id|id` — the first one the key's index
+ * actually carries wins.
  *
- * `radar-composite` rather than `precipitation-1h`: reflectivity is the picture
- * people recognise as "where it is raining right now", and being a model field
- * it covers the whole globe instead of only the countries that own radars.
+ * Alternatives, not a single name, because entitlement varies: the exhibit's
+ * own key answers with temperature, pressure, precipitation, wind and radar,
+ * and NO cloud variable of any kind. So cloud falls through this list and then
+ * out to GIBS, and the log says which happened.
  */
 export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
-  cloud: readEnv('MAPTILER_CLOUD_VARIABLE') ?? 'cloud_cover-total:gfs',
-  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'radar-composite:gfs'
+  cloud:
+    readEnv('MAPTILER_CLOUD_VARIABLE') ??
+    'cloud_cover-total:gfs|cloud_cover-high:gfs|cloud-cover:gfs',
+  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'radar-composite:gfs|precipitation-1h:gfs'
 }
 /**
  * How many keyframes to bring back, newest first.
@@ -265,12 +269,13 @@ export const WEATHER_RAIN_COLOR = Number(readEnv('WEATHER_RAIN_COLOR') ?? 2)
 export const WEATHER_CLOUD_OPACITY = Number(readEnv('WEATHER_CLOUD_OPACITY') ?? 1.45)
 
 /**
- * Width of the requested plate-carrée image; height is half, always.
+ * Pixel width of ONE geostationary patch — 160 degrees wide, and square.
  *
- * 1024, not 2048. Each disc only covers about a quarter of the globe, so most
- * of a full-width request is transparency — and five of them, base64'd into one
- * WebSocket message, is over ten megabytes to stringify. That stringify happens
- * on the hub's only thread, which is why switching INTO the weather tab used to
- * hang long enough that the tab looked stuck.
+ * This used to be the width of a whole -180..180 image, which is where the
+ * "구름 해상도가 너무 낮다" came from: a sensor sees eighty degrees around the
+ * point it hangs over, so nearly two thirds of that image was empty space and
+ * the disc itself got a third of the pixels. The same 1024 across 160 degrees
+ * is 6.4 pixels per degree against the old 2.8 — two and a quarter times
+ * sharper, for the same bytes on the wire.
  */
 export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 1024)

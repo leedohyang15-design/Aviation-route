@@ -49,7 +49,7 @@ const CACHE_PATH = dataPath(CACHE_NAME)
  * as a rectangle and only became a globe once the first poll landed: it was
  * yesterday's format on screen, not today's.
  */
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 
 /** RainViewer's index. Only the fields we use are described. */
 interface Index {
@@ -339,15 +339,23 @@ async function fetchMaptilerLayer(
   index: MtIndex,
   layer: WeatherLayer
 ): Promise<WeatherFrame[] | null> {
-  const wantId = MAPTILER_VARIABLES[layer]
-  const v = index.variables?.find((x) => x.metadata?.weather_variable?.variable_id === wantId)
+  const wantIds = MAPTILER_VARIABLES[layer].split('|').map((s) => s.trim()).filter(Boolean)
+  const offered = (index.variables ?? []).map((x) => x.metadata?.weather_variable?.variable_id)
+  const v = index.variables?.find((x) =>
+    wantIds.includes(x.metadata?.weather_variable?.variable_id ?? '')
+  )
   if (!v) {
-    const had = (index.variables ?? [])
-      .map((x) => x.metadata?.weather_variable?.variable_id)
-      .filter(Boolean)
-    opsLog(`[weather] ${layer}: no "${wantId}" in the index. It offered: ${had.join(', ') || 'nothing'}`)
+    // Named alternatives, because which variables a key is entitled to is not
+    // something that can be checked from here — the exhibit's own key turned
+    // out to carry temperature, pressure, precipitation, wind and radar, and
+    // no cloud of any kind.
+    opsLog(
+      `[weather] ${layer}: none of "${wantIds.join('", "')}" is in the index. ` +
+        `It offered: ${offered.filter(Boolean).join(', ') || 'nothing'}`
+    )
     return null
   }
+  const wantId = v.metadata?.weather_variable?.variable_id ?? wantIds[0]
   const wv = v.metadata?.weather_variable
   const d = wv?.decoding
   if (!d || typeof d.min !== 'number' || typeof d.max !== 'number' || !d.channels) {
@@ -435,7 +443,16 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
 
   for (const layer of LAYERS) {
     if (stopped) return
-    const series = await fetchMaptilerLayer(index, layer)
+    let series = await fetchMaptilerLayer(index, layer)
+    if (!series && layer === 'cloud' && WEATHER_CLOUD_SOURCE !== 'off') {
+      // MapTiler has the rain but not the cloud on this key. Falling through to
+      // GIBS beats the alternative, which is what happened the first time: the
+      // layer quietly kept whatever the disk cache held, so the screen showed a
+      // cloud picture from hours ago next to live rain and nothing said so.
+      opsLog('[weather] cloud: falling back to NASA GIBS for this layer')
+      const frame = await fetchGibsCloud()
+      series = frame ? [frame] : null
+    }
     if (!series) continue
     // Same moment as what is already on screen: nothing to send.
     if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
@@ -458,12 +475,28 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
  * here, so each candidate is tried in turn and the log names the winner.
  */
 async function fetchGibsCloud(): Promise<WeatherFrame | null> {
+  /*
+   * Each disc is requested over ITS OWN patch of the globe, not the whole one.
+   *
+   * A geostationary sensor sees about eighty degrees in every direction from
+   * the point it hangs over. Asking for that disc on a full -180..180 canvas
+   * spends nearly two thirds of the pixels on empty space, and the disc itself
+   * lands on the remaining third — so a 1024-wide request bought about 2.8
+   * pixels per degree and the cloud looked like a smudge. The same 1024 pixels
+   * across 160 degrees is 6.4 per degree: two and a quarter times sharper for
+   * the same bytes on the wire.
+   */
+  const HALF = 80
   const W = WEATHER_GIBS_WIDTH
-  const H = Math.round(W / 2)
-  const get = async (layer: string): Promise<string | null> => {
+  const H = W // the patch is square in degrees, so square in pixels
+  const get = async (layer: string, centerLon: number): Promise<string | null> => {
+    // WMS 1.3.0 with CRS:84-style axis order for EPSG:4326 is lat,lon.
+    const west = centerLon - HALF
+    const east = centerLon + HALF
     const url =
       `${WEATHER_GIBS_URL}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
-      `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326&BBOX=-90,-180,90,180` +
+      `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326` +
+      `&BBOX=${-HALF},${west},${HALF},${east}` +
       `&WIDTH=${W}&HEIGHT=${H}&FORMAT=image%2Fpng&TRANSPARENT=TRUE`
     try {
       const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
@@ -493,9 +526,15 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     if (stopped) return null
     let filled = false
     for (const name of slot.names) {
-      const url = await get(name)
+      const url = await get(name, slot.lon)
       if (!url) continue
-      got.push({ x: 0, y: 0, url, centerLon: slot.lon })
+      got.push({
+        x: 0,
+        y: 0,
+        url,
+        centerLon: slot.lon,
+        bbox: [slot.lon - HALF, -HALF, slot.lon + HALF, HALF]
+      })
       filled = true
       break // one picture per slot; the rest of its names are spares
     }

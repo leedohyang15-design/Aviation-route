@@ -1737,9 +1737,16 @@ export class Globe {
      * upscales perfectly, and 256x128 costs nothing where 2048x1024 would
      * hitch the frame every time a picture arrives.
      */
-    const feather = (img: HTMLImageElement, centerLon: number): HTMLCanvasElement => {
+    const feather = (
+      img: HTMLImageElement,
+      centerLon: number,
+      bbox?: [number, number, number, number]
+    ): HTMLCanvasElement => {
       const w = img.width || 2048
       const h = img.height || Math.round(w / 2)
+      // What this image covers, in degrees. A disc requested over its own patch
+      // says so; anything else is the whole world.
+      const [west, south, east, north] = bbox ?? [-180, -90, 180, 90]
       const out = document.createElement('canvas')
       out.width = w
       out.height = h
@@ -1747,7 +1754,7 @@ export class Globe {
       octx.drawImage(img, 0, 0)
 
       const MW = 256
-      const MH = 128
+      const MH = 256
       const mask = document.createElement('canvas')
       mask.width = MW
       mask.height = MH
@@ -1760,9 +1767,9 @@ export class Globe {
       const NEAR = Math.cos(55 * RAD)
       const FAR = Math.cos(78 * RAD)
       for (let j = 0; j < MH; j++) {
-        const lat = (90 - ((j + 0.5) / MH) * 180) * RAD
+        const lat = (north - ((j + 0.5) / MH) * (north - south)) * RAD
         for (let i = 0; i < MW; i++) {
-          const lon = (((i + 0.5) / MW) * 360 - 180 - centerLon) * RAD
+          const lon = (west + ((i + 0.5) / MW) * (east - west) - centerLon) * RAD
           const cosD = Math.cos(lat) * Math.cos(lon)
           const t = Math.max(0, Math.min(1, (cosD - FAR) / (NEAR - FAR)))
           data.data[(j * MW + i) * 4 + 3] = Math.round(255 * t * t * (3 - 2 * t))
@@ -1796,15 +1803,34 @@ export class Globe {
           // the canvas from it rather than assuming what the server asked for.
           if (!side) {
             side = img.width || 256
-            canvas.width = canvas.height = side * n
+            if (t.bbox) {
+              // A patch image covers only its own corner of the world, so it
+              // cannot set the canvas size. Give the mosaic a fixed 2:1 world
+              // at the patch's own pixels-per-degree, so nothing is thrown away
+              // in the paste that the extra resolution was fetched for.
+              const ppd = side / Math.max(1, t.bbox[2] - t.bbox[0])
+              canvas.width = Math.min(8192, Math.round(360 * ppd))
+              canvas.height = Math.round(canvas.width / 2)
+            } else {
+              canvas.width = canvas.height = side * n
+            }
           }
-          ctx.drawImage(
-            t.centerLon == null ? img : feather(img, t.centerLon),
-            t.x * side,
-            t.y * side,
-            side,
-            side
-          )
+          const src = t.centerLon == null ? img : feather(img, t.centerLon, t.bbox)
+          if (t.bbox) {
+            // Paste the patch where it belongs on the world canvas, and once
+            // more shifted a full turn: a disc over 140.7°E or 137°W runs off
+            // the edge, and the half that wrapped would otherwise be lost.
+            const [west, south, east, north] = t.bbox
+            const px = (lon: number) => ((lon + 180) / 360) * canvas.width
+            const py = (lat: number) => ((90 - lat) / 180) * canvas.height
+            const w = px(east) - px(west)
+            const h = py(south) - py(north)
+            for (const shift of [-canvas.width, 0, canvas.width]) {
+              ctx.drawImage(src, px(west) + shift, py(north), w, h)
+            }
+          } else {
+            ctx.drawImage(src, t.x * side, t.y * side, side, side)
+          }
           if (++drawn === frame.tiles.length) finish()
         }
         img.onerror = () => {
