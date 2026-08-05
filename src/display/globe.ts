@@ -1782,133 +1782,174 @@ export class Globe {
     const ctx = canvas.getContext('2d')!
     let drawn = 0
     let side = 0
-    /**
-     * A geostationary sensor sees a disc, and the disc ends in a hard edge —
-     * three of them stacked drew three visible outlines across the globe. Fade
-     * each one out toward its own horizon and the neighbours cross-blend into
-     * one picture instead.
-     *
-     * The mask is the angular distance from the sub-satellite point, which is
-     * exactly the geometry that decides what the sensor can see. It is built
-     * small and drawn scaled up: it is a smooth gradient, so a coarse one
-     * upscales perfectly, and 256x128 costs nothing where 2048x1024 would
-     * hitch the frame every time a picture arrives.
-     */
-    const feather = (
-      img: HTMLImageElement,
-      centerLon: number,
-      bbox?: [number, number, number, number]
-    ): HTMLCanvasElement => {
-      const w = img.width || 2048
-      const h = img.height || Math.round(w / 2)
-      // What this image covers, in degrees. A disc requested over its own patch
-      // says so; anything else is the whole world.
-      const [west, south, east, north] = bbox ?? [-180, -90, 180, 90]
-      const out = document.createElement('canvas')
-      out.width = w
-      out.height = h
-      const octx = out.getContext('2d')!
-      octx.drawImage(img, 0, 0)
+    const patches = frame.tiles.filter((t) => t.bbox && t.centerLon != null)
 
-      const MW = 256
-      const MH = 256
-      const mask = document.createElement('canvas')
-      mask.width = MW
-      mask.height = MH
-      const mctx = mask.getContext('2d')!
-      const data = mctx.createImageData(MW, MH)
-      const RAD = Math.PI / 180
-      // Full weight within 32 degrees of the sub-satellite point, nothing past
-      // 78 — a real disc runs out at about 81, and stopping short of that hides
-      // the noisy limb as well as the edge.
-      //
-      // 32, not 55. Neighbouring sensors are 45 to 95 degrees apart, so at 55
-      // the midpoint between a pair often fell inside BOTH full-weight discs —
-      // and a full-weight patch drawn over another does not blend with it, it
-      // replaces it outright. The join was then wherever the later one's
-      // weight finally dropped below one, which is an edge rather than a
-      // crossfade. At 32 every pair meets in the fade zone.
-      const NEAR = Math.cos(32 * RAD)
-      const FAR = Math.cos(78 * RAD)
+    const finishTexture = (): THREE.Texture => {
+      const tex = new THREE.CanvasTexture(canvas)
+      this.tuneTexture(tex)
       /*
-       * An extra taper wherever the DATA is cut rather than the view.
+       * No mipmaps on a weather texture. Two reasons, and neither applies to
+       * the earth map underneath, which keeps its pyramid.
        *
-       * These layers are published clipped at the antimeridian, so Himawari
-       * simply stops at 180 and GOES-West starts again at -180 — two sensors
-       * with different calibration, abutting, with no overlap to blend across.
-       * That is a knife-edge down the whole globe and no amount of fading by
-       * distance-from-satellite can help, because both are at full strength
-       * there. Fading each one out as it approaches its own cut turns the edge
-       * into a soft gap over empty Pacific, which is a thing nobody notices.
+       * For a data tile the pyramid is meaningless: the value is packed
+       * big-endian across channels, and the average of two high bytes is not
+       * the high byte of the average.
        *
-       * Only an edge sitting exactly on ±180 is a cut: every real patch edge
-       * is at a sub-satellite longitude ±80 and none of those land there.
+       * For the cloud it is about the seam. This texture wraps in longitude,
+       * and choosing a mip level is the one part of sampling that has to agree
+       * across that wrap. The pyramid was buying almost nothing anyway: a
+       * 2048-wide texture on a 1664-wide frame is barely minified even at full
+       * world view.
        */
-      const CUT = 12
-      const cutW = Math.abs(Math.abs(west) - 180) < 0.01
-      const cutE = Math.abs(Math.abs(east) - 180) < 0.01
-      for (let j = 0; j < MH; j++) {
-        const lat = (north - ((j + 0.5) / MH) * (north - south)) * RAD
-        for (let i = 0; i < MW; i++) {
-          const lonDeg = west + ((i + 0.5) / MW) * (east - west)
-          const lon = (lonDeg - centerLon) * RAD
-          const cosD = Math.cos(lat) * Math.cos(lon)
-          let t = Math.max(0, Math.min(1, (cosD - FAR) / (NEAR - FAR)))
-          if (cutW) t *= Math.max(0, Math.min(1, (lonDeg - west) / CUT))
-          if (cutE) t *= Math.max(0, Math.min(1, (east - lonDeg) / CUT))
-          data.data[(j * MW + i) * 4 + 3] = Math.round(255 * t * t * (3 - 2 * t))
+      tex.generateMipmaps = false
+      tex.minFilter = THREE.LinearFilter
+      return tex
+    }
+
+    /*
+     * Merge the sensors by WEIGHTED AVERAGE, not by painting one over another.
+     *
+     * Five geostationary discs overlap, and every previous attempt drew them in
+     * turn with a soft edge and hoped the joins would disappear. They never
+     * could. Paint-over gives whichever disc was drawn last, so two sensors at
+     * full strength meet in a hard edge; soften them both and the total opacity
+     * dips in the overlap instead, which is a band rather than a line; fade
+     * them out where their data is cut and the band becomes a gap. Each fix
+     * traded one artefact for another because the operation was wrong.
+     *
+     * The right operation is an average weighted by how well each sensor sees
+     * that point: sum(weight x colour) / sum(weight). Where two discs overlap
+     * it is a true crossfade; where only one reaches — the far side of the
+     * antimeridian, say — its weight is the only weight, so it gets full say
+     * and there is no gap and nothing to taper. The seams are not hidden, they
+     * stop existing.
+     */
+    const mergePatches = (imgs: Map<number, HTMLImageElement>): void => {
+      const W = canvas.width
+      const H = canvas.height
+      const acc = new Float32Array(W * H * 3)
+      const wacc = new Float32Array(W * H)
+      const RAD = Math.PI / 180
+      // Full weight within 25 degrees of the sub-satellite point, tailing to
+      // nothing by 78 — a real disc runs out at about 81, and stopping short
+      // of that drops the noisy limb. The exact numbers matter far less now:
+      // the normalisation is what makes the joins invisible, the falloff only
+      // decides which sensor's word carries more where they disagree.
+      const NEAR = Math.cos(25 * RAD)
+      const FAR = Math.cos(78 * RAD)
+
+      for (const [i, t] of patches.entries()) {
+        const img = imgs.get(i)
+        if (!img) continue
+        const [west, south, east, north] = t.bbox as [number, number, number, number]
+        const centerLon = t.centerLon as number
+        // Resample the patch to its footprint on the world canvas once, then
+        // read it as numbers. Whole pixels: the wrapped copy has to land on the
+        // same sub-pixel phase as the unwrapped one or they disagree at 180.
+        const px = (lon: number): number => Math.round(((lon + 180) / 360) * W)
+        const py = (lat: number): number => Math.round(((90 - lat) / 180) * H)
+        const x0 = px(west)
+        const y0 = py(north)
+        const pw = px(east) - x0
+        const ph = py(south) - y0
+        if (pw <= 0 || ph <= 0) continue
+        const tmp = document.createElement('canvas')
+        tmp.width = pw
+        tmp.height = ph
+        const tctx = tmp.getContext('2d')!
+        tctx.drawImage(img, 0, 0, pw, ph)
+        const src = tctx.getImageData(0, 0, pw, ph).data
+
+        for (let j = 0; j < ph; j++) {
+          const y = y0 + j
+          if (y < 0 || y >= H) continue
+          const lat = (90 - ((y + 0.5) / H) * 180) * RAD
+          const cosLat = Math.cos(lat)
+          for (let i2 = 0; i2 < pw; i2++) {
+            const o = (j * pw + i2) * 4
+            const a = src[o + 3]
+            if (!a) continue // outside the disc: the sensor has no opinion here
+            const xw = x0 + i2
+            // The world wraps, so a patch that runs off one edge comes back on
+            // the other. Modulo, rather than drawing the picture three times.
+            const x = ((xw % W) + W) % W
+            const lonDeg = -180 + ((x + 0.5) / W) * 360
+            const cosD = cosLat * Math.cos((lonDeg - centerLon) * RAD)
+            let w = (cosD - FAR) / (NEAR - FAR)
+            if (w <= 0) continue
+            if (w > 1) w = 1
+            w = w * w * (3 - 2 * w) * (a / 255)
+            const k = y * W + x
+            wacc[k] += w
+            acc[k * 3] += src[o] * w
+            acc[k * 3 + 1] += src[o + 1] * w
+            acc[k * 3 + 2] += src[o + 2] * w
+          }
         }
       }
-      mctx.putImageData(data, 0, 0)
-      octx.globalCompositeOperation = 'destination-in'
-      octx.drawImage(mask, 0, 0, w, h)
-      return out
+
+      const out = ctx.createImageData(W, H)
+      for (let k = 0; k < W * H; k++) {
+        const w = wacc[k]
+        if (w <= 0) continue
+        const o = k * 4
+        out.data[o] = Math.min(255, acc[k * 3] / w)
+        out.data[o + 1] = Math.min(255, acc[k * 3 + 1] / w)
+        out.data[o + 2] = Math.min(255, acc[k * 3 + 2] / w)
+        // Total weight IS the coverage: one sensor at half strength on its own
+        // limb fades out, two at half strength together do not.
+        out.data[o + 3] = Math.round(255 * Math.min(1, w))
+      }
+      ctx.putImageData(out, 0, 0)
     }
 
     return new Promise((resolve) => {
+      // --- The geostationary mosaic: decode every patch, then merge them all.
+      if (patches.length) {
+        const imgs = new Map<number, HTMLImageElement>()
+        let seen = 0
+        const done = (): void => {
+          if (++seen < patches.length) return
+          if (!imgs.size) return resolve(null)
+          const first = imgs.values().next().value as HTMLImageElement
+          const firstIdx = [...imgs.keys()][0]
+          const bb = patches[firstIdx].bbox as [number, number, number, number]
+          // A patch covers only its own corner of the world, so the canvas is
+          // sized from its pixels-per-degree. A power of two, because this
+          // texture wraps and a wrapping NPOT texture is the one case where
+          // mipmapping and REPEAT need not agree.
+          const ppd = (first.width || 256) / Math.max(1, bb[2] - bb[0])
+          const pot = 2 ** Math.round(Math.log2(Math.min(8192, 360 * ppd)))
+          canvas.width = pot
+          canvas.height = pot / 2
+          mergePatches(imgs)
+          resolve(finishTexture())
+        }
+        for (const [i, t] of patches.entries()) {
+          const img = new Image()
+          img.onload = () => {
+            imgs.set(i, img)
+            done()
+          }
+          img.onerror = () => done()
+          img.src = t.url
+        }
+        return
+      }
+
+      // --- A tile grid, or one seamless image covering a stated box.
       const finish = (): void => {
         if (!side) return resolve(null)
-        const tex = new THREE.CanvasTexture(canvas)
-        this.tuneTexture(tex)
-        /*
-         * No mipmaps on a weather texture. Two reasons, and neither applies to
-         * the earth map underneath, which keeps its pyramid.
-         *
-         * For a data tile the pyramid is meaningless: the value is packed
-         * big-endian across channels, and the average of two high bytes is not
-         * the high byte of the average.
-         *
-         * For the cloud it is about the seam. This texture wraps in longitude,
-         * and choosing a mip level is the one part of sampling that has to
-         * agree across that wrap — where it does not, the disagreement is a
-         * hairline down the whole frame, which is what has been reported. The
-         * pyramid was buying almost nothing anyway: a 2048-wide texture on a
-         * 1664-wide frame is barely minified even at full world view.
-         */
-        tex.generateMipmaps = false
-        tex.minFilter = THREE.LinearFilter
-        resolve(tex)
+        resolve(finishTexture())
       }
       for (const t of frame.tiles) {
         const img = new Image()
         img.onload = () => {
-          // The grid's tile size isn't known until the first one decodes; size
-          // the canvas from it rather than assuming what the server asked for.
           if (!side) {
             side = img.width || 256
             if (t.bbox) {
-              // A patch image covers only its own corner of the world, so it
-              // cannot set the canvas size. Give the mosaic a 2:1 world at
-              // roughly the patch's own pixels-per-degree, so nothing is thrown
-              // away in the paste that the extra resolution was fetched for.
-              //
-              // POWER OF TWO, and that is not a nicety. This texture wraps in
-              // longitude, and a wrapping texture whose width is not a power of
-              // two is the one case where mipmapping and REPEAT do not have to
-              // agree — which draws a hairline down the map exactly where it
-              // wraps. The mosaic itself is seamless; the seam was the sampler.
-              // 160 degrees at 1024 wanted a 2304-wide world; 2048 is the
-              // nearest power of two and still finer than the dome can show.
+              // One picture over a known box — a global product, which needs a
+              // 2:1 world around it rather than a square of its own size.
               const ppd = side / Math.max(1, t.bbox[2] - t.bbox[0])
               const pot = 2 ** Math.round(Math.log2(Math.min(8192, 360 * ppd)))
               canvas.width = pot
@@ -1917,27 +1958,15 @@ export class Globe {
               canvas.width = canvas.height = side * n
             }
           }
-          const src = t.centerLon == null ? img : feather(img, t.centerLon, t.bbox)
           if (t.bbox) {
-            // Paste the patch where it belongs on the world canvas, and once
-            // more shifted a full turn: a disc over 140.7°E or 137°W runs off
-            // the edge, and the half that wrapped would otherwise be lost.
             const [west, south, east, north] = t.bbox
-            // Whole pixels. At fractional coordinates the browser resamples the
-            // patch, and the copy drawn a turn to the left lands on a different
-            // sub-pixel phase from the one on the right — so the two disagree
-            // by a fraction of a pixel exactly at 180°, and with the texture
-            // wrapping there, that disagreement is a hairline down the map.
-            const px = (lon: number) => Math.round(((lon + 180) / 360) * canvas.width)
-            const py = (lat: number) => Math.round(((90 - lat) / 180) * canvas.height)
-            const w = px(east) - px(west)
-            const h = py(south) - py(north)
-            for (const shift of [-canvas.width, 0, canvas.width]) {
-              ctx.drawImage(src, px(west) + shift, py(north), w, h)
-            }
-          } else {
-            ctx.drawImage(src, t.x * side, t.y * side, side, side)
+            const px = (lon: number): number => Math.round(((lon + 180) / 360) * canvas.width)
+            const py = (lat: number): number => Math.round(((90 - lat) / 180) * canvas.height)
+            ctx.drawImage(img, px(west), py(north), px(east) - px(west), py(south) - py(north))
+            if (++drawn === frame.tiles.length) finish()
+            return
           }
+          ctx.drawImage(img, t.x * side, t.y * side, side, side)
           if (++drawn === frame.tiles.length) finish()
         }
         img.onerror = () => {
