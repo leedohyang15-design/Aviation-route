@@ -993,44 +993,82 @@ export class Globe {
    * from the neighbouring column is a hard one — the same statistic that found
    * a planted one-pixel line at 99% while ignoring ordinary detail.
    */
-  private scanScreenColumns(): void {
-    if (!this.onNote) return
+  /**
+   * Render the map ON ITS OWN and measure the seam.
+   *
+   * Scanning the finished screen did not work and could not have: aircraft
+   * icons, routes and panels fill the frame with hard vertical edges, so the
+   * typical column already had thirty percent of its rows stepping and a
+   * hairline had nothing to stand out from. The second run could not see the
+   * seam at all — the view had turned and the wrap had left the frame.
+   *
+   * Both problems go away by drawing the background alone, off-screen, with the
+   * offset forced so the wrap falls dead centre. Same shader, same texture,
+   * same filter — only without anything on top of it and with the thing being
+   * measured guaranteed to be in shot. Nothing on screen changes; it is one
+   * hidden frame.
+   */
+  private scanBackgroundSeam(): void {
+    if (!this.onNote || !this.bg) return
+    let rt: THREE.WebGLRenderTarget | null = null
+    const savedOffset = this.bgUniforms.uLonOffset.value
+    const savedVisible = this.scene.children.map((c) => c.visible)
     try {
       const gl = this.renderer.getContext()
-      const W = gl.drawingBufferWidth
-      const H = gl.drawingBufferHeight
-      if (W < 64 || H < 64) return
+      const W = Math.min(2048, gl.drawingBufferWidth || 1024)
+      const H = Math.max(64, Math.round(W / 2))
+      rt = new THREE.WebGLRenderTarget(W, H)
+      for (const c of this.scene.children) c.visible = c === this.bg
+      // uv.x = vUv.x + 0.5, so it crosses a whole number at the middle column.
+      this.bgUniforms.uLonOffset.value = -180
+      this.renderer.setRenderTarget(rt)
+      this.renderer.render(this.scene, this.camera)
       const buf = new Uint8Array(W * H * 4)
-      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+      this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf)
+      this.renderer.setRenderTarget(null)
+
       const lum = (x: number, y: number): number => {
         const o = (y * W + x) * 4
         return (buf[o] * 0.299 + buf[o + 1] * 0.587 + buf[o + 2] * 0.114) / 255
       }
-      const HARD = 0.02 // a hairline is faint; this is five grey levels
+      const HARD = 0.012 // three grey levels: a hairline is faint by definition
       const hits = new Float64Array(W)
+      const bias = new Float64Array(W)
       for (let x = 1; x < W; x++) {
         let n = 0
-        for (let y = 0; y < H; y++) if (Math.abs(lum(x, y) - lum(x - 1, y)) > HARD) n++
+        let sum = 0
+        for (let y = 0; y < H; y++) {
+          const d = lum(x, y) - lum(x - 1, y)
+          if (Math.abs(d) > HARD) n++
+          sum += d
+        }
         hits[x] = n / H
+        bias[x] = sum / H
       }
       const sorted = Array.from(hits).sort((a, b) => a - b)
       const p99 = sorted[Math.floor(sorted.length * 0.99)]
-      const top: { x: number; v: number }[] = []
-      for (let x = 1; x < W; x++) if (hits[x] > Math.max(p99 * 1.5, 0.25)) top.push({ x, v: hits[x] })
-      top.sort((a, b) => b.v - a.v)
-      // Where the texture coordinate crosses a whole number, in screen terms —
-      // the wrap's predicted position, to compare the finding against.
-      const off = this.lonOffset / 360
-      const seamAt = ((((1 + off) % 1) + 1) % 1) * 100
+      const mid = W >> 1
+      // What the seam column itself does, and the strongest column anywhere.
+      let best = { x: 1, v: hits[1] }
+      for (let x = 1; x < W; x++) if (hits[x] > best.v) best = { x, v: hits[x] }
+      const atSeam = Math.max(hits[mid], hits[mid + 1] ?? 0, hits[mid - 1] ?? 0)
+      const seamBias = Math.max(Math.abs(bias[mid]), Math.abs(bias[mid + 1] ?? 0))
+      const tex = this.bgUniforms.uMap.value as THREE.Texture | null
       this.onNote(
-        `[earth] screen columns ${W}x${H}: ` +
-          `${top.slice(0, 4).map((t) => `${((100 * t.x) / W).toFixed(1)}%(${(t.v * 100).toFixed(0)}%)`).join(' ') || 'none'} ` +
-          `| wrap predicted at ${seamAt.toFixed(1)}% | mipmaps ${
-            (this.bgUniforms.uMap.value as THREE.Texture | null)?.generateMipmaps ? 'ON' : 'OFF'
-          } | typical column ${(p99 * 100).toFixed(0)}%`
+        `[earth] seam test ${W}x${H} map only, mipmaps ${tex?.generateMipmaps ? 'ON' : 'OFF'}, ` +
+          `aniso ${tex?.anisotropy ?? 1}: at wrap ${(atSeam * 100).toFixed(0)}% of rows ` +
+          `(${(seamBias * 255).toFixed(2)} levels), strongest column ${((100 * best.x) / W).toFixed(1)}% ` +
+          `at ${(best.v * 100).toFixed(0)}%, typical ${(p99 * 100).toFixed(0)}%`
       )
     } catch {
-      /* readPixels can fail on a lost context; a diagnostic is not worth a crash */
+      /* a lost context is not worth a crash for a diagnostic */
+    } finally {
+      this.renderer.setRenderTarget(null)
+      this.bgUniforms.uLonOffset.value = savedOffset
+      this.scene.children.forEach((c, i2) => {
+        c.visible = savedVisible[i2] ?? true
+      })
+      rt?.dispose()
     }
   }
 
@@ -3016,7 +3054,7 @@ export class Globe {
     this.renderer.render(this.scene, this.camera)
     if (this.screenScanAt && Date.now() >= this.screenScanAt) {
       this.screenScanAt = 0
-      this.scanScreenColumns()
+      this.scanBackgroundSeam()
     }
     this.raf = requestAnimationFrame(this.frame)
   }
