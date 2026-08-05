@@ -73,10 +73,15 @@ const HOME_LAT = 37.5
  */
 function rainAnchors(d: WeatherDecode): THREE.Vector2 {
   const unit = (d.unit ?? '').toLowerCase()
-  if (unit.includes('dbz')) return new THREE.Vector2(12, 70)
-  // mm, mm/h, kg/m² — an hour's rain. 0.3 is "you would notice it", 20 is a
-  // downpour; above that the ramp is already at its last colour.
-  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.3, 20)
+  // 5 dBZ, not 12. Twelve is roughly 0.2mm an hour, and starting the fade
+  // there left light rain at a sixth of full opacity — invisible over a night
+  // ocean, which is why the map looked almost empty next to every public
+  // weather site. Those sites paint from about a tenth of a millimetre, and
+  // this is what that is in reflectivity.
+  if (unit.includes('dbz')) return new THREE.Vector2(5, 65)
+  // mm, mm/h, kg/m² — an hour's rain. 0.1 is "somebody would notice it", 18 is
+  // a downpour; above that the ramp is already at its last colour.
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.1, 18)
   const span = d.max - d.min
   return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
 }
@@ -595,7 +600,11 @@ export class Globe {
                               uRainMerc > 0.5 ? mercUV : flatUV,
                               uRainChanW, uRainPacked, uRainRange);
             float t = clamp((d.x - uRainScale.x) / max(uRainScale.y - uRainScale.x, 1e-4), 0.0, 1.0);
-            float a = smoothstep(0.0, 0.20, t) * d.y
+            // Reach full opacity early. The intensity is carried by the COLOUR
+            // ramp; making faint rain also faint means the two effects
+            // multiply and light rain disappears entirely, which is the
+            // difference between this map and every other one.
+            float a = smoothstep(0.0, 0.10, t) * d.y
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
