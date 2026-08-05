@@ -366,3 +366,7 @@ export type ClientMessage =
   /** The renderer handing a finished weather texture back for inspection. Only
    * ever sent when the hub asked for it via `debugWeatherDump`. */
   | { type: 'debugImage'; name: string; dataUrl: string }
+  /** A line for the exe's log from the renderer. The pixel-level facts — what
+   * a decoded field actually contains — are only knowable where the image is
+   * decoded, and the exe has no console to print them to. */
+  | { type: 'note'; text: string }

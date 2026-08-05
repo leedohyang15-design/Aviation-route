@@ -354,6 +354,14 @@ export class Globe {
   /** Set to hand a finished weather texture back for inspection (debug only). */
   onDebugImage: ((name: string, dataUrl: string) => void) | null = null
   private debugDumped = new Set<string>()
+  /** Set to put a line in the exe's log from the renderer. */
+  onNote: ((text: string) => void) | null = null
+  /** Raised when a new rain series arrives; cleared by the first frame that
+   * measures it, so the field is read once per poll and not once per frame. */
+  private needRainCalib = false
+  /** A ramp measured off the data, applied after applyDecode has set the one
+   * the declared unit implies. Null means the declared unit was believed. */
+  private rainFit: { lo: number; hi: number; gamma: number } | null = null
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -1849,6 +1857,10 @@ export class Globe {
       // Hand the assembled mosaic back once per layer per run, when asked. A
       // 2048-wide PNG is a couple of megabytes and the point is to look at it
       // in an image viewer, not to stream it.
+      if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
+        this.needRainCalib = false
+        this.calibrateRain(canvas, frame.decode)
+      }
       const key = `${frame.layer}-${frame.blend ?? 'plain'}`
       if (this.onDebugImage && !this.debugDumped.has(key)) {
         this.debugDumped.add(key)
@@ -2101,6 +2113,8 @@ export class Globe {
     const slot = this.wx[layer]
     const token = ++slot.token
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
+    // Measure this series once, on whichever of its frames finishes first.
+    if (layer === 'rain') this.needRainCalib = true
     if (!usable.length) {
       for (const t of slot.textures) t.dispose()
       slot.textures = []
@@ -2132,8 +2146,90 @@ export class Globe {
         this.bgUniforms.uRainData.value = isData ? 1 : 0
       }
       if (isData && head.decode) this.applyDecode(head.decode, layer)
+      if (layer === 'rain' && this.rainFit) {
+        this.bgUniforms.uRainScale.value = new THREE.Vector2(this.rainFit.lo, this.rainFit.hi)
+        this.bgUniforms.uRainGamma.value = this.rainFit.gamma
+      }
       this.tickWeather()
     })
+  }
+
+  /**
+   * Read what the rain field actually contains, and fit the ramp to it.
+   *
+   * Side by side with a public weather map the difference was not the shape —
+   * the fronts and the storm spirals are in the right places — but the range:
+   * ours drew the entire world in the first colour of a six-colour ramp, so a
+   * typhoon and a grey drizzle over Siberia were the same shade of cyan. That
+   * happens when the numbers are not in the unit the index claims: the ramp's
+   * high anchor is a downpour in millimetres, and if the service is packing
+   * metres, or an accumulation over a different window, every real value lands
+   * in the bottom two percent of the scale and no amount of gamma rescues it.
+   *
+   * So measure rather than assume. The percentiles go in the log either way —
+   * that one line says whether a missing storm is missing from the data or
+   * only from the picture — and the ramp is refitted only when the numbers are
+   * an order of magnitude away from what the declared unit implies.
+   */
+  private calibrateRain(canvas: HTMLCanvasElement, decode: WeatherDecode): void {
+    const ctx = canvas.getContext('2d')
+    if (!ctx || !canvas.width || !canvas.height) return
+    let img: ImageData
+    try {
+      img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    } catch {
+      return // a tainted canvas: not worth a crash for a diagnostic
+    }
+    const order = decode.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
+    const wt: Record<string, number> = { r: 0, g: 0, b: 0 }
+    for (let i = 0; i < order.length; i++) wt[order[i]] = 256 ** (order.length - 1 - i)
+    const packed = 256 ** order.length - 1
+    const px = img.data
+    const vals: number[] = []
+    // Every fourth pixel each way. The shape of a distribution does not need
+    // four million reads, and this runs on the frame that swaps the texture in.
+    for (let y = 0; y < canvas.height; y += 4) {
+      for (let x = 0; x < canvas.width; x += 4) {
+        const p = (y * canvas.width + x) * 4
+        if (px[p + 3] < 8) continue // alpha 0 is "no data", not "no rain"
+        const raw = (px[p] * wt.r + px[p + 1] * wt.g + px[p + 2] * wt.b) / packed
+        vals.push(decode.min + raw * (decode.max - decode.min))
+      }
+    }
+    if (vals.length < 1000) return
+    vals.sort((a, b) => a - b)
+    const at = (q: number): number => vals[Math.min(vals.length - 1, Math.floor(q * vals.length))]
+    const p50 = at(0.5)
+    const p90 = at(0.9)
+    const p99 = at(0.99)
+    const p999 = at(0.999)
+    const max = vals[vals.length - 1]
+    const unit = decode.unit ?? '?'
+    const a = rainAnchors(decode)
+    const fmt = (v: number): string => (Math.abs(v) >= 0.01 ? v.toFixed(2) : v.toExponential(1))
+    let msg =
+      `[weather] rain: ${vals.length} samples — p50 ${fmt(p50)}, p90 ${fmt(p90)}, ` +
+      `p99 ${fmt(p99)}, p99.9 ${fmt(p999)}, max ${fmt(max)} ${unit}; ` +
+      `ramp is ${fmt(a.x)}–${fmt(a.y)} ${unit}`
+    /*
+     * Refit only on a clear mismatch, in either direction: a world whose
+     * heaviest tenth of a percent never reaches a tenth of the ramp's top, or
+     * one whose median is already past it. Inside that band the declared unit
+     * is believed, because a genuinely calm hour should look calm rather than
+     * being stretched until it looks like a storm.
+     */
+    this.rainFit = null
+    if (p999 > 0 && (p999 < a.y * 0.1 || p50 > a.y)) {
+      const lo = Math.max(0, p90)
+      const hi = Math.max(lo + Math.abs(lo) * 0.01 + 1e-6, p999)
+      // Held, not written: applyDecode runs after this and sets the ramp from
+      // the declared unit, so writing the uniform here would be undone.
+      this.rainFit = { lo, hi, gamma: 0.6 }
+      msg +=
+        ` — that does not match "${unit}", so the ramp is refitted to the data: ` +
+        `${fmt(lo)}–${fmt(hi)}`
+    }
+    this.onNote?.(msg)
   }
 
   /** Teach the shader how to read this variable's pixels — packing weights and

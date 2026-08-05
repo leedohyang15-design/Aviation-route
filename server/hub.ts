@@ -480,6 +480,11 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
           .catch((e: Error) => opsLog(`[weather] debug: could not write ${file}: ${e.message}`))
         return
       }
+      case 'note':
+        // One line, no newlines, length-capped: this is a window writing into
+        // the operator's log, so it gets a leash.
+        opsLog(msg.text.replace(/[\r\n]+/g, ' ').slice(0, 400))
+        return
       case 'setHiddenWeather':
         state.hiddenWeather = msg.layers
         broadcast({ type: 'state', state })

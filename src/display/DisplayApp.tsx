@@ -149,6 +149,9 @@ export function DisplayApp(): JSX.Element {
     g.onDebugImage = state.debugWeatherDump
       ? (name, dataUrl) => send({ type: 'debugImage', name, dataUrl })
       : null
+    // Only the dome window reports. Both windows decode the same pixels and
+    // would reach the same numbers, so wiring both would double every line.
+    g.onNote = (text) => send({ type: 'note', text })
   }, [state.debugWeatherDump, send])
 
   // Each layer is hung on or taken off the earth on its own, so a chip toggles

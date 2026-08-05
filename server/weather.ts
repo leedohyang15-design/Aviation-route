@@ -805,6 +805,9 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
     if (east > 180) return [[west, 180], [-180, east - 360]]
     return [[west, east]]
   }
+  /** Compressed bytes per pixel of each sensor's live picture this poll — the
+   * yardstick a past step of the same sensor is measured against. */
+  const liveDensity = new Map<number, number>()
   const fetchSlot = async (
     name: string,
     lon: number,
@@ -851,6 +854,35 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
     if (!parts.length) {
       lastTileError = `every piece blank — ${name}`
       return false
+    }
+    /*
+     * A past step has to look like the same sensor, not merely be non-empty.
+     *
+     * The blank floor only catches an empty picture. What it lets through is a
+     * scan that is half finished, or an archive answering a timestamp it does
+     * not really hold with a flat wash — and that lands on the globe as a
+     * rectangle of the patch's own bounding box with a hard straight edge,
+     * which is the one shape weather never has. Compressed size per pixel is a
+     * cheap stand-in for "how much detail is in here": cloud fields sit in a
+     * narrow band, and a wash or a part-scan falls far outside it.
+     *
+     * Only past steps are judged, and only against the live picture from the
+     * same sensor this same poll — so the comparison is like for like, and the
+     * live picture itself is never rejected on a guess.
+     */
+    const density = bytes / Math.max(1, pixels)
+    if (!time) {
+      liveDensity.set(lon, density)
+    } else {
+      const live = liveDensity.get(lon)
+      if (live && (density < live * 0.25 || density > live * 4)) {
+        opsLog(
+          `[weather] cloud: ${name} at ${time} is ${(density / live).toFixed(2)}× the detail of ` +
+            `its live picture — that does not look like ${lon}°'s imagery, so the step is refused`
+        )
+        lastTileError = `implausible step — ${name} at ${time}`
+        return false
+      }
     }
     into.push(...parts)
     return true
