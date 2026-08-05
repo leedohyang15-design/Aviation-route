@@ -40,7 +40,7 @@ export function loadEnv(file = '.env'): void {
     }
   }
   if (text == null) {
-    opsLog(`[env] no ${file} found (looked in: ${candidates.join(', ')}) — using mock feed`)
+    opsLog(`[env] no ${file} found (looked in: ${candidates.join(', ')}) — no OpenSky credentials, so no aircraft`)
     return
   }
   // Strip a UTF-8 BOM (Notepad "UTF-8" adds one), else the first key becomes

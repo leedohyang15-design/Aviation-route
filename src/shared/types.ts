@@ -232,13 +232,6 @@ export interface ViewState {
 
 export type OverlayKey = 'dayNight' | 'airports' | 'stats' | 'grid'
 
-/**
- * Which feed the exhibit shows.
- *   'auto' — real OpenSky data, falling back to simulation if it stalls.
- *   'mock' — always the simulation (useful for demos, or when credits run out).
- */
-export type FeedMode = 'auto' | 'mock'
-
 /** Filters the operator can apply; an empty/undefined field means "no filter". */
 export interface FlightFilter {
   originCountry?: string
@@ -274,7 +267,6 @@ export interface PresentationState {
   /** Day/night preview hour 0–24 (KST), or null = live current time. */
   dayNightHour: number | null
   /** Live data or forced simulation. Defaults to live. */
-  feedMode: FeedMode
   /** Aircraft layer or satellite layer. Defaults to aircraft. */
   mode: ExhibitMode
   /** Orbit classes to hide in satellite mode (empty = show all). */
@@ -312,7 +304,6 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   // Day/night is always on (automatic). Grid on so the frame reads as a map.
   overlays: { dayNight: true, airports: false, stats: true, grid: true },
   dayNightHour: null, // live time
-  feedMode: 'auto', // real data by default; the operator can force simulation
   mode: 'flight',
   // Starlink is roughly two thirds of the catalogue and swamps everything else,
   // so it starts hidden; turning the chip on makes the shells appear at once,
@@ -347,7 +338,7 @@ export type ServerMessage =
   | {
       type: 'status'
       /** Which feed is actually painting the screen right now. */
-      source: 'opensky' | 'mock'
+      source: 'opensky'
       connected: boolean
       count: number
       /** Whether live data is possible at all (OpenSky credentials present).
@@ -362,7 +353,6 @@ export type ClientMessage =
   | { type: 'setView'; view: ViewState }
   | { type: 'toggleOverlay'; key: OverlayKey; value?: boolean }
   | { type: 'setDayNight'; hour: number | null }
-  | { type: 'setFeedMode'; mode: FeedMode }
   | { type: 'setMode'; mode: ExhibitMode }
   | { type: 'setHiddenOrbits'; orbits: OrbitClass[] }
   | { type: 'setHiddenWeather'; layers: WeatherLayer[] }

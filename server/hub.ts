@@ -16,7 +16,7 @@ import type {
 } from '../src/shared/types'
 import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
 import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
-import { createResilientFeed, type SwitchableFeed } from './resilient'
+import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { withDeadline } from './http'
 import { opsLog } from './log'
@@ -52,25 +52,25 @@ export interface Hub {
 const DETAIL_DEADLINE_MS = 8000
 
 /**
- * The feed is always the switchable resilient one: it polls OpenSky when
- * credentials exist, keeps a simulation running underneath as a fallback, and
- * lets the operator pin simulation from the control window.
+ * OpenSky, and nothing behind it.
+ *
+ * A simulation used to run underneath and take over whenever real data went
+ * stale. A globe covered in aircraft that do not exist is worse than an empty
+ * one, and it cost more than it looked: the two sets share no icao24, so every
+ * handover invalidated the selection, the route, the card and the camera.
+ * Without credentials the sky is simply empty and the status line says so.
  */
-export function selectFeed(): SwitchableFeed {
-  const feed = createResilientFeed()
-  if (hasOpenSkyCredentials()) {
-    opsLog('[hub] OpenSky credentials present — using live data (simulation fallback on stall)')
-  } else {
-    opsLog('[hub] No OPENSKY_CLIENT_ID/SECRET — simulation only.')
-  }
-  if (process.env.FEED === 'mock') {
-    opsLog('[hub] FEED=mock is set — starting in simulation mode')
-    feed.setMode('mock')
-  }
+export function selectFeed(): PausableFeed {
+  const feed = createFlightFeed()
+  opsLog(
+    hasOpenSkyCredentials()
+      ? '[hub] OpenSky credentials present — using live data'
+      : '[hub] no OPENSKY_CLIENT_ID/SECRET — no aircraft. Satellites and weather still work.'
+  )
   return feed
 }
 
-export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): Hub {
+export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hub {
   // Yesterday's answers are almost all still valid, so start from the saved
   // cache instead of re-asking adsbdb for every callsign.
   loadRouteCache()
@@ -100,8 +100,6 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   })
 
   const state: PresentationState = structuredClone(DEFAULT_PRESENTATION_STATE)
-  // FEED=mock starts the feed in simulation; keep the broadcast state in step.
-  if (process.env.FEED === 'mock') state.feedMode = 'mock'
   // The windows only send their finished weather textures back when asked, and
   // this is the asking. The sensor pictures that go in have been checked and
   // are clean, so whatever is left is happening in the assembly — and the
@@ -149,8 +147,8 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
             return null
           })
         : null
-      // Which feed answered. If a real aircraft is on screen but this says
-      // "mock", the detail came from the simulation and can never have a route.
+      // How many route points came back, so an empty card can be told apart
+      // from a card whose aircraft simply has no published route.
       if (icao24) opsLog(`[detail] feed=${feed.source} points=${detail?.route?.length ?? 0}`)
       if (state.selected !== icao24) return // selection changed mid-fetch
       let out = detail
@@ -175,11 +173,10 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   }
 
   // Tag each aircraft with what we know about its route, and queue the ones we
-  // haven't asked about yet. Only real data needs this — the simulation always
+  // haven't asked about yet. Every aircraft here is real, so every one is
   // knows its own routes — and only identifiable callsigns are worth asking
   // about, which keeps the lookup volume down.
   const annotateRoutes = (snapshot: Aircraft[]): Aircraft[] => {
-    if (feed.source === 'mock') return snapshot
     const pending: { callsign: string; lat: number; lon: number }[] = []
     const out = snapshot.map((a) => {
       if (!isKnownFlight(a.callsign, a.hasRoute)) return a
@@ -271,7 +268,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
    *
    * Nothing used to do this, and the consequence was the reported "nothing
    * appears when I click a plane": the exhibit spends its first minute on the
-   * simulation while OpenSky's first poll is in flight, the attract cycle picks
+   * nothing while OpenSky's first poll is in flight, the attract cycle picks
    * a simulated aircraft, and then live data replaces the whole fleet. That
    * simulated icao24 exists in no later snapshot, but `state.selected` stayed
    * pinned to it — so the control's card (which is looked up by id in the
@@ -344,10 +341,6 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
     }
   }
 
-  // The simulation and live data share no aircraft, so a handover invalidates
-  // the selection outright — don't wait for the two-snapshot grace period.
-  feed.onSourceChange = () => clearSelection('belonged to the previous feed')
-
   // The aircraft type arrives after the card has already gone out (it is never
   // waited on). When it lands for whatever is on screen, send the detail again
   // so the TYPE tile fills itself in.
@@ -380,7 +373,7 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
       if (state.mode !== 'flight') return
       broadcast({ type: 'aircraft', mode: 'full', data: aircraft, serverTime: Date.now() })
       broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
-      // Keep the selected plane's route/progress/ETA live (e.g. after a mock
+      // Keep the selected plane's route/progress/ETA live (e.g. after a
       // re-route on arrival) so the old route doesn't linger.
       if (state.selected) void sendDetail(null)
     },
@@ -531,14 +524,6 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
       case 'setHiddenWeather':
         state.hiddenWeather = msg.layers
         broadcast({ type: 'state', state })
-        return
-      case 'setFeedMode':
-        state.feedMode = msg.mode
-        feed.setMode(msg.mode)
-        broadcast({ type: 'state', state })
-        // Report the switch immediately so the source label doesn't wait for the
-        // next poll (live polls can be 90s apart).
-        broadcast({ type: 'status', source: feed.source, connected, count: aircraft.length, credentials: hasCreds })
         return
     }
   }

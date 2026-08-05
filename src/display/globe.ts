@@ -405,6 +405,7 @@ export class Globe {
   private windTrail: Float32Array | null = null
   private windLines: THREE.LineSegments | null = null
   private windLast = 0
+  private windWanted = false
   /** Once per series: the strongest rain and where it is. */
   private rainPeaksDone = false
   /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
@@ -1541,6 +1542,7 @@ export class Globe {
         `(a sane field peaks around 40-80)`
     )
     this.ensureWind()
+    this.applyWindVisible()
   }
 
   /** Build the particle buffers and the line mesh, once. */
@@ -1696,9 +1698,21 @@ export class Globe {
     al.needsUpdate = true
   }
 
-  /** Show or hide the flow. */
+  /**
+   * Show or hide the flow.
+   *
+   * The wish is remembered rather than applied once. The chip is toggled the
+   * moment the tab opens, but the field only exists after the tiles have come
+   * down and been decoded — so asking "is there a field yet" at that instant
+   * always answered no, and nothing ever turned it on again.
+   */
   setWindVisible(on: boolean): void {
-    if (this.windLines) this.windLines.visible = on && !!this.windField
+    this.windWanted = on
+    this.applyWindVisible()
+  }
+
+  private applyWindVisible(): void {
+    if (this.windLines) this.windLines.visible = this.windWanted && !!this.windField
   }
 
   private scanBackgroundSeam(): void {

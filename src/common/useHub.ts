@@ -27,7 +27,7 @@ export interface HubView {
   aircraft: Aircraft[]
   state: PresentationState
   connected: boolean
-  source: 'opensky' | 'mock' | null
+  source: 'opensky' | null
   /** Whether OpenSky credentials are configured (live data is possible). */
   credentials: boolean
   route: { icao24: string; points: GeoPoint[] | null }
@@ -74,7 +74,7 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
   const [state, setState] = useState<PresentationState>(DEFAULT_PRESENTATION_STATE)
   const [connected, setConnected] = useState(false)
-  const [source, setSource] = useState<'opensky' | 'mock' | null>(null)
+  const [source, setSource] = useState<'opensky' | null>(null)
   const [credentials, setCredentials] = useState(false)
   const [route, setRoute] = useState<{ icao24: string; points: GeoPoint[] | null }>({
     icao24: '',

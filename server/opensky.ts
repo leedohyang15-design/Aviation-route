@@ -131,13 +131,12 @@ export function createOpenSkyFeed(): FlightFeed {
       if (res.status === 429) {
         // Out of credits: honour the server's retry-after but cap it so we
         // re-check periodically and recover automatically after the daily reset.
-        // The mock fallback covers the screen meanwhile.
         const retry = Number(res.headers.get('X-Rate-Limit-Retry-After-Seconds')) || 300
         const wait = Math.min(retry, 30 * 60) // cap at 30 min
         onStatus(false)
         opsLog(
           `[opensky] rate limited (429). Credits exhausted; server says retry in ${retry}s. ` +
-            `Re-checking in ${wait}s; mock fallback is covering the display.`
+            `Re-checking in ${wait}s; the sky stays empty until then.`
         )
         return wait * 1000
       }
@@ -178,7 +177,7 @@ export function createOpenSkyFeed(): FlightFeed {
   // start() had just begun. `timer` holds one handle, so stop() could then only
   // ever cancel one of them. Two chains double the credit burn, and the day's
   // budget is sized for exactly one (see OPENSKY_POLL_INTERVAL_MS): the exhibit
-  // would run out around lunchtime and spend the rest of the day on simulation.
+  // would run out around lunchtime and leave the rest of the day with no aircraft.
   //
   // `running` is owned by the chain, not by start(): a chain sets it on entry
   // and clears it only when it decides not to re-arm, so a second start() while

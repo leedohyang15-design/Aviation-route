@@ -491,21 +491,14 @@ export function ControlApp(): JSX.Element {
     send({ type: 'setFilter', filter: { ...state.filter, hiddenCategories: next } })
   }
 
-  // Live data vs. forced simulation. Live is the default; simulation is there
-  // for demos and for when the daily OpenSky credit budget runs out.
-  const feedMode = state.feedMode ?? 'auto'
-  // The tab is the operator's *choice*; `source` is what's actually on screen.
-  // In live mode the simulation still covers the first seconds (and any OpenSky
-  // outage), so say which of those is happening instead of just "simulation".
-  const live = connected && (feedMode === 'mock' || source === 'opensky')
-  const statusText =
-    feedMode === 'mock'
-      ? '시뮬레이션 · 연습 모드'
-      : source === 'opensky'
-        ? 'OpenSky · 실시간'
-        : credentials
-          ? '실시간 준비 중… (지금은 시뮬레이션)'
-          : '실시간 미설정 (.env 없음) · 시뮬레이션'
+  // There is one feed and no simulation behind it, so the status says exactly
+  // one of three things: it is live, it is coming, or it was never configured.
+  const live = connected && source === 'opensky'
+  const statusText = live
+    ? 'OpenSky · 실시간'
+    : credentials
+      ? '실시간 연결 중…'
+      : '실시간 미설정 · .env에 OpenSky 키가 없어요'
 
   return (
     <div className="control-root">
@@ -605,11 +598,11 @@ export function ControlApp(): JSX.Element {
             ☁ 날씨
           </button>
         </div>
-        {/* The simulation/live tabs are gone: the exhibit picks for itself. It
-            runs live whenever OpenSky is answering and falls back to simulation
-            on its own when it isn't, so the choice was one an operator never
-            needed to make — and one a visitor could make by accident. FEED=mock
-            in .env still pins simulation for a demo. */}
+        {/* There is no live/simulation choice because there is no simulation.
+            A globe covered in aircraft that do not exist is worse than an empty
+            one, and the two sets shared no icao24 — so every handover threw
+            away the selection, the route and the card. If OpenSky is not
+            answering, the sky is empty and the status line says so. */}
         {isWeather ? (
           <div className="legend">
             {(
