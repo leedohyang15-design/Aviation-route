@@ -91,9 +91,12 @@ function rainAnchors(d: WeatherDecode): THREE.Vector2 {
   // weather site. Those sites paint from about a tenth of a millimetre, and
   // this is what that is in reflectivity.
   if (unit.includes('dbz')) return new THREE.Vector2(5, 65)
-  // mm, mm/h, kg/m² — an hour's rain. 0.1 is "somebody would notice it", 18 is
-  // a downpour; above that the ramp is already at its last colour.
-  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.1, 18)
+  // mm, mm/h, kg/m² — an hour's rain. 0.05 is the drizzle at the edge of a
+  // system, 12 is a downpour; above that the ramp is already at its last
+  // colour. The top used to be 18, which is a rate a typhoon only reaches in
+  // its eyewall — so the rest of the storm, which is where nearly all of its
+  // rain is, drew as pale blue on a picture of a hurricane.
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.05, 12)
   const span = d.max - d.min
   return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
 }
@@ -1853,7 +1856,9 @@ export class Globe {
     const mergePatches = (imgs: Map<number, HTMLImageElement>): void => {
       const W = canvas.width
       const H = canvas.height
-      const acc = new Float32Array(W * H * 3)
+      // One number per pixel: how much cloud. The colour of the source is not
+      // information anybody wants on the globe, only its opacity.
+      const acc = new Float32Array(W * H)
       const wacc = new Float32Array(W * H)
       const RAD = Math.PI / 180
       // Full weight within 25 degrees of the sub-satellite point, tailing to
@@ -1863,6 +1868,34 @@ export class Globe {
       // decides which sensor's word carries more where they disagree.
       const NEAR = Math.cos(25 * RAD)
       const FAR = Math.cos(78 * RAD)
+
+      /*
+       * Pull the cloud out HERE, per sensor, and put every sensor on the same
+       * scale before merging.
+       *
+       * Two facts made the join at 180 degrees visible no matter how the
+       * pixels were blended. These layers are not one product: GOES and
+       * Himawari come back with a temperature palette laid over grey, the
+       * Meteosats come back as plain greyscale, and "how bright is cloud"
+       * means something different in each. And at the antimeridian only ONE
+       * sensor has data on each side, because the others are published clipped
+       * there — so normalising the weights cannot help, since each side is
+       * already the only opinion going and gets full say.
+       *
+       * So each patch is reduced to a single number per pixel — how much cloud
+       * — and then stretched onto a common scale using its OWN distribution:
+       * its median becomes clear sky and its 98th percentile becomes solid
+       * cloud. Two sensors looking at the same weather now agree on what to
+       * call it, and the seam has nothing left to be a seam about.
+       */
+      const cloudness = (r: number, g: number, b: number): number => {
+        const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+        const mx = Math.max(r, g, b)
+        const mn = Math.min(r, g, b)
+        // Colour means colder, which means higher cloud, not less of it.
+        const sat = mx > 1 ? (mx - mn) / mx : 0
+        return Math.max(lum, sat * 0.85)
+      }
 
       for (const [i, t] of patches.entries()) {
         const img = imgs.get(i)
@@ -1886,6 +1919,28 @@ export class Globe {
         tctx.drawImage(img, 0, 0, pw, ph)
         const src = tctx.getImageData(0, 0, pw, ph).data
 
+        // This sensor's own distribution, from a coarse sample of its valid
+        // pixels — enough for two percentiles and far cheaper than all of them.
+        const hist = new Int32Array(64)
+        let counted = 0
+        for (let k = 0; k < pw * ph; k += 7) {
+          const o = k * 4
+          if (!src[o + 3]) continue
+          hist[Math.min(63, (cloudness(src[o], src[o + 1], src[o + 2]) * 64) | 0)]++
+          counted++
+        }
+        if (!counted) continue
+        const at = (frac: number): number => {
+          let seen = 0
+          for (let bin = 0; bin < 64; bin++) {
+            seen += hist[bin]
+            if (seen >= counted * frac) return (bin + 0.5) / 64
+          }
+          return 1
+        }
+        const lo = at(0.5) // half of what a satellite sees is not cloud
+        const hi = Math.max(lo + 0.02, at(0.98))
+
         for (let j = 0; j < ph; j++) {
           const y = y0 + j
           if (y < 0 || y >= H) continue
@@ -1905,11 +1960,11 @@ export class Globe {
             if (w <= 0) continue
             if (w > 1) w = 1
             w = w * w * (3 - 2 * w) * (a / 255)
+            let c = (cloudness(src[o], src[o + 1], src[o + 2]) - lo) / (hi - lo)
+            c = c < 0 ? 0 : c > 1 ? 1 : c
             const k = y * W + x
             wacc[k] += w
-            acc[k * 3] += src[o] * w
-            acc[k * 3 + 1] += src[o + 1] * w
-            acc[k * 3 + 2] += src[o + 2] * w
+            acc[k] += c * w
           }
         }
       }
@@ -1919,9 +1974,13 @@ export class Globe {
         const w = wacc[k]
         if (w <= 0) continue
         const o = k * 4
-        out.data[o] = Math.min(255, acc[k * 3] / w)
-        out.data[o + 1] = Math.min(255, acc[k * 3 + 1] / w)
-        out.data[o + 2] = Math.min(255, acc[k * 3 + 2] / w)
+        // Red carries the answer; the shader reads that one channel and paints
+        // its own white. Green and blue carry it too so the texture still
+        // looks like what it is if anyone dumps it.
+        const c = Math.round(255 * Math.min(1, acc[k] / w))
+        out.data[o] = c
+        out.data[o + 1] = c
+        out.data[o + 2] = c
         // Total weight IS the coverage: one sensor at half strength on its own
         // limb fades out, two at half strength together do not.
         out.data[o + 3] = Math.round(255 * Math.min(1, w))

@@ -19,6 +19,7 @@ import {
 import { flightCategory } from '../src/common/flightClass'
 import { cachedRoute, cacheRoute, lookupRoute, queueRoute } from './routes'
 import { fetchWithTimeout } from './http'
+import { airlineFromCallsign } from '../src/common/airlines'
 import { opsLog } from './log'
 
 const TOKEN_URL =
@@ -349,7 +350,17 @@ async function buildDetail(
 
   const enrich: FlightDetail & { _ts?: number } = {
     icao24,
-    airline: ports?.airline,
+    /*
+     * The route's airline first, then the callsign's own.
+     *
+     * The airline used to come ONLY from the route lookup, so an aircraft with
+     * no published route showed a blank where its operator should be — on top
+     * of having no route. That is exactly backwards for the aircraft it
+     * happens to: "ETD5W2" is Etihad flying an aeroplane somewhere without
+     * passengers, and the first three letters say so. No database needed, and
+     * the table is already here for the search box.
+     */
+    airline: ports?.airline ?? airlineFromCallsign(callsign) ?? undefined,
     flightNo: callsign || undefined,
     origin: ports?.origin,
     destination: ports?.destination,
