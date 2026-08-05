@@ -415,10 +415,23 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
         state.selected = msg.icao24
         broadcast({ type: 'state', state })
         if (state.mode === 'satellite') {
-          const d = msg.icao24 ? satDetail(msg.icao24) : null
+          // The card and its orbit go out NOW, without the next-pass line.
+          // Working that out propagates the orbit across the next day — for a
+          // satellite that never rises here, the whole day's worth — and doing
+          // it first meant the card waited on it. The pass follows a tick
+          // later and the card fills itself in.
+          const id = msg.icao24
+          const d = id ? satDetail(id, false) : null
           lastOrbitAt = Date.now()
           broadcast({ type: 'satDetail', detail: d })
-          broadcast({ type: 'route', icao24: msg.icao24 ?? '', points: d?.track ?? null })
+          broadcast({ type: 'route', icao24: id ?? '', points: d?.track ?? null })
+          if (id && d) {
+            setImmediate(() => {
+              if (state.selected !== id) return // they moved on; do not overwrite
+              const full = satDetail(id)
+              if (full) broadcast({ type: 'satDetail', detail: full })
+            })
+          }
         } else {
           void sendDetail(null)
         }

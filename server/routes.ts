@@ -114,6 +114,10 @@ class RateLimited extends Error {}
  * job than to leave the card blank while a stalled connection times out on the
  * operating system's schedule (minutes, on Windows). */
 const ADSBDB_TIMEOUT_MS = 6000
+const UA = 'aviation-route-exhibit/0.1 (museum kiosk)'
+/** Both databases' hosts, overridable so a test can stand in for them. */
+const ADSBDB_BASE = process.env.ADSBDB_BASE ?? 'https://api.adsbdb.com'
+const HEXDB_BASE = process.env.HEXDB_BASE ?? 'https://hexdb.io'
 
 /**
  * Look up one callsign. Returns the route, or null when adsbdb has no entry for
@@ -121,14 +125,34 @@ const ADSBDB_TIMEOUT_MS = 6000
  * caller leaves the callsign unknown instead of hiding the plane.
  */
 export async function lookupRoute(callsign: string): Promise<RoutePorts | null> {
+  const first = await lookupAdsbdb(callsign)
+  if (first) return first
+  // adsbdb gave a definite "never heard of it". Ask the other database before
+  // writing this aircraft off as going nowhere for the next six hours.
+  try {
+    const second = await lookupHexdb(callsign)
+    if (second) {
+      hexdbHits++
+      return second
+    }
+  } catch {
+    // The backup being down is not an answer about the callsign.
+  }
+  return null
+}
+
+/** How many routes the backup has supplied, for the log. */
+let hexdbHits = 0
+export function backupRouteHits(): number {
+  return hexdbHits
+}
+
+async function lookupAdsbdb(callsign: string): Promise<RoutePorts | null> {
   const res = await fetchWithTimeout(
-    `https://api.adsbdb.com/v0/callsign/${encodeURIComponent(callsign)}`,
+    `${ADSBDB_BASE}/v0/callsign/${encodeURIComponent(callsign)}`,
     ADSBDB_TIMEOUT_MS,
     {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)'
-      }
+      headers: { Accept: 'application/json', 'User-Agent': UA }
     }
   )
   if (res.status === 429) throw new RateLimited('rate limited (429)')
@@ -156,6 +180,80 @@ export async function lookupRoute(callsign: string): Promise<RoutePorts | null> 
   // Only a route with BOTH endpoints can be drawn; treat a half-answer as none.
   if (!origin || !destination) return null
   return { airline: fr.airline?.name, origin, destination }
+}
+
+// ---------------------------------------------------------------------------
+// hexdb.io — the backup
+// ---------------------------------------------------------------------------
+//
+// adsbdb is a community database and its coverage is uneven: whole regions of
+// the sky come back "unknown callsign", which on the exhibit reads as an
+// aeroplane that is going nowhere. hexdb.io publishes the same fact from a
+// different collection, free and without a key, so a callsign adsbdb has never
+// heard of gets a second question before being written off.
+//
+// It answers with airport CODES rather than positions, so each end needs a
+// second lookup — and those are cached hard, because there are a few thousand
+// airports in the world and they do not move.
+
+const HEXDB_TIMEOUT_MS = 6000
+/** icao → port, or null for "asked, does not exist". Airports do not move. */
+const airports = new Map<string, RoutePort | null>()
+
+async function hexdbAirport(icao: string): Promise<RoutePort | null> {
+  const key = icao.toUpperCase()
+  const known = airports.get(key)
+  if (known !== undefined) return known
+  let port: RoutePort | null = null
+  try {
+    const res = await fetchWithTimeout(
+      `${HEXDB_BASE}/api/v1/airport/icao/${encodeURIComponent(key)}`,
+      HEXDB_TIMEOUT_MS,
+      { headers: { Accept: 'application/json', 'User-Agent': UA } }
+    )
+    if (res.ok) {
+      const a = (await res.json()) as Record<string, unknown>
+      const lon = Number(a.longitude)
+      const lat = Number(a.latitude)
+      if (Number.isFinite(lon) && Number.isFinite(lat)) {
+        const iata = typeof a.iata === 'string' && a.iata ? a.iata : undefined
+        port = {
+          code: iata || key,
+          city: koCity(iata, (a.region_name as string) || (a.airport as string) || undefined),
+          countryCode: ((a.country_code as string) || '').toLowerCase() || undefined,
+          lon,
+          lat
+        }
+      }
+    }
+  } catch {
+    // A transport failure is not "this airport does not exist" — leave it
+    // unknown so the next aircraft through here asks again.
+    return null
+  }
+  airports.set(key, port)
+  return port
+}
+
+/** The same question, asked of hexdb. Null when it has nothing either. */
+async function lookupHexdb(callsign: string): Promise<RoutePorts | null> {
+  const res = await fetchWithTimeout(
+    `${HEXDB_BASE}/api/v1/route/icao/${encodeURIComponent(callsign)}`,
+    HEXDB_TIMEOUT_MS,
+    { headers: { Accept: 'application/json', 'User-Agent': UA } }
+  )
+  if (!res.ok) return null
+  const j = (await res.json()) as { route?: string }
+  // "KJFK-EGLL", or a multi-leg "RJTT-RKSI-VHHH": the first and last are the
+  // two ends anybody would point at.
+  const legs = (j?.route ?? '').split('-').map((x) => x.trim()).filter(Boolean)
+  if (legs.length < 2) return null
+  const [origin, destination] = await Promise.all([
+    hexdbAirport(legs[0]),
+    hexdbAirport(legs[legs.length - 1])
+  ])
+  if (!origin || !destination) return null
+  return { origin, destination }
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +333,7 @@ function logProgress(): void {
   const rate = (1000 / interval).toFixed(1)
   opsLog(
     `[routes] ${done} lookups — route ${found} / none ${none}` +
+      `${hexdbHits ? ` (${hexdbHits} via hexdb)` : ''}` +
       `${failed ? ` / failed ${failed}` : ''}; cache ${cache.size}, ` +
       `${queue.length} queued${queue.length ? ` (≈${mins}분 남음)` : ''} @ ${rate}/s`
   )

@@ -27,8 +27,8 @@ const GAP = 64
  * place.
  */
 const ROUTE_WAIT_MS = 6000
-/** Backstop for an object still enough that no further anchor ever arrives. */
-const CAMERA_QUIET_MS = 2500
+/** Backstop for an object still enough that no anchor ever arrives at all. */
+const CAMERA_QUIET_MS = 400
 
 
 /**
@@ -411,9 +411,23 @@ export function ControlApp(): JSX.Element {
 
     if (!placedRef.current) {
       if (!routeReady) return
-      // Wait for the camera to park: selecting recentres and zooms, so a card
-      // placed mid-ease is placed against a map about to be somewhere else.
-      if (anchor.moving) return
+      /*
+       * No waiting for the camera to park.
+       *
+       * It used to, on the reasoning that a card placed mid-ease is placed
+       * against a map about to be somewhere else. That reasoning is for a card
+       * pinned to the screen; this one is pinned to the SATELLITE and follows
+       * it every frame, so where the camera ends up does not move it relative
+       * to what it describes. What the wait actually bought was a card that
+       * took the whole recentre-and-zoom to appear — and then a two and a half
+       * second alarm clock behind that for a geostationary satellite that
+       * never moves enough to send another anchor. That is the "정보탭이 너무
+       * 느리다": nothing was being computed, it was being waited for.
+       *
+       * The one thing the camera affects is which side of the object reads
+       * best, and for a satellite that is nearly free: an orbit is deliberately
+       * not something the card avoids, so there is little to score against.
+       */
       apply(placeCard(anchor))
       return
     }

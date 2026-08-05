@@ -337,7 +337,11 @@ export function nextPass(
 ): { inSec: number; maxElevationDeg: number; alwaysUp: boolean } | null {
   const e = entries.find((x) => x.id === id)
   if (!e) return null
-  const STEP_SEC = 30
+  // A pass lasts about ten minutes, so a two-minute stride cannot step over
+  // one — and it costs a quarter of what a thirty-second stride did. The rise
+  // time is then walked back at the fine stride, so the answer is no coarser.
+  const STEP_SEC = 120
+  const FINE_SEC = 20
   const HORIZON_SEC = 24 * 3600
   const t0 = Date.now()
 
@@ -359,14 +363,22 @@ export function nextPass(
   for (let s = STEP_SEC; s <= HORIZON_SEC; s += STEP_SEC) {
     const el = elevationAt(t0 + s * 1000)
     if (el == null || el <= 0) continue
-    // Found the rise; walk the pass to its highest point.
+    // Somewhere in the last stride it crossed the horizon: walk back to find
+    // where, so a two-minute stride does not report a two-minute-late rise.
+    let rise = s
+    for (let k = s - FINE_SEC; k > s - STEP_SEC; k -= FINE_SEC) {
+      const e2 = elevationAt(t0 + k * 1000)
+      if (e2 == null || e2 <= 0) break
+      rise = k
+    }
+    // Then walk the pass forward to its highest point.
     let max = el
-    for (let k = s; k <= s + 20 * 60; k += STEP_SEC) {
+    for (let k = rise; k <= rise + 20 * 60; k += FINE_SEC) {
       const e2 = elevationAt(t0 + k * 1000)
       if (e2 == null || e2 <= 0) break
       max = Math.max(max, e2)
     }
-    return { inSec: s, maxElevationDeg: max, alwaysUp: false }
+    return { inSec: rise, maxElevationDeg: max, alwaysUp: false }
   }
   return null // never rises here (e.g. a low-inclination orbit seen from Seoul)
 }
@@ -381,12 +393,21 @@ function rangeNow(rec: sat.SatRec): number | null {
   return Number.isFinite(r) ? r : null
 }
 
-/** Rich detail for the selected satellite (panel + orbit line). */
-export function getDetail(id: string): SatelliteDetail | null {
+/**
+ * Rich detail for the selected satellite (panel + orbit line).
+ *
+ * `withPass` is off by the caller's choice, not by accident. Working out when
+ * a satellite next rises means propagating its orbit across the next day, and
+ * for one that never rises here that is the whole day's worth — hundreds of
+ * milliseconds on the hub's only thread, spent BEFORE the card can be sent.
+ * So the card goes out first without that one line, and the hub asks again
+ * with the pass a tick later. The card appears at once and fills itself in.
+ */
+export function getDetail(id: string, withPass = true): SatelliteDetail | null {
   const e = entries.find((x) => x.id === id)
   if (!e) return null
   const s = latest.find((x) => x.id === id)
-  const pass = nextPass(id)
+  const pass = withPass ? nextPass(id) : null
   return {
     id: e.id,
     name: e.name,
