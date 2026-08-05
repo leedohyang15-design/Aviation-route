@@ -145,21 +145,3 @@ export function categoryKey(
   return isKnownFlight(callsign, hasRoute) ? 'passenger' : 'other'
 }
 
-/** Label for the info chip — only asserts a category we're confident about
- * (cargo/military); unknown returns null so a route-less plane isn't mislabeled
- * "여객기" when it might be a tactical-callsign military or GA flight. */
-export function categoryLabel(cat: FlightCategory): string | null {
-  return cat === 'military' ? '군용기' : cat === 'cargo' ? '화물기' : null
-}
-
-/** Icon/dot color per category (passenger cyan, cargo amber, military green,
- * everything else a quiet grey so the long tail reads as background). */
-export function categoryColorHex(cat: CategoryKey): string {
-  return cat === 'military'
-    ? '#74d16a'
-    : cat === 'cargo'
-      ? '#f5a623'
-      : cat === 'other'
-        ? '#93a4b8'
-        : '#35c1ff'
-}

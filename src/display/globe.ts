@@ -29,6 +29,7 @@ import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shar
 import {
   EARTH_TEXTURE_URL,
   EARTH_NIGHT_URL,
+  EARTH_MIPMAPS,
   WEATHER_CLOUD_OPACITY,
   WEATHER_FRAME_HOLD_MS
 } from '@shared/config'
@@ -883,10 +884,13 @@ export class Globe {
   private tuneTexture(tex: THREE.Texture): void {
     tex.colorSpace = THREE.SRGBColorSpace
     tex.wrapS = THREE.RepeatWrapping
-    tex.generateMipmaps = true
-    tex.minFilter = THREE.LinearMipmapLinearFilter
+    // See EARTH_MIPMAPS: a wrapping texture's mip chain is built with the
+    // edges clamped, so the two sides of the wrap disagree at every reduced
+    // level — which draws as a hairline exactly where the map joins itself.
+    tex.generateMipmaps = EARTH_MIPMAPS
+    tex.minFilter = EARTH_MIPMAPS ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter
     tex.magFilter = THREE.LinearFilter
-    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
+    if (EARTH_MIPMAPS) tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
     tex.needsUpdate = true
   }
 

@@ -13,21 +13,3 @@ export const PLANE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="256" he
 </svg>`
 
 export const PLANE_DATA_URI = `data:image/svg+xml;utf8,${encodeURIComponent(PLANE_SVG)}`
-
-/** Rasterize the SVG to ImageData at the given pixel size (for MapLibre addImage). */
-export function planeImageData(size = 64): Promise<ImageData> {
-  return new Promise((resolve, reject) => {
-    const img = new Image(size, size)
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = size
-      canvas.height = size
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return reject(new Error('no 2d context'))
-      ctx.drawImage(img, 0, 0, size, size)
-      resolve(ctx.getImageData(0, 0, size, size))
-    }
-    img.onerror = reject
-    img.src = PLANE_DATA_URI
-  })
-}

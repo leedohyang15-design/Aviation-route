@@ -11,7 +11,7 @@
 // Every outbound call the exhibit makes goes through here.
 
 /** Thrown when the deadline passes, so callers can tell it from a real error. */
-export class TimeoutError extends Error {
+class TimeoutError extends Error {
   constructor(ms: number) {
     super(`timed out after ${ms}ms`)
     this.name = 'TimeoutError'

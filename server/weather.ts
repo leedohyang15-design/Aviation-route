@@ -127,13 +127,6 @@ export function weatherFrames(): WeatherFrame[] {
   return [...latest.values()].flat()
 }
 
-/** How old the newest frame is, in ms — what the dome caption counts. */
-export function weatherAge(): number | null {
-  let newest = 0
-  for (const frames of latest.values()) newest = Math.max(newest, seriesTime(frames))
-  return newest ? Date.now() - newest : null
-}
-
 function loadCache(): void {
   for (const path of dataPathCandidates(CACHE_NAME)) {
     try {

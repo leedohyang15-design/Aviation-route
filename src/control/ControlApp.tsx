@@ -293,7 +293,15 @@ export function ControlApp(): JSX.Element {
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
-  const [anchor, setAnchor] = useState<SelectionAnchor | null>(null)
+  /**
+   * The newest anchor, as a plain value rather than state.
+   *
+   * `anchorTick` is bumped only when the card still needs PLACING, which is a
+   * handful of times per selection — everything after that is handled by
+   * `follow` writing to the element, so the sixty-per-second case never
+   * re-renders anything.
+   */
+  const [anchorTick, setAnchorTick] = useState(0)
   const pokeRef = useRef<(() => void) | null>(null)
   /** Any tap on the overlay UI counts as a visitor being present. Those
    * controls sit on a pointer-events island above the canvas, so they never
@@ -323,6 +331,17 @@ export function ControlApp(): JSX.Element {
   const placedRef = useRef<Placement | null>(null)
   const anchorRef = useRef<SelectionAnchor | null>(null)
   const openedAt = useRef(0)
+  /**
+   * The card's own element, so following can write to it directly.
+   *
+   * The anchor arrives on every rendered frame, and putting it through React
+   * state meant re-rendering the whole control window sixty times a second to
+   * move one box — six thousand aircraft re-filtered, every chip and legend
+   * reconciled, for a translation. That is where the stutter in the card and
+   * the general heaviness both came from. Placement still goes through state,
+   * because it happens once; following does not, because it happens always.
+   */
+  const sheetRef = useRef<HTMLDivElement | null>(null)
 
   const apply = (p: Placement) => {
     placedRef.current = p
@@ -344,15 +363,17 @@ export function ControlApp(): JSX.Element {
     const h = SHEET_H * scale
     const left = a.x + p.off.dx
     const top = a.y + p.off.dy
-    setPlaced({
-      left,
-      top,
-      right: 'auto',
-      bottom: 'auto',
-      width: SHEET_W,
-      transform: `scale(${scale})`,
-      transformOrigin: 'top left'
-    })
+    // Straight to the element. No setState: see sheetRef.
+    const el = sheetRef.current
+    if (el) {
+      el.style.left = `${left}px`
+      el.style.top = `${top}px`
+      el.style.right = 'auto'
+      el.style.bottom = 'auto'
+      el.style.width = `${SHEET_W}px`
+      el.style.transform = `scale(${scale})`
+      el.style.transformOrigin = 'top left'
+    }
     placedRef.current = { ...p, rect: { ...p.rect, x: left, y: top, w, h } }
   }
 
@@ -394,7 +415,15 @@ export function ControlApp(): JSX.Element {
    * flight mode that re-rendered the whole control window sixty times a second
    * to position a card that is nailed to the corner and does not move.
    */
-  const anchorSink = isSat ? setAnchor : undefined
+  const anchorSink = isSat
+    ? (a: SelectionAnchor | null) => {
+        anchorRef.current = a
+        if (!a) return
+        const p = placedRef.current
+        if (p) follow(a, p)
+        else setAnchorTick((n) => n + 1) // still deciding: let the effect run
+      }
+    : undefined
 
   // Aircraft: straight to the corner, the moment there is something to show.
   // Nothing to wait for — the corner cannot land on the route, so there is no
@@ -406,7 +435,7 @@ export function ControlApp(): JSX.Element {
   }, [isSat, state.selected])
 
   useEffect(() => {
-    anchorRef.current = anchor
+    const anchor = anchorRef.current
     if (!isSat || !anchor) return
 
     if (!placedRef.current) {
@@ -436,7 +465,7 @@ export function ControlApp(): JSX.Element {
     // card that is already on screen is the thing that annoys — better to have
     // picked well once. It is only ever re-chosen for a NEW selection.
     follow(anchor, placedRef.current)
-  }, [anchor, routeReady, isSat])
+  }, [anchorTick, routeReady, isSat])
 
   // A geostationary satellite can sit still enough that no further anchor ever
   // arrives, so the wait needs its own alarm clock as a backstop.
@@ -677,7 +706,7 @@ export function ControlApp(): JSX.Element {
           beside the object, since an orbit is a ring that says the same thing
           everywhere and there is nothing else on screen to cover. Keyed by the
           selection so it re-mounts and replays the pop-up each time. */}
-      <div className="sheet" style={sheetStyle} hidden={!settled}>
+      <div className="sheet" ref={sheetRef} style={sheetStyle} hidden={!settled}>
         {isWeather
           ? null
           : isSat

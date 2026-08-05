@@ -143,10 +143,6 @@ export async function lookupRoute(callsign: string): Promise<RoutePorts | null> 
 
 /** How many routes the backup has supplied, for the log. */
 let hexdbHits = 0
-export function backupRouteHits(): number {
-  return hexdbHits
-}
-
 async function lookupAdsbdb(callsign: string): Promise<RoutePorts | null> {
   const res = await fetchWithTimeout(
     `${ADSBDB_BASE}/v0/callsign/${encodeURIComponent(callsign)}`,
@@ -412,10 +408,6 @@ export function stopRouteResolver(): void {
 }
 
 /** Test seam: the pace the loop has settled on, in lookups per second. */
-export function routeLookupRate(): number {
-  return 1000 / interval
-}
-
 // ---------------------------------------------------------------------------
 // Disk persistence
 // ---------------------------------------------------------------------------

@@ -56,10 +56,6 @@ export const ROUTE_CACHE_TTL_MS = Number(readEnv('ROUTE_CACHE_TTL_MS') ?? 24 * 3
 /** How long a "no route" answer sticks before we try that callsign again. */
 export const ROUTE_NEGATIVE_TTL_MS = Number(readEnv('ROUTE_NEGATIVE_TTL_MS') ?? 6 * 3600_000)
 
-/** Equirectangular render target. Must stay exactly 2:1 for sphere projection. */
-export const EQUIRECT_WIDTH = Number(readEnv('EQUIRECT_WIDTH') ?? 4096)
-export const EQUIRECT_HEIGHT = EQUIRECT_WIDTH / 2
-
 /**
  * Optional photographic earth texture. Drop an equirectangular (2:1) image at
  * this path (renderer `public/` in dev, next to the built html in production).
@@ -72,6 +68,26 @@ export const EARTH_TEXTURE_URL = 'earth_equirect.jpg'
  * Drop a 2:1 "Black Marble" image here; if absent, night just dims globally.
  */
 export const EARTH_NIGHT_URL = 'earth_night.jpg'
+
+/**
+ * Whether the wrapping background maps get a mipmap pyramid.
+ *
+ * OFF, and this is the suspect for the hairline that runs down the map in
+ * every mode. These textures wrap in longitude, and the GPU builds a mipmap by
+ * filtering each level from the one above with the edges CLAMPED — it has no
+ * idea the image is periodic. So at every reduced level the leftmost and
+ * rightmost texels are built from one side only and disagree with each other,
+ * and wherever the map wraps, that disagreement is drawn as a one-pixel line.
+ * It shows on real hardware and not under a software renderer, which is why it
+ * survived several rounds of looking for it here.
+ *
+ * The cost of switching them off is sharpness at full world view, where a
+ * 4096-wide map is drawn about two and a half times smaller than it is. Set
+ * this to 1 to put the pyramid back and see the difference directly — if the
+ * line returns with it, that is the answer; if it does not, the cause is
+ * elsewhere and this should go back on.
+ */
+export const EARTH_MIPMAPS = (readEnv('EARTH_MIPMAPS') ?? '0') !== '0'
 
 // ---------------------------------------------------------------------------
 // Satellite mode
@@ -206,8 +222,6 @@ export const WEATHER_ZOOM = Number(readEnv('WEATHER_ZOOM') ?? 3)
 export const WEATHER_TILE_PX = Number(readEnv('WEATHER_TILE_PX') ?? 256)
 /** Per-request timeout for the index and for each tile. */
 export const WEATHER_TIMEOUT_MS = Number(readEnv('WEATHER_TIMEOUT_MS') ?? 12_000)
-/** How stale a cached frame may be before it is described as old on screen. */
-export const WEATHER_MAX_AGE_MS = Number(readEnv('WEATHER_MAX_AGE_MS') ?? 30 * 60_000)
 
 /**
  * Where the cloud picture comes from.

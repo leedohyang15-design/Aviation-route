@@ -67,7 +67,7 @@ let timer: ReturnType<typeof setTimeout> | null = null
 let stopped = true
 
 /** Orbit class, which is what the colours and the filter chips key off. */
-export function orbitClass(altKm: number, name: string): Satellite['orbit'] {
+function orbitClass(altKm: number, name: string): Satellite['orbit'] {
   if (/^STARLINK/i.test(name)) return 'starlink'
   if (altKm >= 30000) return 'geo'
   if (altKm >= 2000) return 'meo'
@@ -272,7 +272,7 @@ export function stopSatellites(): void {
  * the renderer already splits it where it crosses the antimeridian, which an
  * orbit does on nearly every pass.
  */
-export function orbitTrack(id: string, samples = 180): GeoPoint[] | null {
+function orbitTrack(id: string, samples = 180): GeoPoint[] | null {
   const e = entries.find((x) => x.id === id)
   if (!e) return null
   const periodMs = e.periodMin * 60_000
@@ -332,7 +332,7 @@ export function orbitTrack(id: string, samples = 180): GeoPoint[] | null {
  * gets. Only ever run for the one selected satellite, so a coarse 30s scan over
  * the next day is cheap — a few thousand propagations, tens of milliseconds.
  */
-export function nextPass(
+function nextPass(
   id: string
 ): { inSec: number; maxElevationDeg: number; alwaysUp: boolean } | null {
   const e = entries.find((x) => x.id === id)
