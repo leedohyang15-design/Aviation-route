@@ -618,7 +618,7 @@ async function fetchOwmFrame(
  * clock. Hourly steps ending at the present, matching what the animation
  * already expects.
  */
-async function pollOpenWeather(onFrame: (f: WeatherFrame) => void): Promise<void> {
+async function pollOpenWeather(onFrame: (f: WeatherFrame) => boolean | void): Promise<boolean> {
   if (owmApi === null) {
     // Probe once. A free key may not be entitled to Maps 2.0, and the
     // difference decides whether the tab animates or shows a single moment.
@@ -635,14 +635,38 @@ async function pollOpenWeather(onFrame: (f: WeatherFrame) => void): Promise<void
     }
   }
 
+  /*
+   * One tile before a hundred and twenty-eight.
+   *
+   * A key that is not yet live refuses every tile, and asking the whole grid
+   * twice to find that out is a hundred and twenty-eight pointless requests
+   * against a rate limit, every poll. The probe is also why owmApi is reset
+   * below: a key that starts working may well be entitled to Maps 2.0, and
+   * without the reset it would stay pinned to the fallback for the rest of the
+   * run.
+   */
+  if (!(await fetchOwmTile('cloud', 0, 0, null))) {
+    owmApi = null
+    opsLog(
+      `[weather] OpenWeatherMap: ${lastTileError}. ` +
+        (/401/.test(lastTileError)
+          ? 'A new key is not live immediately - OpenWeatherMap takes anywhere from ten minutes ' +
+            'to a couple of hours to activate one. Nothing to do but wait; this retries every poll. ' +
+            'If it is still 401 tomorrow, check for a stray space or quote around the key in .env.'
+          : 'Falling back to the previous source for this poll.')
+    )
+    return false
+  }
+
   const steps = owmApi === 2 ? Math.max(1, WEATHER_FRAME_COUNT) : 1
   const HOUR = 3600_000
   const now = Math.floor(Date.now() / HOUR) * HOUR
   const times: (number | null)[] =
     owmApi === 2 ? Array.from({ length: steps }, (_, i) => now - (steps - 1 - i) * HOUR) : [null]
 
+  let delivered = false
   for (const layer of LAYERS) {
-    if (stopped) return
+    if (stopped) return delivered
     const series: WeatherFrame[] = []
     for (let i = 0; i < times.length; i++) {
       const f = await fetchOwmFrame(layer, times[i], i, times.length)
@@ -652,6 +676,7 @@ async function pollOpenWeather(onFrame: (f: WeatherFrame) => void): Promise<void
       opsLog(`[weather] OpenWeatherMap ${layer}: every tile failed. Last: ${lastTileError || 'none'}`)
       continue
     }
+    delivered = true
     series.forEach((f, i) => {
       f.step = i
       f.steps = series.length
@@ -665,6 +690,7 @@ async function pollOpenWeather(onFrame: (f: WeatherFrame) => void): Promise<void
     )
   }
   saveCache()
+  return delivered
 }
 
 /** One poll of MapTiler: index, then both layers' series. */
@@ -1216,7 +1242,15 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
    * a painted picture, which is what the intensity ramp and the percentile
    * measurement are built on, and it is what runs when no OWM key is set.
    */
-  if (owmKey()) return pollOpenWeather(onFrame)
+  /*
+   * Fall THROUGH when it fails, do not fall over.
+   *
+   * Setting the key made OpenWeatherMap the only source tried, so the first
+   * poll after adding a key that was not live yet emptied the tab completely.
+   * A new source is a preference, never a commitment: if it delivers nothing,
+   * the one that was working before still runs on the same poll.
+   */
+  if (owmKey() && (await pollOpenWeather(onFrame))) return
   if (mtKey()) return pollMaptiler(onFrame)
   const res = await fetchWithTimeout(WEATHER_INDEX_URL, WEATHER_TIMEOUT_MS)
   if (!res.ok) throw new Error(`index HTTP ${res.status}`)
