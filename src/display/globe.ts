@@ -326,6 +326,8 @@ export class Globe {
   private debugDumped = new Set<string>()
   /** Set to put a line in the exe's log from the renderer. */
   onNote: ((text: string) => void) | null = null
+  /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
+  private screenScanAt = 0
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [] }
   private iCenterLon = 127.5
@@ -976,6 +978,62 @@ export class Globe {
    * Read at native width from a few horizontal strips — never resampled
    * sideways, which is what destroyed the evidence last time.
    */
+  /**
+   * Find the line in the finished picture and give it a number.
+   *
+   * Both map files measured clean, and the line's position matches where the
+   * texture coordinate crosses a whole number to within two pixels — so it is
+   * the wrap, and the only remaining question is which of the two filtering
+   * stories draws it. Answering that means comparing with and without the mip
+   * chain, and "does it look better" is not a comparison anybody should have to
+   * make by eye on a hairline. This reports the column and how strong it is, so
+   * the A/B is two numbers.
+   *
+   * Reads the drawing buffer, then for each column counts the rows whose step
+   * from the neighbouring column is a hard one — the same statistic that found
+   * a planted one-pixel line at 99% while ignoring ordinary detail.
+   */
+  private scanScreenColumns(): void {
+    if (!this.onNote) return
+    try {
+      const gl = this.renderer.getContext()
+      const W = gl.drawingBufferWidth
+      const H = gl.drawingBufferHeight
+      if (W < 64 || H < 64) return
+      const buf = new Uint8Array(W * H * 4)
+      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+      const lum = (x: number, y: number): number => {
+        const o = (y * W + x) * 4
+        return (buf[o] * 0.299 + buf[o + 1] * 0.587 + buf[o + 2] * 0.114) / 255
+      }
+      const HARD = 0.02 // a hairline is faint; this is five grey levels
+      const hits = new Float64Array(W)
+      for (let x = 1; x < W; x++) {
+        let n = 0
+        for (let y = 0; y < H; y++) if (Math.abs(lum(x, y) - lum(x - 1, y)) > HARD) n++
+        hits[x] = n / H
+      }
+      const sorted = Array.from(hits).sort((a, b) => a - b)
+      const p99 = sorted[Math.floor(sorted.length * 0.99)]
+      const top: { x: number; v: number }[] = []
+      for (let x = 1; x < W; x++) if (hits[x] > Math.max(p99 * 1.5, 0.25)) top.push({ x, v: hits[x] })
+      top.sort((a, b) => b.v - a.v)
+      // Where the texture coordinate crosses a whole number, in screen terms —
+      // the wrap's predicted position, to compare the finding against.
+      const off = this.lonOffset / 360
+      const seamAt = ((((1 + off) % 1) + 1) % 1) * 100
+      this.onNote(
+        `[earth] screen columns ${W}x${H}: ` +
+          `${top.slice(0, 4).map((t) => `${((100 * t.x) / W).toFixed(1)}%(${(t.v * 100).toFixed(0)}%)`).join(' ') || 'none'} ` +
+          `| wrap predicted at ${seamAt.toFixed(1)}% | mipmaps ${
+            (this.bgUniforms.uMap.value as THREE.Texture | null)?.generateMipmaps ? 'ON' : 'OFF'
+          } | typical column ${(p99 * 100).toFixed(0)}%`
+      )
+    } catch {
+      /* readPixels can fail on a lost context; a diagnostic is not worth a crash */
+    }
+  }
+
   private scanForSeam(tex: THREE.Texture, label: string): void {
     const img = tex.image as HTMLImageElement | undefined
     if (!this.onNote || !img?.width) return
@@ -998,25 +1056,59 @@ export class Globe {
         const o = (y * W + x) * 4
         return (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) / 255
       }
+      /*
+       * Two statistics, because a seam can be either kind.
+       *
+       * Counting hard steps finds a line drawn ON the map — a bright or dark
+       * column, a rendering artefact baked in. It does NOT find the other kind,
+       * and the other kind is what a large composited map actually suffers
+       * from: two source tiles joined with their exposure a grey level or two
+       * apart. Per pixel that is far below any sensible threshold; over a
+       * uniform ocean it is a straight line a person sees immediately, and over
+       * land it disappears. So the second statistic is the MEAN SIGNED step
+       * across the column, where noise cancels and a systematic offset does
+       * not, measured against how much the mean wanders elsewhere.
+       */
       const HARD = 0.06
       const hits = new Float64Array(W)
+      const bias = new Float64Array(W)
       for (let x = 1; x < W; x++) {
         let n = 0
-        for (let y = 0; y < ROWS; y++) if (Math.abs(lum(x, y) - lum(x - 1, y)) > HARD) n++
+        let sum = 0
+        for (let y = 0; y < ROWS; y++) {
+          const d2 = lum(x, y) - lum(x - 1, y)
+          if (Math.abs(d2) > HARD) n++
+          sum += d2
+        }
         hits[x] = n / ROWS
+        bias[x] = sum / ROWS
       }
-      const sorted = Array.from(hits).sort((a, b) => a - b)
-      const med = sorted[sorted.length >> 1]
-      const p99 = sorted[Math.floor(sorted.length * 0.99)]
-      const cut = Math.max(p99 * 2, med * 8, 0.5)
-      const found: string[] = []
-      for (let x = 1; x < W && found.length < 6; x++) {
-        if (hits[x] > cut) found.push(`${(-180 + (x / W) * 360).toFixed(2)}deg(${(hits[x] * 100).toFixed(0)}%)`)
+      const rank = (a: Float64Array, f: (v: number) => number): number[] =>
+        Array.from(a, f).sort((p, q) => p - q)
+      const hs = rank(hits, (v) => v)
+      const hMed = hs[hs.length >> 1]
+      const hP99 = hs[Math.floor(hs.length * 0.99)]
+      const bs = rank(bias, Math.abs)
+      // A robust spread: the 99th percentile of |mean step| is what ordinary
+      // map content produces, so anything well past it is not map content.
+      const bP99 = bs[Math.floor(bs.length * 0.99)]
+      const deg = (x: number): string => (-180 + (x / W) * 360).toFixed(2)
+      const hard: string[] = []
+      const soft: string[] = []
+      const hCut = Math.max(hP99 * 2, hMed * 8, 0.5)
+      const bCut = Math.max(bP99 * 4, 0.004) // 0.004 is one grey level in 255
+      for (let x = 1; x < W; x++) {
+        if (hard.length < 4 && hits[x] > hCut) hard.push(`${deg(x)}(${(hits[x] * 100).toFixed(0)}%)`)
+        if (soft.length < 4 && Math.abs(bias[x]) > bCut) {
+          soft.push(`${deg(x)}(${(bias[x] * 255).toFixed(1)} levels)`)
+        }
       }
       this.onNote(
         `[earth] ${label} seam scan ${W}x${ROWS} native: ` +
-          `${found.join(' ') || 'no column stands out'} ` +
-          `(typical column ${(med * 100).toFixed(0)}%, 99th ${(p99 * 100).toFixed(0)}%)`
+          `hard ${hard.join(' ') || 'none'} | ` +
+          `exposure ${soft.join(' ') || 'none'} ` +
+          `(typical hard ${(hMed * 100).toFixed(0)}%, 99th ${(hP99 * 100).toFixed(0)}%; ` +
+          `99th |mean step| ${(bP99 * 255).toFixed(2)} levels)`
       )
     } catch {
       /* a tainted canvas is not worth a crash for a diagnostic */
@@ -1111,6 +1203,8 @@ export class Globe {
         this.measureWrap(tex, 'day')
         this.reportSampling(tex, 'day')
         this.scanForSeam(tex, 'day')
+        // Once the picture has settled, measure the picture.
+        this.screenScanAt = Date.now() + 5000
       },
       () => {
         console.warn(
@@ -2543,8 +2637,20 @@ export class Globe {
     this.uiScale += (this.targetSpan - this.uiScale) * 0.28
     this.iconScale += (iconScaleFor(this.kind, this.targetSpan) - this.iconScale) * 0.28
 
-    // Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
-    this.lonOffset += wrapLon(this.targetLonOffset - this.lonOffset) * 0.28
+    /*
+     * Ease the horizontal offset (wrap-aware) — this pans the world seamlessly.
+     *
+     * The STEP was wrapped but the running total never was, so panning the same
+     * way for long enough let it climb without bound: chase a target that keeps
+     * wrapping and the offset walks 180, 540, 900 and onwards. The shader
+     * divides it by 360 and subtracts it from a coordinate in [0,1], so a large
+     * value spends float precision on the whole turns and leaves less of it for
+     * the fraction that actually selects a texel — on a map sixteen thousand
+     * pixels wide, one texel is six parts in a hundred thousand, which a float
+     * stops resolving somewhere past a few hundred turns. A kiosk left running
+     * gets there. Normalising costs one modulo and keeps the number small.
+     */
+    this.lonOffset = wrapLon(this.lonOffset + wrapLon(this.targetLonOffset - this.lonOffset) * 0.28)
     this.bgUniforms.uLonOffset.value = this.lonOffset
 
     // Dead reckoning: advance each plane along its heading at its ground speed,
@@ -2908,6 +3014,10 @@ export class Globe {
     this.updateSun()
     this.tickWeather()
     this.renderer.render(this.scene, this.camera)
+    if (this.screenScanAt && Date.now() >= this.screenScanAt) {
+      this.screenScanAt = 0
+      this.scanScreenColumns()
+    }
     this.raf = requestAnimationFrame(this.frame)
   }
 
