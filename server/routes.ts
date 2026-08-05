@@ -315,6 +315,39 @@ export function queueRoute(callsign: string | undefined): void {
   enqueue(callsign, true)
 }
 
+/**
+ * Reorder the waiting queue to match what the exhibit is looking at.
+ *
+ * The queue is drained at a few callsigns a second and starts a session several
+ * thousand long, so its ORDER decides what a visitor sees for the first quarter
+ * of an hour. It was arrival order — whatever sequence the feed happened to
+ * list the world in — which is why turning the globe to somewhere the feed
+ * listed late showed an sky with no routes on any of it.
+ *
+ * Given the callsigns on screen, in the order they matter, this lifts them to
+ * the front and leaves everything else in its existing relative order. It is
+ * called on every snapshot, so the front of the queue keeps following the view
+ * rather than being set once at startup.
+ */
+export function prioritiseRoutes(callsigns: string[]): void {
+  if (!callsigns.length || queue.length < 2) return
+  const rank = new Map<string, number>()
+  for (let i = 0; i < callsigns.length; i++) {
+    const cs = norm(callsigns[i])
+    if (cs && !rank.has(cs)) rank.set(cs, i)
+  }
+  if (!rank.size) return
+  // Two passes rather than a comparator: a sort would have to break ties among
+  // thousands of equally unranked callsigns, and their existing order is the
+  // one thing worth preserving — it is how long each has already waited.
+  const front: string[] = []
+  const back: string[] = []
+  for (const cs of queue) (rank.has(cs) ? front : back).push(cs)
+  front.sort((a, b) => (rank.get(a) as number) - (rank.get(b) as number))
+  queue.length = 0
+  queue.push(...front, ...back)
+}
+
 function enqueue(callsign: string | undefined, front: boolean): void {
   const cs = norm(callsign ?? '')
   if (!cs || queued.has(cs) || fresh(cache.get(cs))) return

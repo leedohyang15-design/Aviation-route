@@ -24,6 +24,7 @@ import { writeFile } from 'node:fs/promises'
 import { dataPath } from './datadir'
 import {
   hasRoute,
+  prioritiseRoutes,
   resolveRoutes,
   loadRouteCache,
   saveRouteCache,
@@ -185,9 +186,36 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
       if (known === undefined) pending.push({ callsign: a.callsign, lat: a.lat, lon: a.lon })
       return known === undefined ? a : { ...a, hasRoute: known }
     })
-    // Queue only; the resolver loop drains it in the background and results
-    // land in the cache for a later snapshot.
-    if (pending.length) resolveRoutes(pending)
+    /*
+     * Queue nearest-to-the-view first.
+     *
+     * The resolver drains a few callsigns a second and a session opens with
+     * several thousand waiting, so the order decides what a visitor sees for
+     * the first fifteen minutes. It used to be whatever order the feed listed
+     * the world in, which is why turning the globe to the Americas showed a sky
+     * with no routes on any of it: those aircraft were simply at the back.
+     *
+     * Distance from the view's centre is the whole heuristic. It needs no
+     * viewport arithmetic and it handles zoom for free — zoomed out, the centre
+     * still says which half of the world is being looked at. Longitude is
+     * wrapped and weighted by latitude so that "near" means near on the globe
+     * rather than near in the numbers.
+     */
+    if (pending.length) {
+      const { centerLon, centerLat } = state.view
+      const cosLat = Math.max(0.05, Math.cos((centerLat * Math.PI) / 180))
+      const near = (p: { lat: number; lon: number }): number => {
+        let dLon = Math.abs(p.lon - centerLon) % 360
+        if (dLon > 180) dLon = 360 - dLon
+        return (dLon * cosLat) ** 2 + (p.lat - centerLat) ** 2
+      }
+      const ordered = [...pending].sort((a, b) => near(a) - near(b))
+      resolveRoutes(ordered)
+      // New arrivals are queued in that order; everything already waiting is
+      // re-sorted to match, or the front of the queue would stay whatever the
+      // first snapshot of the session put there.
+      prioritiseRoutes(ordered.map((p) => p.callsign))
+    }
     // How much of the sky actually has a route to draw. "Why does nothing show
     // a route" is answerable from this line alone: all-unknown means the lookup
     // hasn't caught up, all-none means the callsigns genuinely have no route,
