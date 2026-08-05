@@ -2399,29 +2399,49 @@ export class Globe {
       const o = (y * W + x) * 4
       return (d[o] * d[o + 3]) / 65025
     }
+    /*
+     * Count how much of a line steps hard, do not average the whole line.
+     *
+     * The mean absolute difference across a full row was the wrong statistic
+     * and it is why every scan came back "none" while the band was plainly on
+     * screen. A band covering a quarter of the width contributes its edge to
+     * only a quarter of the row, so the mean dilutes it fourfold — and against
+     * a photographic map, whose ordinary row-to-row difference is already
+     * large, a diluted edge never reaches a multiple of the median.
+     *
+     * Nor is counting the hard steps enough on its own: a busy photographic
+     * map has plenty of them scattered about, and they raise the baseline out
+     * of reach. What actually separates machinery from weather is that a
+     * machine-drawn edge is STRAIGHT — its hard steps are contiguous and all
+     * in the same direction. So the statistic is the longest unbroken run of
+     * same-signed hard steps along the line, as a fraction of its length.
+     * A quarter-width band scores 25%; cloud edges, coastlines and city lights
+     * score nearly nothing, because they bend.
+     */
     const STEP = 2
+    const HARD = 0.12 // a step this big is not a gradient
+    const longestRun = (n: number, at: (i: number) => number): number => {
+      let best = 0
+      let cur = 0
+      let sign = 0
+      for (let i = 0; i < n; i += STEP) {
+        const d = at(i)
+        const s = d > HARD ? 1 : d < -HARD ? -1 : 0
+        if (s && s === sign) cur++
+        else {
+          cur = s ? 1 : 0
+          sign = s
+        }
+        if (cur > best) best = cur
+      }
+      return (best * STEP) / n
+    }
     const rows = new Float64Array(H)
-    for (let y = 1; y < H; y++) {
-      let s = 0
-      let n = 0
-      for (let x = 0; x < W; x += STEP) {
-        s += Math.abs(v(x, y) - v(x, y - 1))
-        n++
-      }
-      rows[y] = s / Math.max(1, n)
-    }
+    for (let y = 1; y < H; y++) rows[y] = longestRun(W, (x) => v(x, y) - v(x, y - 1))
     const cols = new Float64Array(W)
-    for (let x = 1; x < W; x++) {
-      let s = 0
-      let n = 0
-      for (let y = 0; y < H; y += STEP) {
-        s += Math.abs(v(x, y) - v(x - 1, y))
-        n++
-      }
-      cols[x] = s / Math.max(1, n)
-    }
+    for (let x = 1; x < W; x++) cols[x] = longestRun(H, (y) => v(x, y) - v(x - 1, y))
     const med = (a: Float64Array): number => {
-      const b = Array.from(a).filter((z) => z > 0).sort((p, q) => p - q)
+      const b = Array.from(a).sort((p, q) => p - q)
       return b.length ? b[b.length >> 1] : 0
     }
     const rowMed = med(rows)
@@ -2431,13 +2451,16 @@ export class Globe {
       medv: number,
       toDeg: (i: number) => number
     ): string[] => {
-      const cut = Math.max(medv * 6, 0.02)
+      // At least a thirtieth of the line unbroken, and well clear of what this
+      // picture does normally. The floor is what makes it work on a busy map;
+      // the multiple is what makes it work on a mostly empty one.
+      const cut = Math.max(medv * 4, 0.03)
       const hits: { i: number; z: number }[] = []
       for (let i = 1; i < a.length; i++) if (a[i] > cut) hits.push({ i, z: a[i] })
       hits.sort((p, q) => q.z - p.z)
       return hits
-        .slice(0, 5)
-        .map((h) => `${toDeg(h.i).toFixed(1)}deg(${(h.z / Math.max(medv, 1e-6)).toFixed(0)}x)`)
+        .slice(0, 6)
+        .map((h) => `${toDeg(h.i).toFixed(1)}deg(${(h.z * 100).toFixed(0)}%)`)
     }
     const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
     const lon = pick(cols, colMed, (x) => -180 + (x / W) * 360)
