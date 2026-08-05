@@ -655,12 +655,13 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     layer: string,
     bbox: [number, number, number, number],
     w: number,
-    h: number
+    h: number,
+    endpoint = WEATHER_GIBS_URL
   ): Promise<string | null> => {
     // WMS 1.3.0 with CRS:84-style axis order for EPSG:4326 is lat,lon.
     const [west, south, east, north] = bbox
     const url =
-      `${WEATHER_GIBS_URL}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
+      `${endpoint}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
       `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326` +
       `&BBOX=${south},${west},${north},${east}` +
       `&WIDTH=${w}&HEIGHT=${h}&FORMAT=image%2Fpng&TRANSPARENT=TRUE`
@@ -698,15 +699,16 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     if (stopped) return null
     let filled = false
     for (const name of slot.names) {
-      const url = await get(name, [slot.lon - HALF, -HALF, slot.lon + HALF, HALF], W, H)
+      const url = await get(name, [slot.lon - HALF, -HALF, slot.lon + HALF, HALF], W, H, slot.url)
       if (!url) continue
       place(url, slot.lon)
       filled = true
       break // one picture per slot; the rest of its names are spares
     }
     // Configured names exhausted — ask the catalogue what this sensor is really
-    // called rather than leaving a hole in the globe.
-    if (!filled && !stopped) {
+    // called rather than leaving a hole in the globe. Only for slots on the
+    // default endpoint: the catalogue we can read is that one's.
+    if (!filled && !stopped && !slot.url) {
       const found = await findGibsLayer(slot.names)
       if (found) {
         opsLog(`[weather] cloud: ${slot.lon}° is published as "${found}" — using that`)

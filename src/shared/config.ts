@@ -216,38 +216,65 @@ export const WEATHER_CLOUD_SOURCE = readEnv('WEATHER_CLOUD_SOURCE') ?? 'gibs'
 export const WEATHER_GIBS_URL =
   readEnv('WEATHER_GIBS_URL') ?? 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi'
 /**
- * The geostationary sensors, as `longitude:name|name|name` slots.
+ * EUMETSAT's public WMS. No key, no registration.
+ *
+ * Needed because NASA GIBS does not carry Meteosat. Its catalogue was read in
+ * full on the exhibit machine — 2938 layers — and its only geostationary
+ * infrared is GOES-East, GOES-West and Himawari; everything else that mentions
+ * infrared is a polar-orbiting swath. Those three see from 155W round to about
+ * 5E, which leaves 5E to 61E with no cloud at all: east Africa, the Middle
+ * East and the western Indian Ocean. That is the black gap on the left of the
+ * frame, and no spelling of a NASA layer name was ever going to fill it,
+ * because the pictures are not there. Meteosat is the satellite that looks at
+ * that longitude, and this is where its owner publishes it.
+ */
+export const WEATHER_EUMETSAT_URL =
+  readEnv('WEATHER_EUMETSAT_URL') ?? 'https://view.eumetsat.int/geoserver/wms'
+
+/**
+ * The geostationary sensors, as `longitude:name|name|name` slots, optionally
+ * followed by `@endpoint` when that sensor is not on the default one.
  *
  * One picture per slot, the first name that answers; the renderer fades each
- * one out at its own horizon so neighbours cross-blend. FIVE slots, because
- * four leaves a hole: GOES East and West cover the Americas and the Pacific,
- * Himawari covers Asia, and without the two Meteosats there is nothing at all
- * over Africa and the Indian Ocean — which is the black gap that made the
- * first attempt look broken.
+ * one out at its own horizon so neighbours cross-blend. Five slots, because
+ * four leaves the hole described above.
  *
- * Clean Infrared rather than GeoColor: it sees cloud at night as well as by
- * day, and being greyscale it separates from the ground far more cleanly than
- * a colour composite full of city lights and deserts. GeoColor is listed
- * second in each slot in case a Band 13 name is not the one GIBS uses.
+ * Clean Infrared rather than a colour composite: it sees cloud at night as
+ * well as by day, and being greyscale it separates from the ground far more
+ * cleanly than a picture full of city lights and deserts. The Meteosat slots
+ * list several names because the 0-degree position has been handing over from
+ * Meteosat Second to Third Generation, so both spellings are worth trying.
  *
  * Which names exist is the one thing that cannot be checked from here, so the
  * log names the layer that answered in each slot. Trim this list once the
  * exhibit machine has told us.
  */
+const EUM = `@${WEATHER_EUMETSAT_URL}`
 export const WEATHER_GIBS_SLOTS = (
   readEnv('WEATHER_GIBS_SLOTS') ??
   [
     '-75:GOES-East_ABI_Band13_Clean_Infrared|GOES-East_ABI_GeoColor',
     '-137:GOES-West_ABI_Band13_Clean_Infrared|GOES-West_ABI_GeoColor',
     '140.7:Himawari_AHI_Band13_Clean_Infrared|Himawari_AHI_GeoColor',
-    '0:MSG_Meteosat_11_Band13_Clean_Infrared|Meteosat-11_Band13_Clean_Infrared|MSG_Band13_Clean_Infrared',
-    '45.5:MSG_Meteosat_9_Band13_Clean_Infrared|Meteosat-9_Band13_Clean_Infrared|MSG_IODC_Band13_Clean_Infrared'
+    `0:mtg_fd:ir105|msg_fes:ir108|meteosat:msg_ir108${EUM}`,
+    `45.5:msg_iodc:ir108|meteosat_iodc:ir108${EUM}`
   ].join(',')
 )
   .split(',')
   .map((entry) => {
-    const [lon, names] = entry.split(':')
-    return { lon: Number(lon), names: (names ?? '').split('|').filter(Boolean) }
+    // The endpoint comes off first: a GeoServer layer name contains a colon
+    // (workspace:layer), so the longitude has to be split off at the FIRST
+    // colon and everything after it kept whole.
+    const at = entry.indexOf('@')
+    const url = at >= 0 ? entry.slice(at + 1).trim() : undefined
+    const rest = (at >= 0 ? entry.slice(0, at) : entry).trim()
+    const colon = rest.indexOf(':')
+    const lon = Number(rest.slice(0, colon))
+    const names = rest
+      .slice(colon + 1)
+      .split('|')
+      .filter(Boolean)
+    return { lon, names, url }
   })
   .filter((s) => Number.isFinite(s.lon) && s.names.length)
 
@@ -285,13 +312,13 @@ export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 1024)
  * it. Comma-separated alternatives; the catalogue is also searched for anything
  * that looks like a merged IR product.
  *
- * MERGIR is NOAA/CPC's half-hourly 4km merged infrared, 60S to 60N — the same
- * measurement as the discs, already mosaicked by the people who own the
- * sensors. It exists because five discs was never the right shape of answer:
- * two of the five are not in the GIBS catalogue at all (so Africa and the
- * Indian Ocean had no cloud), and stitching the other three means feathering
- * their edges into each other forever.
+ * `off` by default, because the exhibit machine has now told us: MERGIR — the
+ * merged infrared this was written for — is not in that endpoint's catalogue,
+ * and neither is anything else global. Leaving it on cost a failed request
+ * every poll to prove a fact we already know. Set it to a layer name if a
+ * different endpoint does carry one; the machinery is still here and is still
+ * the better shape of answer when it exists.
  */
-export const WEATHER_GIBS_GLOBAL = readEnv('WEATHER_GIBS_GLOBAL') ?? 'MERGIR'
+export const WEATHER_GIBS_GLOBAL = readEnv('WEATHER_GIBS_GLOBAL') ?? 'off'
 /** Pixel width of the global image; height is a third of it (360deg by 120). */
 export const WEATHER_GIBS_GLOBAL_WIDTH = Number(readEnv('WEATHER_GIBS_GLOBAL_WIDTH') ?? 3072)
