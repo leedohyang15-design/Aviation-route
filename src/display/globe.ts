@@ -2456,24 +2456,45 @@ export class Globe {
       return null
     }
     const { width: W, height: H } = canvas
+    const d = img.data
     const g = new Float64Array(GW * GH)
+    const yOf = (lat: number): number => {
+      if (!mercator) return ((90 - lat) / 180) * H
+      const r = (lat * Math.PI) / 180
+      return (0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)) * H
+    }
     for (let j = 0; j < GH; j++) {
-      const lat = 90 - ((j + 0.5) / GH) * 180
-      let sy: number
-      if (mercator) {
-        if (Math.abs(lat) > 85) continue
-        const r = (lat * Math.PI) / 180
-        sy = (0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)) * H
-      } else {
-        sy = ((90 - lat) / 180) * H
-      }
-      const y = Math.max(0, Math.min(H - 1, Math.round(sy)))
+      const latTop = 90 - (j / GH) * 180
+      const latBot = 90 - ((j + 1) / GH) * 180
+      if (mercator && (latTop > 85 || latBot < -85)) continue
+      /*
+       * Average the cell, do not sample one pixel of it.
+       *
+       * This was nearest-neighbour, and against the rain it was worse than
+       * useless: the rain mosaic is four thousand pixels square and its field
+       * is sparse and spiky, so taking one pixel out of every sixteen-by-
+       * sixteen block missed most of the rain there was. The correlation that
+       * came back — 0.086, peaking at the very edge of the search range — was
+       * not a misalignment, it was a measurement of noise. A box average sees
+       * the whole cell.
+       */
+      const y0 = Math.max(0, Math.min(H - 1, Math.round(yOf(latTop))))
+      const y1 = Math.max(y0 + 1, Math.min(H, Math.round(yOf(latBot))))
+      const ys = Math.max(1, Math.floor((y1 - y0) / 8))
       for (let i = 0; i < GW; i++) {
-        const x = Math.max(0, Math.min(W - 1, Math.round(((i + 0.5) / GW) * W)))
-        const o = (y * W + x) * 4
-        // Brightness times coverage: for the cloud that is how much cloud, for
-        // the rain how much rain. Only the shape matters to a correlation.
-        g[j * GW + i] = (Math.max(img.data[o], img.data[o + 2]) * img.data[o + 3]) / 65025
+        const x0 = Math.round((i / GW) * W)
+        const x1 = Math.max(x0 + 1, Math.round(((i + 1) / GW) * W))
+        const xs = Math.max(1, Math.floor((x1 - x0) / 8))
+        let sum = 0
+        let n = 0
+        for (let y = y0; y < y1; y += ys) {
+          for (let x = x0; x < x1; x += xs) {
+            const o = (y * W + x) * 4
+            sum += (Math.max(d[o], d[o + 2]) * d[o + 3]) / 65025
+            n++
+          }
+        }
+        g[j * GW + i] = n ? sum / n : 0
       }
     }
     return g
@@ -2534,11 +2555,29 @@ export class Globe {
     const zero = score(0, 0)
     const dLon = (best.x * 360) / GW
     const dLat = (best.y * 180) / GH
+    /*
+     * Say what the number supports, and no more.
+     *
+     * The first reading of this called a peak of 0.086 sitting on the very
+     * edge of the search range an OFFSET. It was neither: a correlation that
+     * low is noise, and a maximum at the boundary means no peak was found
+     * inside the range at all — the search just returned its largest edge
+     * value. Reporting that as a misalignment would have sent the next hour
+     * hunting an eleven-degree shift that does not exist.
+     */
+    const edge = Math.abs(best.x) === RANGE || Math.abs(best.y) === RANGE
+    const verdict =
+      best.s < 0.15
+        ? 'WEAK - the two fields barely correlate at any shift; this cannot judge alignment'
+        : edge
+          ? 'INCONCLUSIVE - the best fit is at the edge of the search, so any real shift is larger'
+          : best.x === 0 && best.y === 0
+            ? 'ALIGNED'
+            : 'OFFSET - the two are not in the same place'
     this.onNote(
       `[weather] alignment: rain vs cloud best fit at lon ${dLon >= 0 ? '+' : ''}${dLon.toFixed(1)} ` +
         `lat ${dLat >= 0 ? '+' : ''}${(-dLat).toFixed(1)} deg (r=${best.s.toFixed(3)}), ` +
-        `r=${zero.toFixed(3)} unshifted -> ` +
-        `${best.x === 0 && best.y === 0 ? 'ALIGNED' : 'OFFSET - the two are not in the same place'}`
+        `r=${zero.toFixed(3)} unshifted -> ${verdict}`
     )
   }
 
