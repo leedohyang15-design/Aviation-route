@@ -401,12 +401,24 @@ async function fetchMaptilerLayer(
    */
   const now = Date.now()
   const stamps = keys.map((k) => Date.parse(k.timestamp))
+  /*
+   * The newest step that has already HAPPENED, not merely the nearest one.
+   *
+   * Nearest could be half an hour into the future, and the cloud beside it is
+   * a photograph taken minutes ago. A forecast and an observation of different
+   * moments disagree in exactly the way that was reported: rain sitting where
+   * the sky is empty, and a storm on the picture with nothing falling out of
+   * it. Taking the last step at or before now puts the two layers on the same
+   * side of the present, which is as close as a model and a camera get.
+   */
   let start = 0
-  for (let i = 1; i < keys.length; i++) {
-    const a = Math.abs((stamps[i] || 0) - now)
-    const b = Math.abs((stamps[start] || 0) - now)
-    if (Number.isFinite(stamps[i]) && a < b) start = i
+  let bestPast = -1
+  for (let i = 0; i < keys.length; i++) {
+    if (!Number.isFinite(stamps[i])) continue
+    if (stamps[i] <= now) bestPast = i
+    if (Math.abs(stamps[i] - now) < Math.abs((stamps[start] || 0) - now)) start = i
   }
+  if (bestPast >= 0) start = bestPast
   // Keep the whole animation inside the series even near its end.
   start = Math.max(0, Math.min(start, keys.length - WEATHER_FRAME_COUNT))
   const wanted = keys.slice(start, start + WEATHER_FRAME_COUNT)
