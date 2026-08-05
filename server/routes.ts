@@ -469,22 +469,54 @@ async function tick(): Promise<void> {
 }
 
 /**
- * Start the background resolver. Reschedules itself after each lookup rather
- * than running on a fixed interval, so the adaptive pace takes effect
- * immediately. Idles cheaply when the queue is empty.
+ * How many lookups may be in flight at once.
+ *
+ * The loop used to wait for each answer before starting the next, so the
+ * advertised five a second was only ever reached when every lookup was fast.
+ * One stalled connection stopped the whole queue for its entire timeout, and a
+ * few percent of stalls is enough to halve the real rate: at five percent
+ * taking six seconds, the average is half a second per lookup, so two a second
+ * rather than five. That is most of "the ones without routes take forever".
+ *
+ * This does NOT ask the API for more. The pacing below still starts one lookup
+ * per interval, so requests per second are unchanged and the adaptive backoff
+ * still governs them; all this does is stop a slow answer from holding up the
+ * fast ones queued behind it.
+ *
+ * Six, from simulating four thousand lookups at the current pace with three
+ * percent of answers stalling six seconds. Serial takes 47 minutes; two in
+ * flight 36.5, four 27.8, six 24.3, eight 22.7, twelve 21.0. The pacing alone
+ * would allow 13.3, so six recovers most of what the stalls cost and the rest
+ * is not worth the sockets.
+ */
+const MAX_IN_FLIGHT = 6
+let inFlight = 0
+
+/**
+ * Start the background resolver.
+ *
+ * The pace is a START rate: one lookup begins every `interval`, whether or not
+ * the previous one has answered, up to MAX_IN_FLIGHT at a time. Rescheduling
+ * happens on the interval rather than on completion, so the adaptive pace takes
+ * effect immediately and a stall costs one slot rather than the whole queue.
+ * Idles cheaply when there is nothing waiting.
  */
 export function startRouteResolver(): void {
   if (!stopped) return
   stopped = false
-  const loop = async (): Promise<void> => {
+  const loop = (): void => {
     if (stopped) return
-    await tick()
-    if (stopped) return
-    timer = setTimeout(() => void loop(), interval)
+    if (inFlight < MAX_IN_FLIGHT && queue.length && Date.now() >= pausedUntil) {
+      inFlight++
+      void tick().finally(() => {
+        inFlight--
+      })
+    }
+    timer = setTimeout(loop, interval)
     // Don't hold the process open just for lookups.
     ;(timer as unknown as { unref?: () => void }).unref?.()
   }
-  void loop()
+  loop()
 }
 
 export function stopRouteResolver(): void {

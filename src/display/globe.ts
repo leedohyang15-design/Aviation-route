@@ -905,6 +905,76 @@ export class Globe {
     tex.needsUpdate = true
   }
 
+  /**
+   * Measure the map image where it joins itself.
+   *
+   * A faint vertical line sits on the globe in every mode, so it belongs to the
+   * background map rather than to anything drawn over it. The map wraps in
+   * longitude, and there are three quite different reasons a wrap can show, each
+   * needing a different fix — which is why this measures rather than guesses.
+   *
+   * The image is sampled at three places: the two columns that meet when it
+   * wraps, and a pair of neighbours in the middle for scale. Only twelve columns
+   * are ever drawn, at full resolution, so an eight-thousand-pixel-wide source
+   * costs a hundred kilobytes and no resampling that could hide the very
+   * difference being looked for.
+   *
+   *   join much larger than the interior  the picture does not actually wrap;
+   *                                       its two ends are different places
+   *   join near zero                      the meridian is in the file TWICE, so
+   *                                       wrapping repeats a column
+   *   join about the interior             the file is fine and the line is ours
+   */
+  private measureWrap(tex: THREE.Texture, label: string): void {
+    const img = tex.image as HTMLImageElement | undefined
+    if (!this.onNote || !img?.width) return
+    try {
+      const W = img.width
+      const H = Math.min(1024, img.height)
+      const c = document.createElement('canvas')
+      c.width = 12
+      c.height = H
+      const ctx = c.getContext('2d')!
+      // Left edge, right edge, and a middle pair — each at native resolution.
+      ctx.drawImage(img, 0, 0, 4, img.height, 0, 0, 4, H)
+      ctx.drawImage(img, W - 4, 0, 4, img.height, 4, 0, 4, H)
+      ctx.drawImage(img, W >> 1, 0, 4, img.height, 8, 0, 4, H)
+      const d = ctx.getImageData(0, 0, 12, H).data
+      const at = (x: number, y: number): number[] => {
+        const o = (y * 12 + x) * 4
+        return [d[o], d[o + 1], d[o + 2]]
+      }
+      const diff = (ax: number, bx: number): number => {
+        let sum = 0
+        for (let y = 0; y < H; y++) {
+          const p = at(ax, y)
+          const q = at(bx, y)
+          sum += (Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2])) / 3
+        }
+        return sum / H
+      }
+      const join = diff(7, 0) // last column against first — what wrapping joins
+      const edge = diff(6, 7) // the last two columns, as a local baseline
+      const mid = diff(8, 9) // an untouched interior pair
+      const pot = (n: number): boolean => (n & (n - 1)) === 0
+      this.onNote(
+        `[earth] ${label} ${W}x${img.height} ` +
+          `${img.width === img.height * 2 ? '2:1' : 'NOT 2:1'} ` +
+          `${pot(W) && pot(img.height) ? 'pow2' : 'not-pow2'}; ` +
+          `wrap join ${join.toFixed(1)} vs neighbours ${edge.toFixed(1)}/${mid.toFixed(1)} ` +
+          `-> ${
+            join > Math.max(edge, mid) * 3 + 2
+              ? 'SEAM IN THE FILE (its two ends are not the same meridian)'
+              : join < Math.min(edge, mid) * 0.3
+                ? 'DUPLICATED COLUMN (the meridian is in the file twice)'
+                : 'file wraps cleanly - the line is in the rendering'
+          }`
+      )
+    } catch {
+      /* a cross-origin image would taint the canvas; a diagnostic is not worth a crash */
+    }
+  }
+
   /** Try to swap in a real photographic earth if the asset is present. */
   /** Try each url in turn (first that loads wins); call onFail if none load. */
   private loadFirstTexture(
@@ -940,6 +1010,7 @@ export class Globe {
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
         console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
+        this.measureWrap(tex, 'day')
       },
       () => {
         console.warn(
@@ -957,6 +1028,7 @@ export class Globe {
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
         console.log(`[earth] loaded night texture`)
+        this.measureWrap(tex, 'night')
       },
       () => {
         /* no night texture — night side just dims globally */
