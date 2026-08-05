@@ -39,7 +39,7 @@ export type ExhibitMode = 'flight' | 'satellite' | 'weather'
 /** The two weather products, each its own chip on the control screen. Both are
  * global: `cloud` is total cloud cover in percent, `rain` is radar
  * reflectivity. */
-export type WeatherLayer = 'cloud' | 'rain'
+export type WeatherLayer = 'cloud' | 'rain' | 'wind'
 
 /**
  * How to turn a data tile's pixel back into a real-world number.

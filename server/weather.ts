@@ -21,6 +21,7 @@ import {
   MAPTILER_VARIABLES,
   MAPTILER_WEATHER_INDEX,
   WEATHER_FRAME_COUNT,
+  WEATHER_WIND_FRAMES,
   WEATHER_MAX_SERIES_MB,
   WEATHER_POLL_MS,
   WEATHER_TIMEOUT_MS,
@@ -53,7 +54,10 @@ const CACHE_PATH = dataPath(CACHE_NAME)
 // 5: frames carry a `source` and OpenWeatherMap frames are painted rather than
 // packed. A cached MapTiler frame replayed under the new badge would credit the
 // wrong service for the picture on screen.
-const CACHE_VERSION = 5
+// 6: the OpenWeatherMap era wrote frames under 5 with its own attribution on
+// them, and a cached frame carries its badge with it — so the tab kept crediting
+// a service that is no longer fetched. Bumping the version drops those.
+const CACHE_VERSION = 6
 
 interface Persisted {
   version: number
@@ -61,7 +65,18 @@ interface Persisted {
   frames: WeatherFrame[]
 }
 
-const LAYERS: WeatherLayer[] = ['cloud', 'rain']
+const LAYERS: WeatherLayer[] = ['cloud', 'rain', 'wind']
+
+/**
+ * Who to credit, on the frame itself.
+ *
+ * Both services are named because both are used: the rain and the wind are
+ * MapTiler's numbers, the cloud is NASA's and EUMETSAT's photographs. It rides
+ * on the frame rather than in the state so the badge can never credit a source
+ * the picture on screen did not come from — which is exactly what happened when
+ * cached frames outlived the service that made them.
+ */
+const ATTRIBUTION = '© MapTiler · NASA GIBS · EUMETSAT'
 
 /**
  * The key, read when it is needed rather than when this file was loaded.
@@ -258,7 +273,7 @@ async function fetchMtKeyframe(
     layer,
     projection: 'mercator',
     blend: 'data',
-    source: '© MapTiler · GFS 실황',
+    source: ATTRIBUTION,
     decode,
     z: WEATHER_ZOOM,
     time,
@@ -367,7 +382,10 @@ async function fetchMaptilerLayer(
    * which is the one kind of moment a camera can also be asked about.
    */
   const end = Math.max(0, Math.min(start, keys.length - 1))
-  const from = Math.max(0, end - WEATHER_FRAME_COUNT + 1)
+  // Wind takes one keyframe: the motion comes from particles travelling
+  // through the field, not from the field changing.
+  const want = layer === 'wind' ? Math.max(1, WEATHER_WIND_FRAMES) : WEATHER_FRAME_COUNT
+  const from = Math.max(0, end - want + 1)
   const wanted = keys.slice(from, end + 1)
   start = from
   const off = (t: number): string => {
@@ -868,6 +886,7 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
   )
   const nowFrame: WeatherFrame = {
     layer: 'cloud',
+    source: ATTRIBUTION,
     projection: 'equirect',
     blend: 'cloud',
     z: 0,

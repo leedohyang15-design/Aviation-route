@@ -396,7 +396,7 @@ export class Globe {
   /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
   private screenScanAt = 0
   /** The moments each layer is currently showing, for the clock report. */
-  private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [] }
+  private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -433,7 +433,8 @@ export class Globe {
     { textures: THREE.Texture[]; token: number; byTime?: Map<number, THREE.Texture> }
   > = {
     cloud: { textures: [], token: 0 },
-    rain: { textures: [], token: 0 }
+    rain: { textures: [], token: 0 },
+    wind: { textures: [], token: 0 }
   }
 
   constructor(

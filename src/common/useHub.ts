@@ -35,7 +35,7 @@ export interface HubView {
   satellites: Satellite[]
   satDetail: SatelliteDetail | null
   /** The newest animation series for each weather layer, in loop order. */
-  weather: { cloud: WeatherFrame[]; rain: WeatherFrame[] }
+  weather: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
   weatherAgeMin: number | null
   weatherSource: string | null
@@ -83,9 +83,10 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [detail, setDetail] = useState<FlightDetail | null>(null)
   const [satellites, setSatellites] = useState<Satellite[]>([])
   const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
-  const [weather, setWeather] = useState<{ cloud: WeatherFrame[]; rain: WeatherFrame[] }>({
+  const [weather, setWeather] = useState<{ cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }>({
     cloud: [],
-    rain: []
+    rain: [],
+    wind: []
   })
   // Recomputed on a slow tick rather than per render: the caption counts whole
   // minutes, so anything faster is work nobody can see.

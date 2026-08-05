@@ -158,7 +158,7 @@ export const MAPTILER_TILE_BASE =
  * and NO cloud variable of any kind. So cloud falls through this list and then
  * out to GIBS, and the log says which happened.
  */
-export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
+export const MAPTILER_VARIABLES: Record<'cloud' | 'rain' | 'wind', string> = {
   cloud:
     readEnv('MAPTILER_CLOUD_VARIABLE') ??
     'cloud_cover-total:gfs|cloud_cover-high:gfs|cloud-cover:gfs',
@@ -169,7 +169,18 @@ export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
   // instead, which is broader, smoother and the thing people mean by "where is
   // it raining". The ramp already reads the unit off the index, so switching
   // costs nothing.
-  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'precipitation-1h:gfs|radar-composite:gfs'
+  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'precipitation-1h:gfs|radar-composite:gfs',
+  /*
+   * Wind, which the index has been offering all along.
+   *
+   * Every poll listed it — temperature, pressure, precipitation, WIND, radar —
+   * while the tab used two of the five. It is the one field that is worth
+   * animating on its own: cloud and rain are pictures of a moment and stepping
+   * them faster only makes them flicker, but wind is a direction at every
+   * point, so particles can be let loose in it and the map moves continuously
+   * without pretending to new data.
+   */
+  wind: readEnv('MAPTILER_WIND_VARIABLE') ?? 'wind-10m:gfs'
 }
 /**
  * How many keyframes to bring back, newest first.
@@ -180,8 +191,26 @@ export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
  * this is the one knob that trades bandwidth for motion. 1 = a still picture.
  */
 export const WEATHER_FRAME_COUNT = Number(readEnv('WEATHER_FRAME_COUNT') ?? 4)
+
+/**
+ * How many wind keyframes. One, on purpose.
+ *
+ * The motion in a wind layer comes from particles travelling through the field,
+ * not from the field changing — Windy animates a single analysis for hours the
+ * same way. A second keyframe would double the bytes to buy a change nobody can
+ * see behind moving particles.
+ */
+export const WEATHER_WIND_FRAMES = Number(readEnv('WEATHER_WIND_FRAMES') ?? 1)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
-export const WEATHER_FRAME_HOLD_MS = Number(readEnv('WEATHER_FRAME_HOLD_MS') ?? 2200)
+/**
+ * Wall clock per keyframe. Slower now that the wind carries the motion.
+ *
+ * At 2.2s the cloud and rain were restless — a whole three-hour loop in
+ * thirteen seconds, which reads as flicker rather than weather moving. The
+ * point of a step is to be NOTICED, and between steps there is now something
+ * genuinely continuous to watch.
+ */
+export const WEATHER_FRAME_HOLD_MS = Number(readEnv('WEATHER_FRAME_HOLD_MS') ?? 6000)
 /**
  * Ceiling on one layer's whole series, in megabytes.
  *
