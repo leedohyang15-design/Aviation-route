@@ -2511,14 +2511,43 @@ export class Globe {
     const packed = 256 ** order.length - 1
     const px = img.data
     const vals: number[] = []
+    /*
+     * Where the heaviest rain is, not just how much there is.
+     *
+     * "The typhoon has no rain on it" and "the field peaks at 39mm" cannot
+     * both be judged from a distribution — one is about a place. So the top
+     * few cells are kept with their positions and reported as coordinates. If
+     * they land on the storm and the screen is still empty there, the fault is
+     * in the drawing; if they land somewhere else, it is in the data or the
+     * moment chosen. Either way it stops being a matter of opinion.
+     */
+    const W = canvas.width
+    const H = canvas.height
+    const top: { v: number; x: number; y: number }[] = []
     // Every fourth pixel each way. The shape of a distribution does not need
     // four million reads, and this runs on the frame that swaps the texture in.
-    for (let y = 0; y < canvas.height; y += 4) {
-      for (let x = 0; x < canvas.width; x += 4) {
-        const p = (y * canvas.width + x) * 4
+    for (let y = 0; y < H; y += 4) {
+      for (let x = 0; x < W; x += 4) {
+        const p = (y * W + x) * 4
         if (px[p + 3] < 8) continue // alpha 0 is "no data", not "no rain"
         const raw = (px[p] * wt.r + px[p + 1] * wt.g + px[p + 2] * wt.b) / packed
-        vals.push(decode.min + raw * (decode.max - decode.min))
+        const val = decode.min + raw * (decode.max - decode.min)
+        vals.push(val)
+        if (top.length < 5 || val > top[top.length - 1].v) {
+          top.push({ v: val, x, y })
+          top.sort((a, b) => b.v - a.v)
+          // Keep the peaks apart, or all five land inside one eyewall and say
+          // nothing about whether the rest of the world is covered.
+          for (let i = 1; i < top.length; i++) {
+            for (let j = 0; j < i; j++) {
+              if (Math.abs(top[i].x - top[j].x) < W / 40 && Math.abs(top[i].y - top[j].y) < H / 40) {
+                top.splice(i--, 1)
+                break
+              }
+            }
+          }
+          top.length = Math.min(top.length, 5)
+        }
       }
     }
     if (vals.length < 1000) return
@@ -2530,12 +2559,28 @@ export class Globe {
     const p999 = at(0.999)
     const max = vals[vals.length - 1]
     const unit = decode.unit ?? '?'
+    /*
+     * Pixel to coordinate. The rain mosaic is Web Mercator, so the row has to
+     * be un-projected — reading it as a plain latitude would put a storm in
+     * the wrong hemisphere's worth of error at high latitude, which is exactly
+     * the kind of mistake that would send the next hour chasing nothing.
+     */
+    const where = (x: number, y: number): string => {
+      const lon = -180 + ((x + 0.5) / W) * 360
+      const n = Math.PI * (1 - (2 * (y + 0.5)) / H)
+      const lat =
+        this.bgUniforms.uRainMerc.value > 0.5
+          ? (Math.atan(Math.sinh(n)) * 180) / Math.PI
+          : 90 - ((y + 0.5) / H) * 180
+      return `${lat.toFixed(1)},${lon.toFixed(1)}`
+    }
     const a = rainAnchors(decode)
     const fmt = (v: number): string => (Math.abs(v) >= 0.01 ? v.toFixed(2) : v.toExponential(1))
     let msg =
       `[weather] rain: ${vals.length} samples p50 ${fmt(p50)} p90 ${fmt(p90)} ` +
       `p99 ${fmt(p99)} p99.9 ${fmt(p999)} max ${fmt(max)} ${unit}; ` +
-      `ramp ${fmt(a.x)}..${fmt(a.y)} ${unit}`
+      `ramp ${fmt(a.x)}..${fmt(a.y)} ${unit}; ` +
+      `peaks ${top.map((t) => `${fmt(t.v)}@${where(t.x, t.y)}`).join(' ')}`
     /*
      * Refit only on a clear mismatch, in either direction: a world whose
      * heaviest tenth of a percent never reaches a tenth of the ramp's top, or
