@@ -17,7 +17,7 @@ import {
   nearestRouteIndex
 } from '../src/shared/projection'
 import { flightCategory } from '../src/common/flightClass'
-import { cachedRoute, cacheRoute, lookupRoute, queueRoute } from './routes'
+import { cachedRoute, cacheRoute, lookupRoute, queueRoute, type RoutePorts } from './routes'
 import { fetchWithTimeout } from './http'
 import { airlineFromCallsign } from '../src/common/airlines'
 import { opsLog } from './log'
@@ -259,6 +259,15 @@ const HEXDB_COOLDOWN_MS = 10 * 60_000
 const HEXDB_FAILURES_BEFORE_COOLDOWN = 3
 
 /** icao24 → type, or undefined when hexdb has no entry (also worth remembering). */
+/**
+ * How long a selection may wait on a route before the card goes out without it.
+ *
+ * Short on purpose. A cached answer is instant, a database that knows the
+ * callsign answers in a fraction of a second, and anything past that is a
+ * lookup that was going to be slow however long it was given.
+ */
+const ROUTE_ON_DEMAND_MS = 1200
+
 const typeCache = new Map<string, string | undefined>()
 const typeInFlight = new Set<string>()
 let hexdbFailures = 0
@@ -331,17 +340,54 @@ async function buildDetail(
   let how = ports === undefined ? '' : 'cache'
   let rateLimited = false
   if (ports === undefined && callsign) {
-    try {
-      ports = await lookupRoute(callsign)
-      cacheRoute(callsign, ports) // the resolver benefits from this answer too
+    /*
+     * Give the lookup a moment, then answer anyway.
+     *
+     * The card used to wait for a definite answer, and a definite answer can
+     * take six or seven seconds — that is both databases going quiet on a
+     * callsign neither has heard of, each spending its full timeout. Seven
+     * seconds of blank card is the visitor's whole interaction with that
+     * aeroplane, and it buys nothing: everything else on the card is already
+     * known, and the route is the one field that can arrive late.
+     *
+     * So the lookup keeps running in the background, and whatever it finds is
+     * cached and pushed out through the same path the aircraft type already
+     * uses to fill itself in afterwards. What is being traded away is the card
+     * appearing complete on the first frame — for the aircraft this happens
+     * to, it never was.
+     */
+    const pending = lookupRoute(callsign).then(
+      (r) => {
+        cacheRoute(callsign, r) // the resolver benefits from this answer too
+        return r
+      },
+      (err: unknown) => {
+        // Rate-limited or unreachable. Leave it UNKNOWN rather than caching a
+        // negative — and hand it to the resolver, which paces itself and backs off.
+        queueRoute(callsign)
+        throw err
+      }
+    )
+    /*
+     * `undefined` for both "not yet" and "it failed", because the card treats
+     * them the same: the route is UNKNOWN, which is not the same as confirmed
+     * to have none, and either way the answer may still turn up.
+     */
+    const raced = await Promise.race<RoutePorts | null | undefined>([
+      pending.catch(() => undefined),
+      new Promise((r) => setTimeout(() => r(undefined), ROUTE_ON_DEMAND_MS))
+    ])
+    if (raced === undefined) {
+      how = 'looking'
+      rateLimited = true // treated the same way: unknown, not "no route"
+      // Re-send the card when it lands, so the route fills itself in.
+      void pending.then(
+        () => onEnriched?.(icao24),
+        () => {}
+      )
+    } else {
+      ports = raced
       how = 'adsbdb'
-    } catch (err) {
-      how = `adsbdb failed: ${(err as Error).message}`
-      // Rate-limited or unreachable. Leave it UNKNOWN rather than caching a
-      // negative — and hand it to the resolver, which paces itself and backs off.
-      ports = undefined
-      rateLimited = true
-      queueRoute(callsign)
     }
   }
 

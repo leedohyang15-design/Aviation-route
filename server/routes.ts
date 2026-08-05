@@ -100,6 +100,9 @@ export function cacheRoute(callsign: string, ports: RoutePorts | null): void {
   if (!callsign) return
   cache.set(norm(callsign), { ports, ts: Date.now() })
   dirty = true
+  // Whoever was waiting on this callsign can now be told. Cheap enough to fire
+  // on every answer; the listener decides whether it is looking at that one.
+  onResolved?.(norm(callsign))
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +195,21 @@ export async function lookupRoute(callsign: string): Promise<RoutePorts | null> 
    */
   if (primaryError) throw primaryError
   return null
+}
+
+/**
+ * Told when a callsign's route finally lands, whoever found it.
+ *
+ * The on-demand path stops waiting after a moment and lets the card go out
+ * without a route, which only works if something says so when the answer turns
+ * up. It does that itself for its own lookup — but not when that lookup fails
+ * and the callsign is handed to the background resolver instead, which is
+ * exactly the rate-limited case. This closes that gap: whatever resolves it,
+ * the card hears about it.
+ */
+let onResolved: ((callsign: string) => void) | null = null
+export function onRouteResolved(cb: (callsign: string) => void): void {
+  onResolved = cb
 }
 
 /** How many routes the backup has supplied, for the log. */

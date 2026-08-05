@@ -24,6 +24,7 @@ import { writeFile } from 'node:fs/promises'
 import { dataPath } from './datadir'
 import {
   hasRoute,
+  onRouteResolved,
   prioritiseRoutes,
   resolveRoutes,
   loadRouteCache,
@@ -352,6 +353,20 @@ export function startHub(port = HUB_PORT, feed: SwitchableFeed = selectFeed()): 
   // so the TYPE tile fills itself in.
   onDetailEnriched((icao24) => {
     if (state.selected === icao24) void sendDetail(null)
+  })
+
+  /*
+   * A route landing late is the same story as the type landing late.
+   *
+   * The selection no longer waits several seconds for a definite answer, so the
+   * card can go out saying nothing about the route. When one turns up — from
+   * the on-demand lookup, or from the background resolver after the on-demand
+   * one was rate-limited — the card is sent again and fills itself in.
+   */
+  onRouteResolved((callsign) => {
+    if (!state.selected) return
+    const sel = aircraft.find((a) => a.icao24 === state.selected)
+    if (sel?.callsign?.trim().toUpperCase() === callsign) void sendDetail(null)
   })
 
   const onWeather = (frame: WeatherFrame) => {
