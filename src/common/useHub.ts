@@ -38,6 +38,7 @@ export interface HubView {
   weather: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
   weatherAgeMin: number | null
+  weatherAt: number | null
   weatherSource: string | null
 }
 
@@ -166,6 +167,19 @@ export function useHub(role: 'control' | 'display'): HubView {
      * can never credit a source the picture did not come from. */
     weatherSource:
       [...weather.cloud, ...weather.rain].sort((a, b) => b.time - a.time)[0]?.source ?? null,
+    /**
+     * The moment the weather on screen describes, as a clock time.
+     *
+     * "59분 전" reads as a stale exhibit, and it invites the reasonable but
+     * wrong conclusion that polling more often would fix it. It would not: the
+     * model publishes on the hour, so asking every five minutes returns the
+     * same hourly step. What the number actually means is "this is the 4pm
+     * analysis", and saying THAT is both honest and unremarkable.
+     */
+    weatherAt: (() => {
+      const newest = [...weather.cloud, ...weather.rain].reduce((n, f) => Math.max(n, f?.time ?? 0), 0)
+      return newest || null
+    })(),
     weatherAgeMin: (() => {
       const newest = [...weather.cloud, ...weather.rain].reduce(
         (n, f) => Math.max(n, f?.time ?? 0),

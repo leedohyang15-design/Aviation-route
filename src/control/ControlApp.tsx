@@ -222,7 +222,7 @@ export function ControlApp(): JSX.Element {
     satellites,
     satDetail,
     weather,
-    weatherAgeMin,
+    weatherAt,
     weatherSource
   } = useHub('control')
   const mode = state.mode
@@ -530,11 +530,11 @@ export function ControlApp(): JSX.Element {
         <div className="count">
           {isWeather ? (
             <>
-              {weatherAgeMin == null ? (
+              {weatherAt == null ? (
                 '날씨 영상을 불러오는 중…'
               ) : (
                 <>
-                  <b>{weatherAgeMin}</b>분 전 지구의 하늘
+                  <b>{new Date(weatherAt as number).toTimeString().slice(0, 5)}</b> 기준 지구의 하늘
                 </>
               )}
             </>
@@ -552,7 +552,7 @@ export function ControlApp(): JSX.Element {
             simulation — for up to a minute or so after launch. That used to be a
             line of small grey text, which is how a whole evaluation session got
             spent on simulated aircraft. Make it a badge nobody can miss. */}
-        <div className={'src ' + (isWeather ? (weatherAgeMin == null ? 'pending' : 'ok') : isSat || live ? 'ok' : 'pending')}>
+        <div className={'src ' + (isWeather ? (weatherAt == null ? 'pending' : 'ok') : isSat || live ? 'ok' : 'pending')}>
           {/* Attribution — the exhibit's only place for it. Both layers now
               come from the one service, which is the point of the change. */}
           {isWeather

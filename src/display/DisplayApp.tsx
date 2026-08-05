@@ -33,7 +33,7 @@ const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
-  const { send, aircraft, state, route, detail, satellites, satDetail, weather, weatherAgeMin } =
+  const { send, aircraft, state, route, detail, satellites, satDetail, weather, weatherAt } =
     useHub('display')
   const mode = state.mode
   const isSat = mode === 'satellite'
@@ -65,8 +65,11 @@ export function DisplayApp(): JSX.Element {
     // how old it is — the one thing that stops a still image reading as a
     // decoration rather than as today's sky.
     if (isWeather) {
-      if (!weatherAgeMin) return { ...NOTHING, title: '지금 지구의 날씨', prefix: '영상을 불러오는 중이에요' }
-      return { ...NOTHING, title: '지금 지구의 날씨', prefix: `${weatherAgeMin}분 전 위성 영상` }
+      if (!weatherAt) return { ...NOTHING, title: '지구의 날씨', prefix: '영상을 불러오는 중이에요' }
+      const t = new Date(weatherAt)
+      const hh = t.getHours()
+      const label = `${hh < 12 ? '오전' : '오후'} ${hh % 12 || 12}시${t.getMinutes() ? ` ${t.getMinutes()}분` : ''}`
+      return { ...NOTHING, title: '지구의 날씨', prefix: `${label} 기준` }
     }
     // Satellites carry no caption at all: the orbit line is the whole story on
     // the dome, and the pass forecast is on the control screen where it can be
@@ -111,7 +114,7 @@ export function DisplayApp(): JSX.Element {
       return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
     return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
-  }, [isSat, isWeather, weatherAgeMin, state.selected, satDetail, sel, d])
+  }, [isSat, isWeather, weatherAt, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return

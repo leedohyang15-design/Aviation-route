@@ -693,7 +693,17 @@ export class Globe {
              * in alpha was left in place under a source that does neither.
              */
             vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            float lifted = clamp(smoothstep(0.06, 0.46, c.r) * uCloudAmt, 0.0, 1.0);
+            /*
+             * A wide ramp, because a narrow one draws blotches.
+             *
+             * 0.06 to 0.46 reached solid white less than halfway up the scale,
+             * so most of the world's cloud sat clipped at the top with a hard
+             * edge where it crossed — flat white islands with ragged coasts
+             * rather than cloud that thins out. Spreading it over nearly the
+             * whole range gives the thin edges somewhere to go, which is what
+             * makes a cloud field read as depth rather than as a stencil.
+             */
+            float lifted = clamp(smoothstep(0.05, 0.78, c.r) * uCloudAmt, 0.0, 1.0);
             float a = c.a * lifted * (uCloudMerc > 0.5 ? inMerc : 1.0);
             // White, with none of the sensor's own hue: these layers carry a
             // temperature palette, and letting it through scattered green and
@@ -756,7 +766,15 @@ export class Globe {
             // The floor applies to rain, not to everywhere: a dry pixel sits at
             // t = 0 and the first factor holds it at nothing. Without it the
             // floor would wash the whole planet pale blue.
-            float a = smoothstep(0.0, 0.02, t) * mix(0.45, 1.0, smoothstep(0.10, 0.55, t)) * d.y
+            /*
+             * Light rain a wash, heavy rain solid — with a gentler floor.
+             *
+             * At 0.45 the faintest drizzle was already almost half-opaque, so
+             * the oceans filled with hard-edged cyan patches. The intensity is
+             * carried by the colour ramp; opacity only needs to make light rain
+             * visible, not assertive.
+             */
+            float a = smoothstep(0.0, 0.05, t) * mix(0.28, 1.0, smoothstep(0.12, 0.62, t)) * d.y
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
@@ -1729,8 +1747,7 @@ export class Globe {
       // uv.x = vUv.x + 0.5, so it crosses a whole number at the middle column.
       this.bgUniforms.uLonOffset.value = -180
       this.renderer.setRenderTarget(rt)
-      if (this.windLines?.visible) this.stepWind()
-    this.renderer.render(this.scene, this.camera)
+      this.renderer.render(this.scene, this.camera)
       const buf = new Uint8Array(W * H * 4)
       this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf)
       this.renderer.setRenderTarget(null)
@@ -3840,6 +3857,10 @@ export class Globe {
 
     this.updateSun()
     this.tickWeather()
+    // Particles advance once per drawn frame. This has to be the REAL frame
+    // loop: it was attached to the off-screen seam test instead, which renders
+    // once and never again, so nothing ever moved off its starting point.
+    if (this.windLines?.visible) this.stepWind()
     this.renderer.render(this.scene, this.camera)
     if (this.screenScanAt && Date.now() >= this.screenScanAt) {
       this.screenScanAt = 0
