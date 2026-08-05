@@ -267,6 +267,8 @@ interface MtIndex {
   }[]
 }
 
+type MtVariable = NonNullable<MtIndex['variables']>[number]
+
 /** One data tile. Same envelope as the imagery tiles — a data: URL, so the
  * packaged app's file:// origin never taints the canvas. */
 async function fetchMtTile(
@@ -341,9 +343,20 @@ async function fetchMaptilerLayer(
 ): Promise<WeatherFrame[] | null> {
   const wantIds = MAPTILER_VARIABLES[layer].split('|').map((s) => s.trim()).filter(Boolean)
   const offered = (index.variables ?? []).map((x) => x.metadata?.weather_variable?.variable_id)
-  const v = index.variables?.find((x) =>
-    wantIds.includes(x.metadata?.weather_variable?.variable_id ?? '')
-  )
+  /*
+   * OUR order of preference, not the index's.
+   *
+   * This was `variables.find(x => wantIds.includes(x.id))`, which walks the
+   * INDEX and stops at the first entry that happens to be on our list — so with
+   * the index ordering precipitation before radar, the second choice won. The
+   * exhibit asked for reflectivity and got millimetres, and the ramp is
+   * calibrated in dBZ, so almost nothing crossed the threshold.
+   */
+  let v: MtVariable | undefined
+  for (const id of wantIds) {
+    v = index.variables?.find((x) => x.metadata?.weather_variable?.variable_id === id)
+    if (v) break
+  }
   if (!v) {
     // Named alternatives, because which variables a key is entitled to is not
     // something that can be checked from here — the exhibit's own key turned
@@ -474,6 +487,75 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
  * Which layers actually exist is the one thing that cannot be checked from
  * here, so each candidate is tried in turn and the log names the winner.
  */
+
+/** Every layer name GIBS advertises, fetched once per run and only if needed. */
+let gibsCatalogue: string[] | null = null
+
+/** Punctuation-insensitive words, minus the ones every IR layer shares. */
+const GENERIC = new Set([
+  'band13', 'band', '13', 'clean', 'infrared', 'ir', 'abi', 'ahi', 'seviri',
+  'geocolor', 'msg', 'v1', 'best'
+])
+function tokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t && !GENERIC.has(t))
+}
+
+/**
+ * Ask GIBS what it actually publishes.
+ *
+ * Two of the five sensors were configured with names that do not exist — every
+ * candidate for both Meteosat slots came back as a service exception, so there
+ * was no cloud at all over Africa or the Indian Ocean. Guessing the spelling
+ * has now failed twice, which is the point at which a program should stop
+ * guessing and read the catalogue. GetCapabilities is large, so this runs at
+ * most once per run and only after a slot has actually failed.
+ */
+async function gibsLayerNames(): Promise<string[]> {
+  if (gibsCatalogue) return gibsCatalogue
+  gibsCatalogue = []
+  try {
+    const url = `${WEATHER_GIBS_URL}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`
+    const res = await fetchWithTimeout(url, Math.max(WEATHER_TIMEOUT_MS, 30_000))
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const xml = await res.text()
+    gibsCatalogue = [...xml.matchAll(/<Name>([^<]+)<\/Name>/g)].map((m) => m[1])
+    opsLog(
+      `[weather] cloud: read the GIBS catalogue — ${gibsCatalogue.length} layers, ` +
+        `${(xml.length / 1e6).toFixed(1)}MB`
+    )
+  } catch (err) {
+    opsLog(`[weather] cloud: could not read the GIBS catalogue: ${(err as Error).message}`)
+  }
+  return gibsCatalogue
+}
+
+/**
+ * A real layer name for a slot whose configured names all failed.
+ *
+ * A candidate's distinctive words — "meteosat" and "11", or "iodc" — have to
+ * ALL appear in the real name, and the real name has to be an infrared one.
+ * That matches the same sensor spelled differently without ever matching its
+ * neighbour: Meteosat-9 does not contain "11".
+ */
+async function findGibsLayer(candidates: string[]): Promise<string | null> {
+  const all = await gibsLayerNames()
+  if (!all.length) return null
+  const infrared = all.filter((n) => /band ?_?13|infrared/i.test(n))
+  for (const cand of candidates) {
+    const need = tokens(cand)
+    if (!need.length) continue
+    const hit = infrared.find((n) => {
+      const have = new Set(n.toLowerCase().split(/[^a-z0-9]+/))
+      return need.every((t) => have.has(t))
+    })
+    if (hit) return hit
+  }
+  return null
+}
+
 async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   /*
    * Each disc is requested over ITS OWN patch of the globe, not the whole one.
@@ -522,21 +604,37 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   }
 
   const got: WeatherFrame['tiles'] = []
+  const place = (url: string, lon: number): void => {
+    got.push({ x: 0, y: 0, url, centerLon: lon, bbox: [lon - HALF, -HALF, lon + HALF, HALF] })
+  }
   for (const slot of WEATHER_GIBS_SLOTS) {
     if (stopped) return null
     let filled = false
     for (const name of slot.names) {
       const url = await get(name, slot.lon)
       if (!url) continue
-      got.push({
-        x: 0,
-        y: 0,
-        url,
-        centerLon: slot.lon,
-        bbox: [slot.lon - HALF, -HALF, slot.lon + HALF, HALF]
-      })
+      place(url, slot.lon)
       filled = true
       break // one picture per slot; the rest of its names are spares
+    }
+    // Configured names exhausted — ask the catalogue what this sensor is really
+    // called rather than leaving a hole in the globe.
+    if (!filled && !stopped) {
+      const found = await findGibsLayer(slot.names)
+      if (found) {
+        opsLog(`[weather] cloud: ${slot.lon}° is published as "${found}" — using that`)
+        const url = await get(found, slot.lon)
+        if (url) {
+          place(url, slot.lon)
+          filled = true
+          // Say it once, plainly, so the name can be pinned in .env and the
+          // catalogue never has to be read again.
+          opsLog(
+            `[weather] cloud: put WEATHER_GIBS_SLOTS in .env with "${slot.lon}:${found}" ` +
+              `to skip the catalogue lookup next time`
+          )
+        }
+      }
     }
     if (!filled) {
       opsLog(`[weather] cloud: nothing at ${slot.lon}° — tried ${slot.names.join(', ')}. Last: ${lastTileError}`)

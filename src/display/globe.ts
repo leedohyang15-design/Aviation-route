@@ -60,6 +60,27 @@ const HOME_LON = 127.5
 const HOME_LAT = 37.5
 /** Where the selected object is on screen, and what the card needs to know to
  * sit next to it without covering anything. */
+/**
+ * Where rain starts to show, and where the ramp saturates — in whatever unit
+ * the service says the variable is in.
+ *
+ * Which variable the rain layer ends up being depends on what the key is
+ * entitled to: reflectivity in dBZ, or an hour's depth in millimetres. The two
+ * scales have nothing in common — 12 dBZ is drizzle you would not bother
+ * drawing and 12mm in an hour is a warning — so the thresholds cannot be
+ * constants. They come from the unit, with a proportional fallback for a unit
+ * nobody here has seen.
+ */
+function rainAnchors(d: WeatherDecode): THREE.Vector2 {
+  const unit = (d.unit ?? '').toLowerCase()
+  if (unit.includes('dbz')) return new THREE.Vector2(12, 70)
+  // mm, mm/h, kg/m² — an hour's rain. 0.3 is "you would notice it", 20 is a
+  // downpour; above that the ramp is already at its last colour.
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.3, 20)
+  const span = d.max - d.min
+  return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
+}
+
 export interface SelectionAnchor {
   x: number
   y: number
@@ -402,6 +423,9 @@ export class Globe {
       uRainChanW: { value: new THREE.Vector3(1, 0, 0) },
       uRainPacked: { value: 255 },
       uRainRange: { value: new THREE.Vector2(-30, 75) },
+      // Where rain starts to show and where it saturates, in the variable's own
+      // unit. Set from the index's declared unit — see applyDecode.
+      uRainScale: { value: new THREE.Vector2(12, 70) },
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -426,6 +450,7 @@ export class Globe {
         uniform float uCloudData; uniform float uRainData;
         uniform vec3 uCloudChanW; uniform float uCloudPacked; uniform vec2 uCloudRange;
         uniform vec3 uRainChanW; uniform float uRainPacked; uniform vec2 uRainRange;
+        uniform vec2 uRainScale; // x = where rain starts to show, y = full intensity
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
 
         // Unpack one data pixel into [real value, coverage]. The channels are
@@ -442,14 +467,19 @@ export class Globe {
           vec2 B = unpack(texture2D(b, uv), w, p, r);
           return mix(A, B, m);
         }
-        // Radar reflectivity, in the colours everyone already reads as rain.
-        vec3 rainRamp(float dbz) {
-          vec3 c = mix(vec3(0.24, 0.55, 0.95), vec3(0.20, 0.85, 0.85), smoothstep(15.0, 25.0, dbz));
-          c = mix(c, vec3(0.30, 0.85, 0.35), smoothstep(25.0, 35.0, dbz));
-          c = mix(c, vec3(0.98, 0.88, 0.25), smoothstep(35.0, 45.0, dbz));
-          c = mix(c, vec3(0.98, 0.52, 0.16), smoothstep(45.0, 52.0, dbz));
-          c = mix(c, vec3(0.92, 0.20, 0.28), smoothstep(52.0, 62.0, dbz));
-          return mix(c, vec3(0.86, 0.36, 0.92), smoothstep(62.0, 70.0, dbz));
+        // Rain, in the colours everyone already reads as rain, over a
+        // NORMALISED intensity rather than a raw number. The layer can arrive
+        // as reflectivity in dBZ or as depth in millimetres depending on what
+        // the key is entitled to, and stops written in dBZ mean nothing in mm:
+        // twelve is drizzle in one unit and a flood in the other. uRainLo and
+        // uRainTop carry the unit's own two anchors and this works in between.
+        vec3 rainRamp(float t) {
+          vec3 c = mix(vec3(0.24, 0.55, 0.95), vec3(0.20, 0.85, 0.85), smoothstep(0.05, 0.22, t));
+          c = mix(c, vec3(0.30, 0.85, 0.35), smoothstep(0.22, 0.40, t));
+          c = mix(c, vec3(0.98, 0.88, 0.25), smoothstep(0.40, 0.57, t));
+          c = mix(c, vec3(0.98, 0.52, 0.16), smoothstep(0.57, 0.69, t));
+          c = mix(c, vec3(0.92, 0.20, 0.28), smoothstep(0.69, 0.86, t));
+          return mix(c, vec3(0.86, 0.36, 0.92), smoothstep(0.86, 1.0, t));
         }
         void main() {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
@@ -558,15 +588,16 @@ export class Globe {
           // Rain goes in last: it is a data overlay, not a photograph, and a
           // storm that vanishes at sunset is a storm nobody can point at.
           if (uHasRain > 0.5 && uRainData > 0.5) {
-            // Reflectivity in dBZ. Under 12 is drizzle the eye cannot pick out
-            // of a cloud deck anyway, and drawing it turned whole oceans a flat
+            // Below uRainScale.x is the drizzle the eye cannot pick out of a
+            // cloud deck anyway, and drawing it turned whole oceans a flat
             // wash; the ramp fades in from there and saturates at a downpour.
             vec2 d = readData(uRain, uRainB, uRainMix,
                               uRainMerc > 0.5 ? mercUV : flatUV,
                               uRainChanW, uRainPacked, uRainRange);
-            float a = smoothstep(12.0, 26.0, d.x) * d.y
+            float t = clamp((d.x - uRainScale.x) / max(uRainScale.y - uRainScale.x, 1e-4), 0.0, 1.0);
+            float a = smoothstep(0.0, 0.20, t) * d.y
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
-            col = mix(col, rainRamp(d.x), a * 0.92);
+            col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
             col = mix(col, r.rgb, r.a * (uRainMerc > 0.5 ? inMerc : 1.0));
@@ -1908,6 +1939,7 @@ export class Globe {
       this.bgUniforms.uRainChanW.value = w
       this.bgUniforms.uRainPacked.value = packed
       this.bgUniforms.uRainRange.value = new THREE.Vector2(d.min, d.max)
+      this.bgUniforms.uRainScale.value = rainAnchors(d)
     }
   }
 
