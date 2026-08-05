@@ -1852,8 +1852,13 @@ export class Globe {
             // more shifted a full turn: a disc over 140.7°E or 137°W runs off
             // the edge, and the half that wrapped would otherwise be lost.
             const [west, south, east, north] = t.bbox
-            const px = (lon: number) => ((lon + 180) / 360) * canvas.width
-            const py = (lat: number) => ((90 - lat) / 180) * canvas.height
+            // Whole pixels. At fractional coordinates the browser resamples the
+            // patch, and the copy drawn a turn to the left lands on a different
+            // sub-pixel phase from the one on the right — so the two disagree
+            // by a fraction of a pixel exactly at 180°, and with the texture
+            // wrapping there, that disagreement is a hairline down the map.
+            const px = (lon: number) => Math.round(((lon + 180) / 360) * canvas.width)
+            const py = (lat: number) => Math.round(((90 - lat) / 180) * canvas.height)
             const w = px(east) - px(west)
             const h = py(south) - py(north)
             for (const shift of [-canvas.width, 0, canvas.width]) {

@@ -279,3 +279,19 @@ export const WEATHER_CLOUD_OPACITY = Number(readEnv('WEATHER_CLOUD_OPACITY') ?? 
  * sharper, for the same bytes on the wire.
  */
 export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 1024)
+
+/**
+ * A single seamless global infrared layer, tried before the discs. `off` skips
+ * it. Comma-separated alternatives; the catalogue is also searched for anything
+ * that looks like a merged IR product.
+ *
+ * MERGIR is NOAA/CPC's half-hourly 4km merged infrared, 60S to 60N — the same
+ * measurement as the discs, already mosaicked by the people who own the
+ * sensors. It exists because five discs was never the right shape of answer:
+ * two of the five are not in the GIBS catalogue at all (so Africa and the
+ * Indian Ocean had no cloud), and stitching the other three means feathering
+ * their edges into each other forever.
+ */
+export const WEATHER_GIBS_GLOBAL = readEnv('WEATHER_GIBS_GLOBAL') ?? 'MERGIR'
+/** Pixel width of the global image; height is a third of it (360deg by 120). */
+export const WEATHER_GIBS_GLOBAL_WIDTH = Number(readEnv('WEATHER_GIBS_GLOBAL_WIDTH') ?? 3072)

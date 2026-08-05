@@ -31,6 +31,8 @@ import {
   WEATHER_GIBS_URL,
   WEATHER_GIBS_SLOTS,
   WEATHER_GIBS_WIDTH,
+  WEATHER_GIBS_GLOBAL,
+  WEATHER_GIBS_GLOBAL_WIDTH,
   WEATHER_RAIN_COLOR
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
@@ -556,6 +558,54 @@ async function findGibsLayer(candidates: string[]): Promise<string | null> {
   return null
 }
 
+/**
+ * One seamless global infrared image, if GIBS publishes one.
+ *
+ * Five geostationary discs was always the second-best answer: two of them turn
+ * out not to exist in the catalogue at all — hence no cloud over Africa or the
+ * Indian Ocean — and the three that do have to be feathered into each other,
+ * which is a class of edge artefact rather than a fixed one. A merged IR
+ * product is the same measurement already mosaicked by the people who own the
+ * sensors: one request, no seams, nothing missing between GOES and Himawari.
+ *
+ * It covers 60S to 60N. Neither do the discs reach the poles, and on an
+ * equirectangular dome frame those rows are the extreme top and bottom edge.
+ */
+async function fetchGibsGlobalCloud(
+  get: (layer: string, bbox: [number, number, number, number], w: number, h: number) => Promise<string | null>
+): Promise<WeatherFrame | null> {
+  const wanted = WEATHER_GIBS_GLOBAL.split(',').map((s) => s.trim()).filter(Boolean)
+  if (!wanted.length || wanted[0] === 'off') return null
+  const names = [...wanted]
+  // Whatever the catalogue calls a merged/global IR product, in case the
+  // configured spelling is not the one this endpoint uses.
+  for (const n of await gibsLayerNames()) {
+    if (/merg/i.test(n) && /ir|infrared/i.test(n) && !names.includes(n)) names.push(n)
+  }
+  const W = WEATHER_GIBS_GLOBAL_WIDTH
+  const H = Math.round(W / 3) // 360 degrees by 120
+  for (const name of names) {
+    if (stopped) return null
+    const url = await get(name, [-180, -60, 180, 60], W, H)
+    if (!url) continue
+    opsLog(`[weather] cloud: one global picture from "${name}" — no discs, no seams`)
+    return {
+      layer: 'cloud',
+      projection: 'equirect',
+      blend: 'cloud',
+      z: 0,
+      time: Date.now(),
+      // No centerLon: this is not a disc, so there is no horizon to fade to.
+      tiles: [{ x: 0, y: 0, url, bbox: [-180, -60, 180, 60] }]
+    }
+  }
+  opsLog(
+    `[weather] cloud: no global IR layer (tried ${names.slice(0, 4).join(', ')}` +
+      `${names.length > 4 ? ` and ${names.length - 4} more` : ''}) — falling back to the discs`
+  )
+  return null
+}
+
 async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   /*
    * Each disc is requested over ITS OWN patch of the globe, not the whole one.
@@ -571,15 +621,19 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   const HALF = 80
   const W = WEATHER_GIBS_WIDTH
   const H = W // the patch is square in degrees, so square in pixels
-  const get = async (layer: string, centerLon: number): Promise<string | null> => {
+  const get = async (
+    layer: string,
+    bbox: [number, number, number, number],
+    w: number,
+    h: number
+  ): Promise<string | null> => {
     // WMS 1.3.0 with CRS:84-style axis order for EPSG:4326 is lat,lon.
-    const west = centerLon - HALF
-    const east = centerLon + HALF
+    const [west, south, east, north] = bbox
     const url =
       `${WEATHER_GIBS_URL}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
       `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326` +
-      `&BBOX=${-HALF},${west},${HALF},${east}` +
-      `&WIDTH=${W}&HEIGHT=${H}&FORMAT=image%2Fpng&TRANSPARENT=TRUE`
+      `&BBOX=${south},${west},${north},${east}` +
+      `&WIDTH=${w}&HEIGHT=${h}&FORMAT=image%2Fpng&TRANSPARENT=TRUE`
     try {
       const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
       const type = res.headers.get('content-type') ?? ''
@@ -603,6 +657,9 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     }
   }
 
+  const global = await fetchGibsGlobalCloud(get)
+  if (global) return global
+
   const got: WeatherFrame['tiles'] = []
   const place = (url: string, lon: number): void => {
     got.push({ x: 0, y: 0, url, centerLon: lon, bbox: [lon - HALF, -HALF, lon + HALF, HALF] })
@@ -611,7 +668,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     if (stopped) return null
     let filled = false
     for (const name of slot.names) {
-      const url = await get(name, slot.lon)
+      const url = await get(name, [slot.lon - HALF, -HALF, slot.lon + HALF, HALF], W, H)
       if (!url) continue
       place(url, slot.lon)
       filled = true
@@ -623,7 +680,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
       const found = await findGibsLayer(slot.names)
       if (found) {
         opsLog(`[weather] cloud: ${slot.lon}° is published as "${found}" — using that`)
-        const url = await get(found, slot.lon)
+        const url = await get(found, [slot.lon - HALF, -HALF, slot.lon + HALF, HALF], W, H)
         if (url) {
           place(url, slot.lon)
           filled = true
