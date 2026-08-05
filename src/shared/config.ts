@@ -326,5 +326,16 @@ export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 1024)
  * the better shape of answer when it exists.
  */
 export const WEATHER_GIBS_GLOBAL = readEnv('WEATHER_GIBS_GLOBAL') ?? 'off'
+/**
+ * How many past steps the cloud animates over, and how far apart.
+ *
+ * The geostationary sensors publish every ten minutes, so these are real
+ * observations rather than an interpolation — twenty minutes of actual
+ * weather. Each step is another full set of sensor requests, so this is the
+ * knob that trades bandwidth for movement; 1 is a single still picture.
+ */
+export const WEATHER_CLOUD_STEPS = Number(readEnv('WEATHER_CLOUD_STEPS') ?? 3)
+export const WEATHER_CLOUD_STEP_MS = Number(readEnv('WEATHER_CLOUD_STEP_MS') ?? 10 * 60_000)
+
 /** Pixel width of the global image; height is a third of it (360deg by 120). */
 export const WEATHER_GIBS_GLOBAL_WIDTH = Number(readEnv('WEATHER_GIBS_GLOBAL_WIDTH') ?? 3072)

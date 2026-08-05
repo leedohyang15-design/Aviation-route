@@ -594,7 +594,16 @@ export class Globe {
             float a = c.a
               * (uCloudPhoto > 0.5 ? 1.0 : lifted)
               * (uCloudMerc > 0.5 ? inMerc : 1.0);
-            vec3 tint = uCloudPhoto > 0.5 ? c.rgb : mix(c.rgb, vec3(1.0), 0.75);
+            // White, with none of the source's hue.
+            //
+            // A quarter of the sensor's colour used to survive, which was
+            // right for a true-colour composite and wrong for this one: these
+            // layers carry a temperature palette, so a quarter of it came
+            // through as green and pink speckles scattered through the cloud
+            // that looked like rain and vanished when the cloud chip went off.
+            // The palette's job here is to say WHERE and HOW MUCH, which is
+            // the opacity; the colour is not information we want on the globe.
+            vec3 tint = uCloudPhoto > 0.5 ? c.rgb : vec3(0.97, 0.98, 1.0);
             col = mix(col, tint, a);
           }
 
@@ -1809,10 +1818,17 @@ export class Globe {
       const mctx = mask.getContext('2d')!
       const data = mctx.createImageData(MW, MH)
       const RAD = Math.PI / 180
-      // Full weight within 55 degrees of the sub-satellite point, nothing past
+      // Full weight within 32 degrees of the sub-satellite point, nothing past
       // 78 — a real disc runs out at about 81, and stopping short of that hides
       // the noisy limb as well as the edge.
-      const NEAR = Math.cos(55 * RAD)
+      //
+      // 32, not 55. Neighbouring sensors are 45 to 95 degrees apart, so at 55
+      // the midpoint between a pair often fell inside BOTH full-weight discs —
+      // and a full-weight patch drawn over another does not blend with it, it
+      // replaces it outright. The join was then wherever the later one's
+      // weight finally dropped below one, which is an edge rather than a
+      // crossfade. At 32 every pair meets in the fade zone.
+      const NEAR = Math.cos(32 * RAD)
       const FAR = Math.cos(78 * RAD)
       for (let j = 0; j < MH; j++) {
         const lat = (north - ((j + 0.5) / MH) * (north - south)) * RAD

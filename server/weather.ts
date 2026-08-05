@@ -33,6 +33,8 @@ import {
   WEATHER_GIBS_WIDTH,
   WEATHER_GIBS_GLOBAL,
   WEATHER_GIBS_GLOBAL_WIDTH,
+  WEATHER_CLOUD_STEPS,
+  WEATHER_CLOUD_STEP_MS,
   WEATHER_RAIN_COLOR
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
@@ -493,8 +495,7 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
       // layer quietly kept whatever the disk cache held, so the screen showed a
       // cloud picture from hours ago next to live rain and nothing said so.
       opsLog('[weather] cloud: falling back to NASA GIBS for this layer')
-      const frame = await fetchGibsCloud()
-      series = frame ? [frame] : null
+      series = await fetchGibsCloud()
     }
     if (!series) continue
     // Same moment as what is already on screen: nothing to send.
@@ -600,7 +601,12 @@ async function findGibsLayer(candidates: string[]): Promise<string | null> {
  * equirectangular dome frame those rows are the extreme top and bottom edge.
  */
 async function fetchGibsGlobalCloud(
-  get: (layer: string, bbox: [number, number, number, number], w: number, h: number) => Promise<string | null>
+  get: (
+    layer: string,
+    bbox: [number, number, number, number],
+    w: number,
+    h: number
+  ) => Promise<{ url: string; bytes: number } | null>
 ): Promise<WeatherFrame | null> {
   const wanted = WEATHER_GIBS_GLOBAL.split(',').map((s) => s.trim()).filter(Boolean)
   if (!wanted.length || wanted[0] === 'off') return null
@@ -622,10 +628,10 @@ async function fetchGibsGlobalCloud(
   // right — the catalogue is for when we are lost, not for when we are not.
   for (const name of wanted) {
     if (stopped) return null
-    const url = await get(name, [-180, -60, 180, 60], W, H)
-    if (!url) continue
+    const got = await get(name, [-180, -60, 180, 60], W, H)
+    if (!got) continue
     opsLog(`[weather] cloud: one global picture from "${name}" — no discs, no seams`)
-    return frame(url)
+    return frame(got.url)
   }
 
   // Configured names exhausted: now it is worth asking what this endpoint
@@ -636,13 +642,13 @@ async function fetchGibsGlobalCloud(
   }
   for (const name of names) {
     if (stopped) return null
-    const url = await get(name, [-180, -60, 180, 60], W, H)
-    if (!url) continue
+    const got = await get(name, [-180, -60, 180, 60], W, H)
+    if (!got) continue
     opsLog(
       `[weather] cloud: one global picture from "${name}" — no discs, no seams. ` +
         `Put WEATHER_GIBS_GLOBAL="${name}" in .env to skip the catalogue next time`
     )
-    return frame(url)
+    return frame(got.url)
   }
   names.unshift(...wanted)
   // What the catalogue DOES have that is anything like a global infrared
@@ -664,7 +670,7 @@ async function fetchGibsGlobalCloud(
   return null
 }
 
-async function fetchGibsCloud(): Promise<WeatherFrame | null> {
+async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
   /*
    * Each disc is requested over ITS OWN patch of the globe, not the whole one.
    *
@@ -684,15 +690,17 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     bbox: [number, number, number, number],
     w: number,
     h: number,
-    endpoint = WEATHER_GIBS_URL
-  ): Promise<string | null> => {
+    endpoint = WEATHER_GIBS_URL,
+    time?: string
+  ): Promise<{ url: string; bytes: number } | null> => {
     // WMS 1.3.0 with CRS:84-style axis order for EPSG:4326 is lat,lon.
     const [west, south, east, north] = bbox
     const url =
       `${endpoint}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
       `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326` +
       `&BBOX=${south},${west},${north},${east}` +
-      `&WIDTH=${w}&HEIGHT=${h}&FORMAT=image%2Fpng&TRANSPARENT=TRUE`
+      `&WIDTH=${w}&HEIGHT=${h}&FORMAT=image%2Fpng&TRANSPARENT=TRUE` +
+      (time ? `&TIME=${encodeURIComponent(time)}` : '')
     try {
       const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
       const type = res.headers.get('content-type') ?? ''
@@ -703,15 +711,6 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
         return null
       }
       const buf = Buffer.from(await res.arrayBuffer())
-      // A fully transparent image is a valid PNG and a useless picture. The
-      // floor scales with the pixels asked for: a slot that crosses the
-      // antimeridian is split into two narrower requests, and a fixed 20kB
-      // would call the narrow half blank and throw the whole sensor away.
-      const floor = Math.max(1200, Math.round((w * h) / 500))
-      if (buf.length < floor) {
-        lastTileError = `only ${buf.length} bytes, under ${floor} (blank?) — ${layer}`
-        return null
-      }
       opsLog(`[weather] cloud: ${layer} answered, ${(buf.length / 1e6).toFixed(1)}MB`)
       // Debug: keep the raw sensor pictures beside the exe. There is a hairline
       // down the finished map that has survived two rounds of reasoning and
@@ -723,7 +722,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
           .then(() => opsLog(`[weather] debug: wrote ${file}`))
           .catch((e: Error) => opsLog(`[weather] debug: could not write ${file}: ${e.message}`))
       }
-      return `data:image/png;base64,${buf.toString('base64')}`
+      return { url: `data:image/png;base64,${buf.toString('base64')}`, bytes: buf.length }
     } catch (err) {
       lastTileError = `${(err as Error).message} — ${layer}`
       return null
@@ -731,7 +730,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   }
 
   const global = await fetchGibsGlobalCloud(get)
-  if (global) return global
+  if (global) return [global]
 
   const got: WeatherFrame['tiles'] = []
 
@@ -759,19 +758,42 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     if (east > 180) return [[west, 180], [-180, east - 360]]
     return [[west, east]]
   }
-  const fetchSlot = async (name: string, lon: number, endpoint?: string): Promise<boolean> => {
+  const fetchSlot = async (
+    name: string,
+    lon: number,
+    endpoint?: string,
+    time?: string,
+    into: WeatherFrame['tiles'] = got
+  ): Promise<boolean> => {
     const spans = spansFor(lon)
     const parts: WeatherFrame['tiles'] = []
+    let bytes = 0
+    let pixels = 0
     for (const [west, east] of spans) {
       const deg = east - west
       // Same pixels per degree in every part, so the renderer can read the
       // mosaic's scale off whichever one decodes first.
       const w = Math.max(16, Math.round((W * deg) / (HALF * 2)))
-      const url = await get(name, [west, -HALF, east, HALF], w, H, endpoint)
-      if (!url) return false // a half picture is worse than none
-      parts.push({ x: 0, y: 0, url, centerLon: lon, bbox: [west, -HALF, east, HALF] })
+      const got = await get(name, [west, -HALF, east, HALF], w, H, endpoint, time)
+      if (!got) return false // a half picture is worse than none
+      parts.push({ x: 0, y: 0, url: got.url, centerLon: lon, bbox: [west, -HALF, east, HALF] })
+      bytes += got.bytes
+      pixels += w * H
     }
-    got.push(...parts)
+    /*
+     * A fully transparent image is a valid PNG and a useless picture, so a
+     * layer that answers with one has to count as a miss and let the next
+     * candidate name try. The test is on the SENSOR, not on each request: a
+     * slot that crosses the antimeridian is split into a wide half and a
+     * narrow one, and judging the narrow half on its own called it blank and
+     * threw the whole working sensor away.
+     */
+    const floor = Math.max(2000, Math.round(pixels / 300))
+    if (bytes < floor) {
+      lastTileError = `${bytes} bytes over ${parts.length} request(s), under ${floor} (blank?) — ${name}`
+      return false
+    }
+    into.push(...parts)
     return true
   }
 
@@ -812,7 +834,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     `[weather] cloud: ${sensors}/${WEATHER_GIBS_SLOTS.length} sensors — ` +
       `composited from ${got.length} images`
   )
-  return {
+  const nowFrame: WeatherFrame = {
     layer: 'cloud',
     projection: 'equirect',
     blend: 'cloud',
@@ -820,6 +842,58 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     time: Date.now(),
     tiles: got
   }
+
+  /*
+   * The earlier steps, so the cloud moves too.
+   *
+   * Rain arrives as a time series and animates; cloud was one still picture,
+   * and side by side that reads as the cloud being broken rather than as the
+   * rain being lively. GIBS takes a TIME parameter, so the same five sensors
+   * can be asked what they saw twenty and ten minutes ago — which is a real
+   * loop of real observations, not an interpolation.
+   *
+   * Everything about it is best-effort: a step whose sensors do not all answer
+   * is dropped rather than shown half-built, and if every past step fails the
+   * present one still goes out on its own exactly as before.
+   */
+  const steps = Math.max(1, WEATHER_CLOUD_STEPS)
+  if (steps < 2 || stopped) return [nowFrame]
+  const nowSensors = new Set(got.map((t) => t.centerLon))
+  const series: WeatherFrame[] = []
+  for (let back = steps - 1; back >= 1; back--) {
+    if (stopped) break
+    // Snap to the sensors' own ten-minute cadence, or the server has to pick
+    // for us and may pick the same picture twice.
+    const t = new Date(Math.floor((Date.now() - back * WEATHER_CLOUD_STEP_MS) / 600_000) * 600_000)
+    const stamp = t.toISOString().replace(/\.\d+Z$/, 'Z')
+    const tiles: WeatherFrame['tiles'] = []
+    for (const slot of WEATHER_GIBS_SLOTS) {
+      // Only the sensors the present frame actually has. Chasing one that is
+      // already missing wastes a request, and a step that covered MORE of the
+      // globe than its neighbours would make that region blink in the loop.
+      if (!nowSensors.has(slot.lon)) continue
+      for (const name of slot.names) {
+        if (await fetchSlot(name, slot.lon, slot.url, stamp, tiles)) break
+      }
+    }
+    // Same sensors as now, or the loop flickers wherever they disagree.
+    const same = new Set(tiles.map((t) => t.centerLon))
+    const whole = same.size === nowSensors.size
+    if (whole && tiles.length) {
+      series.push({ ...nowFrame, time: t.getTime(), tiles })
+    } else {
+      opsLog(`[weather] cloud: no complete picture for ${stamp} — that step is skipped`)
+    }
+  }
+  series.push(nowFrame)
+  series.forEach((f, i) => {
+    f.step = i
+    f.steps = series.length
+  })
+  if (series.length > 1) {
+    opsLog(`[weather] cloud: ${series.length} steps, ${WEATHER_CLOUD_STEP_MS / 60_000}분 간격 — animating`)
+  }
+  return series
 }
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
@@ -842,10 +916,10 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
     if (stopped) return
     if (layer === 'cloud' && WEATHER_CLOUD_SOURCE !== 'rainviewer') {
       if (WEATHER_CLOUD_SOURCE === 'off') continue
-      const frame = await fetchGibsCloud()
-      if (frame) {
-        latest.set('cloud', [frame])
-        onFrame(frame)
+      const frames = await fetchGibsCloud()
+      if (frames) {
+        latest.set('cloud', frames)
+        for (const f of frames) onFrame(f)
       }
       continue
     }
