@@ -576,29 +576,47 @@ async function fetchGibsGlobalCloud(
 ): Promise<WeatherFrame | null> {
   const wanted = WEATHER_GIBS_GLOBAL.split(',').map((s) => s.trim()).filter(Boolean)
   if (!wanted.length || wanted[0] === 'off') return null
-  const names = [...wanted]
-  // Whatever the catalogue calls a merged/global IR product, in case the
-  // configured spelling is not the one this endpoint uses.
-  for (const n of await gibsLayerNames()) {
-    if (/merg/i.test(n) && /ir|infrared/i.test(n) && !names.includes(n)) names.push(n)
-  }
   const W = WEATHER_GIBS_GLOBAL_WIDTH
   const H = Math.round(W / 3) // 360 degrees by 120
-  for (const name of names) {
+  const frame = (url: string): WeatherFrame => ({
+    layer: 'cloud',
+    projection: 'equirect',
+    blend: 'cloud',
+    z: 0,
+    time: Date.now(),
+    // No centerLon: this is not a disc, so there is no horizon to fade to.
+    tiles: [{ x: 0, y: 0, url, bbox: [-180, -60, 180, 60] }]
+  })
+
+  // The configured name first, and ALONE if it works. Reading the catalogue is
+  // two and a half megabytes of XML, and doing it up front made every cold
+  // start pay for it before the first cloud picture even when the name was
+  // right — the catalogue is for when we are lost, not for when we are not.
+  for (const name of wanted) {
     if (stopped) return null
     const url = await get(name, [-180, -60, 180, 60], W, H)
     if (!url) continue
     opsLog(`[weather] cloud: one global picture from "${name}" — no discs, no seams`)
-    return {
-      layer: 'cloud',
-      projection: 'equirect',
-      blend: 'cloud',
-      z: 0,
-      time: Date.now(),
-      // No centerLon: this is not a disc, so there is no horizon to fade to.
-      tiles: [{ x: 0, y: 0, url, bbox: [-180, -60, 180, 60] }]
-    }
+    return frame(url)
   }
+
+  // Configured names exhausted: now it is worth asking what this endpoint
+  // calls a merged infrared product.
+  const names: string[] = []
+  for (const n of await gibsLayerNames()) {
+    if (/merg/i.test(n) && /ir|infrared/i.test(n) && !wanted.includes(n)) names.push(n)
+  }
+  for (const name of names) {
+    if (stopped) return null
+    const url = await get(name, [-180, -60, 180, 60], W, H)
+    if (!url) continue
+    opsLog(
+      `[weather] cloud: one global picture from "${name}" — no discs, no seams. ` +
+        `Put WEATHER_GIBS_GLOBAL="${name}" in .env to skip the catalogue next time`
+    )
+    return frame(url)
+  }
+  names.unshift(...wanted)
   // What the catalogue DOES have that is anything like a global infrared
   // product. Two rounds have now been spent asking for names that turned out
   // not to exist; this line ends that by printing the real ones.
