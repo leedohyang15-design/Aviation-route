@@ -71,6 +71,17 @@ const HOME_LAT = 37.5
  * constants. They come from the unit, with a proportional fallback for a unit
  * nobody here has seen.
  */
+/** The curve for the intensity ramp: 1 for an already-logarithmic unit, less
+ * than 1 for a linear one that needs its quiet end lifted. */
+function rainGamma(d: WeatherDecode): number {
+  const unit = (d.unit ?? '').toLowerCase()
+  if (unit.includes('dbz')) return 1
+  // Millimetres. 0.5mm/h is a shower you would put a coat on for and sits at
+  // two percent of the range; 0.35 lifts it to about a quarter, which is where
+  // the colour ramp starts saying something.
+  return 0.35
+}
+
 function rainAnchors(d: WeatherDecode): THREE.Vector2 {
   const unit = (d.unit ?? '').toLowerCase()
   // 5 dBZ, not 12. Twelve is roughly 0.2mm an hour, and starting the fade
@@ -431,6 +442,9 @@ export class Globe {
       // Where rain starts to show and where it saturates, in the variable's own
       // unit. Set from the index's declared unit — see applyDecode.
       uRainScale: { value: new THREE.Vector2(12, 70) },
+      // Curve applied to the normalised intensity. 1 is linear; below 1 lifts
+      // the light end, which is where nearly all the rain in the world is.
+      uRainGamma: { value: 1 },
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
       uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
@@ -456,6 +470,7 @@ export class Globe {
         uniform vec3 uCloudChanW; uniform float uCloudPacked; uniform vec2 uCloudRange;
         uniform vec3 uRainChanW; uniform float uRainPacked; uniform vec2 uRainRange;
         uniform vec2 uRainScale; // x = where rain starts to show, y = full intensity
+        uniform float uRainGamma;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
 
         // Unpack one data pixel into [real value, coverage]. The channels are
@@ -616,7 +631,14 @@ export class Globe {
             vec2 d = readData(uRain, uRainB, uRainMix,
                               uRainMerc > 0.5 ? mercUV : flatUV,
                               uRainChanW, uRainPacked, uRainRange);
-            float t = clamp((d.x - uRainScale.x) / max(uRainScale.y - uRainScale.x, 1e-4), 0.0, 1.0);
+            float lin = clamp((d.x - uRainScale.x) / max(uRainScale.y - uRainScale.x, 1e-4), 0.0, 1.0);
+            // Rain spans orders of magnitude — a tenth of a millimetre an hour
+            // and forty are both rain, and a linear ramp puts everything
+            // anybody actually stands in inside the first two percent of it.
+            // The gamma is what makes drizzle a colour instead of a rounding
+            // error; for reflectivity, already a log scale by definition, it
+            // is 1 and this does nothing.
+            float t = pow(lin, uRainGamma);
             // Reach full opacity early. The intensity is carried by the COLOUR
             // ramp; making faint rain also faint means the two effects
             // multiply and light rain disappears entirely, which is the
@@ -2045,6 +2067,7 @@ export class Globe {
       this.bgUniforms.uRainPacked.value = packed
       this.bgUniforms.uRainRange.value = new THREE.Vector2(d.min, d.max)
       this.bgUniforms.uRainScale.value = rainAnchors(d)
+      this.bgUniforms.uRainGamma.value = rainGamma(d)
     }
   }
 
@@ -2069,16 +2092,30 @@ export class Globe {
         this.bgUniforms[m].value = 0
         continue
       }
+      /*
+       * Back and forth, never round and round.
+       *
+       * A loop that runs 0,1,2 and starts again at 0 has to jump three
+       * quarters of an hour backwards once a cycle, and over three quarters of
+       * an hour the clouds move less than that jump does — so the jump is the
+       * only motion anybody sees, and it reads as the picture glitching. A
+       * ping-pong has no seam to jump over: it plays forwards, then backwards,
+       * and every step is a small change from the one before it.
+       */
       const hold = WEATHER_FRAME_HOLD_MS
-      const phase = (Date.now() % (hold * tex.length)) / hold
-      const i = Math.min(tex.length - 1, Math.floor(phase))
-      const t = phase - i
+      const legs = Math.max(1, (tex.length - 1) * 2)
+      const phase = (Date.now() % (hold * legs)) / hold
+      const leg = Math.min(legs - 1, Math.floor(phase))
+      const fwd = leg < tex.length - 1
+      const i = fwd ? leg : legs - leg
+      const next = fwd ? i + 1 : i - 1
+      const t = phase - leg
       // Hold, then ease across. A linear blend over the whole step makes every
       // moment a half-dissolve, which reads as blur rather than movement.
       const FADE = 0.34
       const raw = t < 1 - FADE ? 0 : (t - (1 - FADE)) / FADE
-      this.bgUniforms[a].value = tex[i]
-      this.bgUniforms[b].value = tex[(i + 1) % tex.length]
+      this.bgUniforms[a].value = tex[Math.max(0, Math.min(tex.length - 1, i))]
+      this.bgUniforms[b].value = tex[Math.max(0, Math.min(tex.length - 1, next))]
       this.bgUniforms[m].value = raw * raw * (3 - 2 * raw)
     }
   }

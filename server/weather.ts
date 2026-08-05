@@ -113,6 +113,15 @@ let running = false
 /** Consecutive failures, for the backoff. */
 let failures = 0
 
+/**
+ * Past cloud steps, by the timestamp they were taken at.
+ *
+ * The animation walks the last three quarters of an hour, and those pictures
+ * do not change once taken — so they are fetched once and kept, and each poll
+ * downloads only the step that is genuinely new.
+ */
+const cloudSteps = new Map<number, WeatherFrame['tiles']>()
+
 /** What is on screen right now, for a window that has just connected. */
 export function weatherFrames(): WeatherFrame[] {
   return [...latest.values()].flat()
@@ -858,26 +867,41 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
   /*
    * The earlier steps, so the cloud moves too.
    *
-   * Rain arrives as a time series and animates; cloud was one still picture,
-   * and side by side that reads as the cloud being broken rather than as the
-   * rain being lively. GIBS takes a TIME parameter, so the same five sensors
-   * can be asked what they saw twenty and ten minutes ago — which is a real
-   * loop of real observations, not an interpolation.
+   * GIBS takes a TIME, so the same five sensors can be asked what they saw a
+   * quarter-hour and a half-hour ago — a loop of real observations rather than
+   * an interpolation.
    *
-   * Everything about it is best-effort: a step whose sensors do not all answer
-   * is dropped rather than shown half-built, and if every past step fails the
-   * present one still goes out on its own exactly as before.
+   * Each step is kept BY ITS TIMESTAMP and reused. Without that, every poll
+   * re-downloaded the same four pictures under new names: the step that was
+   * "fifteen minutes ago" last time is "thirty minutes ago" this time and is
+   * the identical image, so re-fetching it was pulling tens of megabytes from
+   * NASA every five minutes to show something already in memory. Now only the
+   * genuinely new step is fetched, which is what makes a longer loop
+   * affordable — and a longer loop is the whole point, because over twenty
+   * minutes the clouds barely move and all anybody sees is the jump back to
+   * the start.
    */
   const steps = Math.max(1, WEATHER_CLOUD_STEPS)
   if (steps < 2 || stopped) return [nowFrame]
   const nowSensors = new Set(got.map((t) => t.centerLon))
-  const series: WeatherFrame[] = []
+  const wantedAt: number[] = []
   for (let back = steps - 1; back >= 1; back--) {
-    if (stopped) break
     // Snap to the sensors' own ten-minute cadence, or the server has to pick
     // for us and may pick the same picture twice.
-    const t = new Date(Math.floor((Date.now() - back * WEATHER_CLOUD_STEP_MS) / 600_000) * 600_000)
-    const stamp = t.toISOString().replace(/\.\d+Z$/, 'Z')
+    wantedAt.push(Math.floor((Date.now() - back * WEATHER_CLOUD_STEP_MS) / 600_000) * 600_000)
+  }
+
+  const series: WeatherFrame[] = []
+  let reused = 0
+  for (const at of wantedAt) {
+    if (stopped) break
+    const have = cloudSteps.get(at)
+    if (have) {
+      series.push({ ...nowFrame, time: at, tiles: have })
+      reused++
+      continue
+    }
+    const stamp = new Date(at).toISOString().replace(/\.\d+Z$/, 'Z')
     const tiles: WeatherFrame['tiles'] = []
     for (const slot of WEATHER_GIBS_SLOTS) {
       // Only the sensors the present frame actually has. Chasing one that is
@@ -889,13 +913,16 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
       }
     }
     // Same sensors as now, or the loop flickers wherever they disagree.
-    const same = new Set(tiles.map((t) => t.centerLon))
-    const whole = same.size === nowSensors.size
-    if (whole && tiles.length) {
-      series.push({ ...nowFrame, time: t.getTime(), tiles })
+    if (new Set(tiles.map((t) => t.centerLon)).size === nowSensors.size && tiles.length) {
+      cloudSteps.set(at, tiles)
+      series.push({ ...nowFrame, time: at, tiles })
     } else {
       opsLog(`[weather] cloud: no complete picture for ${stamp} — that step is skipped`)
     }
+  }
+  // Anything no longer in the loop is memory nobody is looking at.
+  for (const at of [...cloudSteps.keys()]) {
+    if (!wantedAt.includes(at)) cloudSteps.delete(at)
   }
   series.push(nowFrame)
   series.forEach((f, i) => {
@@ -903,7 +930,11 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
     f.steps = series.length
   })
   if (series.length > 1) {
-    opsLog(`[weather] cloud: ${series.length} steps, ${WEATHER_CLOUD_STEP_MS / 60_000}분 간격 — animating`)
+    const span = ((series.length - 1) * WEATHER_CLOUD_STEP_MS) / 60_000
+    opsLog(
+      `[weather] cloud: ${series.length} steps over ${span}분 — animating ` +
+        `(${reused} reused, ${series.length - 1 - reused} fetched)`
+    )
   }
   return series
 }
