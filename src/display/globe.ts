@@ -597,22 +597,16 @@ export class Globe {
                       * d.y * (uCloudMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, vec3(0.97, 0.98, 1.0), a);
           } else if (uHasCloud > 0.5) {
-            vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
-            float mx = max(c.r, max(c.g, c.b));
-            float mn = min(c.r, min(c.g, c.b));
-            float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
-            // Colour means COLDER, so it means more cloud, not less.
+            // The mosaic already IS the answer.
             //
-            // These layers are not greyscale. The raw sensor pictures show a
-            // rainbow palette laid over the grey: the coldest tops — the deep
-            // convection, the thing anybody would point at — come back green,
-            // red and violet. The old rule subtracted saturation to reject
-            // city lights and desert from a true-colour composite, and against
-            // THIS palette it threw away exactly the storms. So brightness and
-            // colour both count as cloud, whichever is the stronger signal.
-            float cold = max(lum, sat * 0.85);
-            float lifted = clamp(smoothstep(0.14, 0.50, cold) * uCloudAmt, 0.0, 1.0);
+            // Every sensor's picture was reduced to one number — how much
+            // cloud — and stretched onto a common scale while the mosaic was
+            // built, precisely so that five instruments with five different
+            // palettes and calibrations would agree. Guessing cloud out of the
+            // colour again here would undo that, on a texture whose colour is
+            // now nothing but that number written three times.
+            vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
+            float lifted = clamp(smoothstep(0.06, 0.46, c.r) * uCloudAmt, 0.0, 1.0);
             float a = c.a
               * (uCloudPhoto > 0.5 ? 1.0 : lifted)
               * (uCloudMerc > 0.5 ? inMerc : 1.0);
@@ -627,6 +621,33 @@ export class Globe {
             // the opacity; the colour is not information we want on the globe.
             vec3 tint = uCloudPhoto > 0.5 ? c.rgb : vec3(0.97, 0.98, 1.0);
             col = mix(col, tint, a);
+          }
+
+          /*
+           * Rain falls out of cloud, so it is only drawn where there is some.
+           *
+           * The two layers are not the same kind of thing and never will be:
+           * the cloud is a photograph taken minutes ago by a satellite, the
+           * rain is a numerical model's opinion about the hour. They disagree
+           * in detail — a model puts a front a hundred kilometres from where
+           * the camera sees it — and on a globe that reads as rain falling out
+           * of a clear black sky, which is the one thing everybody knows does
+           * not happen.
+           *
+           * Where the camera says there is nothing, believe the camera. It
+           * cannot make the two agree about a front's exact position, but it
+           * removes the case that looks broken, and it costs nothing where
+           * they do agree. Only applies while the cloud layer is actually on —
+           * with it off, the rain is the whole picture and stands alone.
+           */
+          float cloudHere = 1.0;
+          if (uHasCloud > 0.5) {
+            vec4 cc = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
+            float amt = uCloudData > 0.5
+              ? cc.a
+              : cc.a * max(dot(cc.rgb, vec3(0.299, 0.587, 0.114)),
+                           (max(cc.r, max(cc.g, cc.b)) - min(cc.r, min(cc.g, cc.b))) * 0.85);
+            cloudHere = smoothstep(0.02, 0.30, amt);
           }
 
           // Rain goes in last: it is a data overlay, not a photograph, and a
@@ -650,12 +671,12 @@ export class Globe {
             // ramp; making faint rain also faint means the two effects
             // multiply and light rain disappears entirely, which is the
             // difference between this map and every other one.
-            float a = smoothstep(0.0, 0.10, t) * d.y
+            float a = smoothstep(0.0, 0.10, t) * d.y * cloudHere
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
-            col = mix(col, r.rgb, r.a * (uRainMerc > 0.5 ? inMerc : 1.0));
+            col = mix(col, r.rgb, r.a * cloudHere * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
           gl_FragColor = vec4(col, 1.0);
         }
