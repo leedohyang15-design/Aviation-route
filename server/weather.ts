@@ -19,11 +19,11 @@ import {
   WEATHER_FRAME_COUNT,
   WEATHER_POLL_MS,
   WEATHER_TIMEOUT_MS,
-  WEATHER_ZOOM,
   OPENWEATHER_KEY,
   OWM_TILE_BASE,
   OWM_TILE_BASE_V2,
-  OWM_LAYERS
+  OWM_LAYERS,
+  OWM_ZOOM
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
 import { dataPath, dataPathCandidates } from './datadir'
@@ -160,9 +160,9 @@ function owmTileUrl(layer: WeatherLayer, x: number, y: number, at: number | null
   const key = encodeURIComponent(owmKey())
   if (owmApi === 2) {
     const date = at ? `&date=${Math.floor(at / 1000)}` : ''
-    return `${OWM_TILE_BASE_V2}/${v2}/${WEATHER_ZOOM}/${x}/${y}?appid=${key}${date}`
+    return `${OWM_TILE_BASE_V2}/${v2}/${OWM_ZOOM}/${x}/${y}?appid=${key}${date}`
   }
-  return `${OWM_TILE_BASE}/${v1}/${WEATHER_ZOOM}/${x}/${y}.png?appid=${key}`
+  return `${OWM_TILE_BASE}/${v1}/${OWM_ZOOM}/${x}/${y}.png?appid=${key}`
 }
 
 async function fetchOwmTile(
@@ -175,17 +175,17 @@ async function fetchOwmTile(
     // Never log the URL: it carries the key.
     const res = await fetchWithTimeout(owmTileUrl(layer, x, y, at), WEATHER_TIMEOUT_MS)
     if (!res.ok) {
-      lastTileError = `HTTP ${res.status} on ${layer} ${WEATHER_ZOOM}/${x}/${y}`
+      lastTileError = `HTTP ${res.status} on ${layer} ${OWM_ZOOM}/${x}/${y}`
       return null
     }
     const buf = Buffer.from(await res.arrayBuffer())
     if (!buf.length) {
-      lastTileError = `empty 200 body on ${layer} ${WEATHER_ZOOM}/${x}/${y}`
+      lastTileError = `empty 200 body on ${layer} ${OWM_ZOOM}/${x}/${y}`
       return null
     }
     return { x, y, url: `data:image/png;base64,${buf.toString('base64')}` }
   } catch (err) {
-    lastTileError = `${(err as Error).message} on ${layer} ${WEATHER_ZOOM}/${x}/${y}`
+    lastTileError = `${(err as Error).message} on ${layer} ${OWM_ZOOM}/${x}/${y}`
     return null
   }
 }
@@ -205,13 +205,22 @@ async function fetchOwmFrame(
   step: number,
   steps: number
 ): Promise<WeatherFrame | null> {
-  const n = 1 << WEATHER_ZOOM
+  const n = 1 << OWM_ZOOM
   const wanted: { x: number; y: number }[] = []
   for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) wanted.push({ x, y })
   const tiles: WeatherFrame['tiles'] = []
-  // Six at a time: the free plan allows sixty calls a minute and a full grid is
-  // sixty-four, so a burst of the whole grid would trip the limit on its own.
-  const BATCH = 6
+  /*
+   * Four at a time, over a grid of sixteen.
+   *
+   * Limiting how many run at once was never a rate limit — it caps the sockets,
+   * not the requests per minute, and the free plan counts the latter. At level
+   * 3 that meant a hundred and twenty-eight requests a poll against an
+   * allowance of sixty a minute, and the answer to that is 401 on every tile:
+   * exactly what "the key is not live yet" looks like, which is why it read as
+   * one for a while. Level 2 makes it thirty-two a poll, comfortably inside the
+   * allowance whatever the concurrency.
+   */
+  const BATCH = 4
   for (let i = 0; i < wanted.length; i += BATCH) {
     if (stopped) return null
     const got = await Promise.all(wanted.slice(i, i + BATCH).map((t) => fetchOwmTile(layer, t.x, t.y, at)))
@@ -221,9 +230,16 @@ async function fetchOwmFrame(
   return {
     layer,
     projection: 'mercator',
-    blend: 'photo',
+    /*
+     * The cloud is painted white with the cover in its ALPHA, so it must not be
+     * drawn as a photograph — doing that took the tile's own grey as the colour
+     * and laid a murky haze over the whole globe instead of white cloud. The
+     * rain genuinely is a painted picture: its palette carries the intensity,
+     * and that is the one thing here worth keeping as the service drew it.
+     */
+    blend: layer === 'cloud' ? 'cloud' : 'photo',
     source: '© OpenWeatherMap · 모델 실황',
-    z: WEATHER_ZOOM,
+    z: OWM_ZOOM,
     time: at ?? Date.now(),
     tiles,
     step,
@@ -307,7 +323,7 @@ async function pollOpenWeather(onFrame: (f: WeatherFrame) => boolean | void): Pr
     for (const f of series) onFrame(f)
     opsLog(
       `[weather] OpenWeatherMap ${layer}: ${series.length} step(s), ` +
-        `${series[0].tiles.length}/${1 << (WEATHER_ZOOM * 2)} tiles each`
+        `${series[0].tiles.length}/${1 << (OWM_ZOOM * 2)} tiles each`
     )
   }
   saveCache()

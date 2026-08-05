@@ -145,6 +145,22 @@ export const OBSERVER_LON = Number(readEnv('OBSERVER_LON') ?? 126.978)
  * current-only. It probes 2.0, falls back to 1.0, and the log says which is
  * live and therefore whether the tab animates.
  */
+/**
+ * Tile pyramid level for OpenWeatherMap. 2 = a 4x4 grid, 1024px around the world.
+ *
+ * Not 3. A free key allows sixty calls a minute, and level 3 is sixty-four
+ * tiles per layer — a hundred and twenty-eight a poll, which walks straight
+ * into the limit and comes back 401. Level 2 is thirty-two a poll and stays far
+ * under it.
+ *
+ * The resolution is not the sacrifice it looks like: this is model output, and
+ * the model's own grid is a quarter of a degree — about fourteen hundred cells
+ * around the equator. A thousand-pixel texture is close to the resolution the
+ * numbers actually have, so most of what level 3 bought was a sharper picture
+ * of an interpolation.
+ */
+export const OWM_ZOOM = Number(readEnv('OWM_ZOOM') ?? 2)
+
 export const OPENWEATHER_KEY = readEnv('OPENWEATHER_KEY') ?? ''
 export const OWM_TILE_BASE = readEnv('OWM_TILE_BASE') ?? 'https://tile.openweathermap.org/map'
 export const OWM_TILE_BASE_V2 =

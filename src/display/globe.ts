@@ -400,7 +400,6 @@ export class Globe {
       uCloudMerc: { value: 1 },
       // 1 = a seamless photograph of the earth, drawn where it has data;
       // 0 = a geostationary disc the cloud has to be lifted out of.
-      uCloudPhoto: { value: 0 },
       uCloudAmt: { value: WEATHER_CLOUD_OPACITY },
       uRain: { value: null },
       uHasRain: { value: 0 },
@@ -448,7 +447,7 @@ export class Globe {
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
-        uniform float uCloudPhoto; uniform float uCloudAmt;
+        uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
         uniform sampler2D uCloudB; uniform float uCloudMix;
         uniform sampler2D uRainB; uniform float uRainMix;
@@ -576,30 +575,25 @@ export class Globe {
                       * d.y * (uCloudMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, vec3(0.97, 0.98, 1.0), a);
           } else if (uHasCloud > 0.5) {
-            // The mosaic already IS the answer.
-            //
-            // Every sensor's picture was reduced to one number — how much
-            // cloud — and stretched onto a common scale while the mosaic was
-            // built, precisely so that five instruments with five different
-            // palettes and calibrations would agree. Guessing cloud out of the
-            // colour again here would undo that, on a texture whose colour is
-            // now nothing but that number written three times.
+            /*
+             * White, with the cover read out of ALPHA.
+             *
+             * The service paints its cloud white and puts how much of it there
+             * is in the alpha channel. Taking the tile's own colour instead —
+             * which is what treating it as a photograph did — laid a murky grey
+             * haze over the whole globe, because a thin cloud's pixel is a dark
+             * translucent grey and there is thin cloud almost everywhere.
+             *
+             * The threshold is the other half of that. A tenth of the sky is
+             * not a cloudy day and nobody would draw it, but its alpha is not
+             * zero, so without a floor the oceans never come out clean. Full
+             * white arrives at overcast, and stops a little short of opaque so
+             * a downpour still reads through it.
+             */
             vec4 c = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            float lifted = clamp(smoothstep(0.06, 0.46, c.r) * uCloudAmt, 0.0, 1.0);
-            float a = c.a
-              * (uCloudPhoto > 0.5 ? 1.0 : lifted)
-              * (uCloudMerc > 0.5 ? inMerc : 1.0);
-            // White, with none of the source's hue.
-            //
-            // A quarter of the sensor's colour used to survive, which was
-            // right for a true-colour composite and wrong for this one: these
-            // layers carry a temperature palette, so a quarter of it came
-            // through as green and pink speckles scattered through the cloud
-            // that looked like rain and vanished when the cloud chip went off.
-            // The palette's job here is to say WHERE and HOW MUCH, which is
-            // the opacity; the colour is not information we want on the globe.
-            vec3 tint = uCloudPhoto > 0.5 ? c.rgb : vec3(0.97, 0.98, 1.0);
-            col = mix(col, tint, a);
+            float amt = smoothstep(0.12, 0.85, c.a) * uCloudAmt;
+            float a = clamp(amt, 0.0, 1.0) * 0.92 * (uCloudMerc > 0.5 ? inMerc : 1.0);
+            col = mix(col, vec3(0.97, 0.98, 1.0), a);
           }
 
           /*
@@ -661,8 +655,21 @@ export class Globe {
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
+            /*
+             * The service's palette, but not the service's opacity.
+             *
+             * It is drawn for a bright web map on a pale basemap, where a
+             * twenty percent wash of blue reads perfectly well. This globe is a
+             * night-side ocean in a darkened room, and the same wash disappears
+             * into it — which is precisely the complaint. The colour is left
+             * exactly as painted, since that is the part carrying the
+             * intensity; only the strength is lifted, and the floor is shaped
+             * so light rain gains most and a downpour, already near solid,
+             * gains almost nothing.
+             */
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
-            col = mix(col, r.rgb, r.a * (uRainMerc > 0.5 ? inMerc : 1.0));
+            float a = clamp(r.a * 2.2, 0.0, 1.0);
+            col = mix(col, r.rgb, a * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
           gl_FragColor = vec4(col, 1.0);
         }
@@ -2495,7 +2502,6 @@ export class Globe {
       if (layer === 'cloud') {
         this.bgUniforms.uHasCloud.value = 1
         this.bgUniforms.uCloudMerc.value = head.projection === 'mercator' ? 1 : 0
-        this.bgUniforms.uCloudPhoto.value = head.blend === 'photo' ? 1 : 0
         this.bgUniforms.uCloudData.value = isData ? 1 : 0
       } else {
         this.bgUniforms.uHasRain.value = 1
