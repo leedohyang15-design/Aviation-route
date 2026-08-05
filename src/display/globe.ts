@@ -959,6 +959,70 @@ export class Globe {
     )
   }
 
+  /**
+   * Look for a vertical seam anywhere in the map, at full resolution.
+   *
+   * The wrap check only ever compared the first and last columns, so an
+   * artefact in the MIDDLE of the picture went straight past it — and the older
+   * whole-image scan sampled a 2048-wide copy of a 16384-wide file, which
+   * averages a one-texel line into a fortieth of a shade and loses it
+   * completely. Both are the wrong instrument for the thing being reported: a
+   * hairline at one longitude, in every mode, that does not move when the globe
+   * is turned.
+   *
+   * A seam a person can see spans most of the picture's height at one column.
+   * So: for every column, count the rows whose step from the previous column is
+   * a hard one, and name the columns where that count stands far above the rest.
+   * Read at native width from a few horizontal strips — never resampled
+   * sideways, which is what destroyed the evidence last time.
+   */
+  private scanForSeam(tex: THREE.Texture, label: string): void {
+    const img = tex.image as HTMLImageElement | undefined
+    if (!this.onNote || !img?.width) return
+    try {
+      const W = img.width
+      const ROWS = 384
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = ROWS
+      const ctx = c.getContext('2d')!
+      // Three bands away from the poles, where an equirect image is stretched
+      // hardest and every column looks alike.
+      const bands = [0.3, 0.5, 0.7]
+      const each = Math.floor(ROWS / bands.length)
+      bands.forEach((f, i) => {
+        ctx.drawImage(img, 0, Math.round(img.height * f), W, each, 0, i * each, W, each)
+      })
+      const d = ctx.getImageData(0, 0, W, ROWS).data
+      const lum = (x: number, y: number): number => {
+        const o = (y * W + x) * 4
+        return (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) / 255
+      }
+      const HARD = 0.06
+      const hits = new Float64Array(W)
+      for (let x = 1; x < W; x++) {
+        let n = 0
+        for (let y = 0; y < ROWS; y++) if (Math.abs(lum(x, y) - lum(x - 1, y)) > HARD) n++
+        hits[x] = n / ROWS
+      }
+      const sorted = Array.from(hits).sort((a, b) => a - b)
+      const med = sorted[sorted.length >> 1]
+      const p99 = sorted[Math.floor(sorted.length * 0.99)]
+      const cut = Math.max(p99 * 2, med * 8, 0.5)
+      const found: string[] = []
+      for (let x = 1; x < W && found.length < 6; x++) {
+        if (hits[x] > cut) found.push(`${(-180 + (x / W) * 360).toFixed(2)}deg(${(hits[x] * 100).toFixed(0)}%)`)
+      }
+      this.onNote(
+        `[earth] ${label} seam scan ${W}x${ROWS} native: ` +
+          `${found.join(' ') || 'no column stands out'} ` +
+          `(typical column ${(med * 100).toFixed(0)}%, 99th ${(p99 * 100).toFixed(0)}%)`
+      )
+    } catch {
+      /* a tainted canvas is not worth a crash for a diagnostic */
+    }
+  }
+
   private measureWrap(tex: THREE.Texture, label: string): void {
     const img = tex.image as HTMLImageElement | undefined
     if (!this.onNote || !img?.width) return
@@ -1046,6 +1110,7 @@ export class Globe {
         console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
         this.measureWrap(tex, 'day')
         this.reportSampling(tex, 'day')
+        this.scanForSeam(tex, 'day')
       },
       () => {
         console.warn(
@@ -1065,6 +1130,7 @@ export class Globe {
         console.log(`[earth] loaded night texture`)
         this.measureWrap(tex, 'night')
         this.reportSampling(tex, 'night')
+        this.scanForSeam(tex, 'night')
       },
       () => {
         /* no night texture — night side just dims globally */
