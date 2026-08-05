@@ -70,24 +70,28 @@ export const EARTH_TEXTURE_URL = 'earth_equirect.jpg'
 export const EARTH_NIGHT_URL = 'earth_night.jpg'
 
 /**
- * Whether the wrapping background maps get a mipmap pyramid.
+ * Mip chain and anisotropic filtering on the world maps. On by default.
  *
- * OFF, and this is the suspect for the hairline that runs down the map in
- * every mode. These textures wrap in longitude, and the GPU builds a mipmap by
- * filtering each level from the one above with the edges CLAMPED — it has no
- * idea the image is periodic. So at every reduced level the leftmost and
- * rightmost texels are built from one side only and disagree with each other,
- * and wherever the map wraps, that disagreement is drawn as a one-pixel line.
- * It shows on real hardware and not under a software renderer, which is why it
- * survived several rounds of looking for it here.
+ * It was off, on the theory that a wrapping texture's pyramid is built with its
+ * edges clamped and draws a hairline where the map joins itself. That theory
+ * was never tested and it was answering the wrong symptom. What the exhibit
+ * actually shows is a line that CRAWLS when the globe is turned, and a seam
+ * does not crawl — it sits still. Rendering the background alone with the wrap
+ * forced into the middle of the frame found nothing there: one percent of rows,
+ * a third of a grey level.
  *
- * The cost of switching them off is sharpness at full world view, where a
- * 4096-wide map is drawn about two and a half times smaller than it is. Set
- * this to 1 to put the pyramid back and see the difference directly — if the
- * line returns with it, that is the answer; if it does not, the cause is
- * elsewhere and this should go back on.
+ * Crawling is what undersampling looks like. The day map is sixteen thousand
+ * pixels wide against a sixteen-hundred-pixel frame, so a screen pixel covers
+ * about ten texels and a linear sample reads four of them. Move the offset a
+ * fraction and it reads four DIFFERENT ones — the map fizzes along its
+ * highest-contrast edges. A mip chain is the answer to exactly that, and it
+ * brings anisotropic filtering with it, which is what keeps an equirectangular
+ * map sharp where it is stretched.
+ *
+ * Set to 0 to go back, and the seam test in the log reports what the wrap
+ * column is doing either way, so the trade is measurable rather than argued.
  */
-export const EARTH_MIPMAPS = (readEnv('EARTH_MIPMAPS') ?? '0') !== '0'
+export const EARTH_MIPMAPS = (readEnv('EARTH_MIPMAPS') ?? '1') !== '0'
 
 // ---------------------------------------------------------------------------
 // Satellite mode
