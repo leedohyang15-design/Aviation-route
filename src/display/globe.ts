@@ -326,6 +326,8 @@ export class Globe {
   private debugDumped = new Set<string>()
   /** Set to put a line in the exe's log from the renderer. */
   onNote: ((text: string) => void) | null = null
+  /** Once per series: the strongest rain and where it is. */
+  private rainPeaksDone = false
   /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
   private screenScanAt = 0
   /** The moments each layer is currently showing, for the clock report. */
@@ -668,8 +670,25 @@ export class Globe {
              * gains almost nothing.
              */
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
+            /*
+             * Our ramp, driven by the service's alpha.
+             *
+             * Their palette is very nearly one colour: blue at a drizzle and a
+             * slightly deeper blue at a downpour, which is legible on a pale
+             * web map beside a legend and says nothing at all on a dark globe
+             * across a room. What their picture DOES carry is opacity — it
+             * climbs with intensity — so that is the number worth keeping, and
+             * the colour is ours again: cyan through green and yellow to red.
+             *
+             * It is a proxy, not a measurement, and it is worth being plain
+             * about the difference. The old source handed over real
+             * millimetres and the ramp was anchored to them; this one hands
+             * over a painting, and the most that can be recovered from a
+             * painting is how strongly it was painted.
+             */
+            float t = clamp(smoothstep(0.06, 0.72, r.a), 0.0, 1.0);
             float a = clamp(r.a * 2.2, 0.0, 1.0);
-            col = mix(col, r.rgb, a * (uRainMerc > 0.5 ? inMerc : 1.0));
+            col = mix(col, rainRamp(t), a * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
           gl_FragColor = vec4(col, 1.0);
         }
@@ -1015,6 +1034,62 @@ export class Globe {
    * measured guaranteed to be in shot. Nothing on screen changes; it is one
    * hidden frame.
    */
+  /**
+   * Where the heaviest rain is on screen, in coordinates.
+   *
+   * "The typhoon should be near Japan" is a question about a PLACE, and the
+   * last time it came up the answer was settled by naming the coordinates of
+   * the strongest cells rather than by staring at the globe. That worked
+   * because the source handed over real millimetres. This one hands over a
+   * painting, so the strength here is the paint's opacity — good enough to say
+   * WHERE the heaviest rain is, which is the whole question, even though it
+   * cannot say how many millimetres.
+   */
+  private reportRainPeaks(canvas: HTMLCanvasElement, frame: WeatherFrame): void {
+    if (!this.onNote) return
+    try {
+      const W = canvas.width
+      const H = canvas.height
+      const d = canvas.getContext('2d')!.getImageData(0, 0, W, H).data
+      const top: { a: number; x: number; y: number }[] = []
+      for (let y = 0; y < H; y += 2) {
+        for (let x = 0; x < W; x += 2) {
+          const a = d[(y * W + x) * 4 + 3]
+          if (a < 40) continue
+          if (top.length < 5 || a > top[top.length - 1].a) {
+            top.push({ a, x, y })
+            top.sort((p, q) => q.a - p.a)
+            // Keep them apart, or all five land in one storm.
+            for (let i = 1; i < top.length; i++) {
+              for (let j = 0; j < i; j++) {
+                if (Math.abs(top[i].x - top[j].x) < W / 24 && Math.abs(top[i].y - top[j].y) < H / 24) {
+                  top.splice(i--, 1)
+                  break
+                }
+              }
+            }
+            top.length = Math.min(top.length, 5)
+          }
+        }
+      }
+      const where = (x: number, y: number): string => {
+        const lon = -180 + ((x + 0.5) / W) * 360
+        const n = Math.PI * (1 - (2 * (y + 0.5)) / H)
+        const lat =
+          frame.projection === 'mercator'
+            ? (Math.atan(Math.sinh(n)) * 180) / Math.PI
+            : 90 - ((y + 0.5) / H) * 180
+        return `${lat.toFixed(1)},${lon.toFixed(1)}`
+      }
+      this.onNote(
+        `[weather] rain peaks (paint opacity, not mm): ` +
+          `${top.map((t) => `${((100 * t.a) / 255) | 0}%@${where(t.x, t.y)}`).join(' ') || 'none above 16%'}`
+      )
+    } catch {
+      /* a tainted canvas is not worth a crash for a diagnostic */
+    }
+  }
+
   private scanBackgroundSeam(): void {
     if (!this.onNote || !this.bg) return
     let rt: THREE.WebGLRenderTarget | null = null
@@ -2156,6 +2231,10 @@ export class Globe {
       // Hand the assembled mosaic back once per layer per run, when asked. A
       // 2048-wide PNG is a couple of megabytes and the point is to look at it
       // in an image viewer, not to stream it.
+      if (frame.layer === 'rain' && !this.rainPeaksDone) {
+        this.rainPeaksDone = true
+        this.reportRainPeaks(canvas, frame)
+      }
       const key = `${frame.layer}-${frame.blend ?? 'plain'}`
       if (this.onDebugImage && !this.debugDumped.has(key)) {
         this.debugDumped.add(key)
@@ -2439,6 +2518,7 @@ export class Globe {
     const slot = this.wx[layer]
     const token = ++slot.token
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
+    if (layer === 'rain') this.rainPeaksDone = false
     // Measure this series once, on whichever of its frames finishes first.
     if (!usable.length) {
       for (const t of slot.byTime?.values() ?? []) t.dispose()
