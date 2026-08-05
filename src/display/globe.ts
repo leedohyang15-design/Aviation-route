@@ -536,7 +536,27 @@ export class Globe {
           // uv.x directly, no fract() — same reasoning as the earth map above:
           // RepeatWrapping tiles it, and fract() would blow up the derivative
           // at the wrap and pick the wrong mip level, drawing a seam.
-          vec2 mercUV = vec2(uv.x, mercY);
+          /*
+           * 1.0 - mercY, because these two lines must agree about which way is up.
+           *
+           * Both mosaics are built with row zero at the NORTH, and three.js
+           * flips a texture as it uploads it — so texture v = 1 is the north
+           * edge for both. The flat coordinate already respects that: vUv.y is
+           * 1 at the top of the frame and 1 is north. The Mercator one did not.
+           * mercY is the standard tile-row fraction, 0 at the north pole, so
+           * feeding it straight in sampled the south when it meant the north
+           * and drew every Mercator layer MIRRORED about the equator.
+           *
+           * It hid well. At the equator mercY is 0.5 either way, so the error
+           * is nothing there and grows with latitude — the picture stays
+           * plausible, it is just the wrong hemisphere's weather, which is
+           * exactly "the rain does not match the cloud", "there is rain where
+           * nothing is happening", and a typhoon off Japan with nothing falling
+           * out of it. The cloud came from a plate carree source and was drawn
+           * correctly; the rain came from tiles and was drawn upside down, and
+           * the two were being compared to each other.
+           */
+          vec2 mercUV = vec2(uv.x, 1.0 - mercY);
           vec2 flatUV = vec2(uv.x, vUv.y);
 
           // Night = moonlit earth + city lights (from the night texture) glowing.
