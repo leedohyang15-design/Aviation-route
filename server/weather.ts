@@ -709,6 +709,16 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
         return null
       }
       opsLog(`[weather] cloud: ${layer} answered, ${(buf.length / 1e6).toFixed(1)}MB`)
+      // Debug: keep the raw sensor pictures beside the exe. There is a hairline
+      // down the finished map that has survived two rounds of reasoning and
+      // does not appear against synthetic imagery, so the next step is to look
+      // at the actual pixels rather than to guess again. Off unless asked for.
+      if (process.env.WEATHER_DEBUG_DUMP) {
+        const file = dataPath(`weather-disc-${layer.replace(/[^A-Za-z0-9]+/g, '_')}.png`)
+        void writeFile(file, buf)
+          .then(() => opsLog(`[weather] debug: wrote ${file}`))
+          .catch((e: Error) => opsLog(`[weather] debug: could not write ${file}: ${e.message}`))
+      }
       return `data:image/png;base64,${buf.toString('base64')}`
     } catch (err) {
       lastTileError = `${(err as Error).message} — ${layer}`

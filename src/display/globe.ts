@@ -1817,14 +1817,23 @@ export class Globe {
         if (!side) return resolve(null)
         const tex = new THREE.CanvasTexture(canvas)
         this.tuneTexture(tex)
-        // A data tile is a measurement. Averaging four neighbouring
-        // measurements to build a mip is meaningless once they are packed
-        // big-endian across channels — the average of two high bytes is not
-        // the high byte of the average — so the pyramid is simply not built.
-        if (frame.blend === 'data') {
-          tex.generateMipmaps = false
-          tex.minFilter = THREE.LinearFilter
-        }
+        /*
+         * No mipmaps on a weather texture. Two reasons, and neither applies to
+         * the earth map underneath, which keeps its pyramid.
+         *
+         * For a data tile the pyramid is meaningless: the value is packed
+         * big-endian across channels, and the average of two high bytes is not
+         * the high byte of the average.
+         *
+         * For the cloud it is about the seam. This texture wraps in longitude,
+         * and choosing a mip level is the one part of sampling that has to
+         * agree across that wrap — where it does not, the disagreement is a
+         * hairline down the whole frame, which is what has been reported. The
+         * pyramid was buying almost nothing anyway: a 2048-wide texture on a
+         * 1664-wide frame is barely minified even at full world view.
+         */
+        tex.generateMipmaps = false
+        tex.minFilter = THREE.LinearFilter
         resolve(tex)
       }
       for (const t of frame.tiles) {
