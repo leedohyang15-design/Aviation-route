@@ -686,7 +686,17 @@ export class Globe {
              * over a painting, and the most that can be recovered from a
              * painting is how strongly it was painted.
              */
-            float t = clamp(smoothstep(0.06, 0.72, r.a), 0.0, 1.0);
+            /*
+             * The paint saturates at 42%, so the ramp ends there.
+             *
+             * Measured, not assumed: the five heaviest cells on the globe all
+             * read exactly 42% opacity, which is where this palette stops
+             * getting darker. Stretching the ramp to 1.0 therefore spent its
+             * whole upper half on paint that never occurs, and the heaviest
+             * rain on earth came out green-yellow. Ending at the value that
+             * actually exists puts a storm back at the red end.
+             */
+            float t = clamp(smoothstep(0.04, 0.40, r.a), 0.0, 1.0);
             float a = clamp(r.a * 2.2, 0.0, 1.0);
             col = mix(col, rainRamp(t), a * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
@@ -1056,8 +1066,26 @@ export class Globe {
         for (let x = 0; x < W; x += 2) {
           const a = d[(y * W + x) * 4 + 3]
           if (a < 40) continue
-          if (top.length < 5 || a > top[top.length - 1].a) {
-            top.push({ a, x, y })
+          /*
+           * Rank by the WEIGHT AROUND a cell, not the cell itself.
+           *
+           * The palette saturates, so the strongest cells all read the same
+           * number and "the top five" quietly became "the first five found" —
+           * scan order, not weather. A storm is not one saturated pixel, it is
+           * a broad area of them, so what separates it from a squall is how
+           * much paint surrounds it.
+           */
+          let weight = 0
+          for (let j = -4; j <= 4; j++) {
+            for (let i = -4; i <= 4; i++) {
+              const yy = y + j * 2
+              const xx = ((x + i * 2) % W + W) % W
+              if (yy < 0 || yy >= H) continue
+              weight += d[(yy * W + xx) * 4 + 3]
+            }
+          }
+          if (top.length < 5 || weight > top[top.length - 1].a) {
+            top.push({ a: weight, x, y })
             top.sort((p, q) => q.a - p.a)
             // Keep them apart, or all five land in one storm.
             for (let i = 1; i < top.length; i++) {
@@ -1082,8 +1110,8 @@ export class Globe {
         return `${lat.toFixed(1)},${lon.toFixed(1)}`
       }
       this.onNote(
-        `[weather] rain peaks (paint opacity, not mm): ` +
-          `${top.map((t) => `${((100 * t.a) / 255) | 0}%@${where(t.x, t.y)}`).join(' ') || 'none above 16%'}`
+        `[weather] rain peaks (area-weighted paint, not mm): ` +
+          `${top.map((t) => `${(t.a / (81 * 255) * 100) | 0}%@${where(t.x, t.y)}`).join(' ') || 'none above 16%'}`
       )
     } catch {
       /* a tainted canvas is not worth a crash for a diagnostic */
