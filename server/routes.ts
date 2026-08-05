@@ -124,20 +124,73 @@ const HEXDB_BASE = process.env.HEXDB_BASE ?? 'https://hexdb.io'
  * it (a real answer worth caching). Throws on transport/API failure so the
  * caller leaves the callsign unknown instead of hiding the plane.
  */
+/**
+ * How long to give the primary alone before asking the backup as well.
+ *
+ * The two used to run strictly one after the other: up to six seconds waiting
+ * on adsbdb, and only then six more on hexdb. Twelve seconds with a blank card
+ * in front of a visitor, and in the background loop every miss cost two round
+ * trips end to end. Yet the case that actually hurts is a STALLED connection,
+ * not a slow one — a definite "never heard of it" comes back in a fraction of a
+ * second. So the backup starts alongside once the primary has had its fair
+ * chance, which leaves the common case at one request and caps the bad case at
+ * roughly one timeout instead of two.
+ */
+const HEDGE_MS = 700
+
 export async function lookupRoute(callsign: string): Promise<RoutePorts | null> {
-  const first = await lookupAdsbdb(callsign)
+  let backup: Promise<RoutePorts | null> | null = null
+  const askBackup = (): Promise<RoutePorts | null> =>
+    (backup ??= lookupHexdb(callsign).then(
+      (r) => {
+        if (r) hexdbHits++
+        return r
+      },
+      // The backup being down is not an answer about the callsign.
+      () => null
+    ))
+
+  const primary = lookupAdsbdb(callsign).then(
+    (r) => ({ route: r, err: null as unknown }),
+    (err: unknown) => ({ route: null as RoutePorts | null, err })
+  )
+  /*
+   * Whichever produces a ROUTE first wins.
+   *
+   * Awaiting the primary before so much as looking at the backup was the whole
+   * flaw in the first version of this: the backup could already be holding the
+   * answer and still sit on it for the rest of a six-second stall. This arm
+   * only ever resolves when the backup has something — never on an empty
+   * answer — so the race cannot end early with a "no route" the primary was
+   * about to contradict.
+   */
+  let hedge: ReturnType<typeof setTimeout> | undefined
+  const backupWins = new Promise<RoutePorts>((resolve) => {
+    hedge = setTimeout(() => {
+      void askBackup().then((r) => {
+        if (r) resolve(r)
+      })
+    }, HEDGE_MS)
+  })
+  const outcome = await Promise.race([primary, backupWins])
+  clearTimeout(hedge)
+  // A bare route object is the backup's arm; the primary's is a wrapper.
+  if (!('err' in outcome)) return outcome
+  const { route: first, err: primaryError } = outcome
   if (first) return first
-  // adsbdb gave a definite "never heard of it". Ask the other database before
-  // writing this aircraft off as going nowhere for the next six hours.
-  try {
-    const second = await lookupHexdb(callsign)
-    if (second) {
-      hexdbHits++
-      return second
-    }
-  } catch {
-    // The backup being down is not an answer about the callsign.
-  }
+
+  const second = await askBackup()
+  if (second) return second
+  /*
+   * A failure has to stay a failure.
+   *
+   * The primary throwing means transport trouble or a rate limit, and the
+   * caller reads that as "ask again later" — it backs off, and it does NOT
+   * write the callsign down as having no route. Swallowing it because the
+   * backup also came back empty would cache a six-hour "goes nowhere" for an
+   * aircraft nobody actually managed to ask about.
+   */
+  if (primaryError) throw primaryError
   return null
 }
 
