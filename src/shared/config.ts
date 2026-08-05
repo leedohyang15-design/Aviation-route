@@ -256,8 +256,14 @@ export const WEATHER_GIBS_SLOTS = (
     '-75:GOES-East_ABI_Band13_Clean_Infrared|GOES-East_ABI_GeoColor',
     '-137:GOES-West_ABI_Band13_Clean_Infrared|GOES-West_ABI_GeoColor',
     '140.7:Himawari_AHI_Band13_Clean_Infrared|Himawari_AHI_GeoColor',
-    `0:mtg_fd:ir105|msg_fes:ir108|meteosat:msg_ir108${EUM}`,
-    `45.5:msg_iodc:ir108|meteosat_iodc:ir108${EUM}`
+    // msg_fes first: both of these are confirmed answering on the exhibit
+    // machine, and a first choice that always fails is a wasted request on
+    // every poll for as long as the exhibit runs. mtg_fd stays behind it —
+    // the 0-degree position is handing over from Meteosat Second Generation
+    // to Third, and on the day MSG stops answering the spare takes over with
+    // nobody having to notice.
+    `0:msg_fes:ir108|mtg_fd:ir105|meteosat:msg_ir108${EUM}`,
+    `45.5:msg_iodc:ir108|mtg_iodc:ir105|meteosat_iodc:ir108${EUM}`
   ].join(',')
 )
   .split(',')
