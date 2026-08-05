@@ -2431,7 +2431,7 @@ export class Globe {
       // multiplies by it. Opaque, so it measures brightness alone.
       for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255
       ctx.putImageData(img, 0, 0)
-      this.scanEdges(c, 'SCREEN')
+      this.scanEdges(c, 'SCREEN', false, false)
     } catch {
       /* readPixels can fail on a lost context; a diagnostic is not worth a crash */
     }
@@ -2645,7 +2645,21 @@ export class Globe {
     }
   }
 
-  private scanEdges(canvas: HTMLCanvasElement, label: string, quiet = false): number {
+  private scanEdges(
+    canvas: HTMLCanvasElement,
+    label: string,
+    quiet = false,
+    /*
+     * Whether a column can honestly be called a longitude.
+     *
+     * For a texture it can: the mosaic is the whole world, edge to edge. For
+     * the drawing buffer it cannot — the view is rotated by uLonOffset and can
+     * be zoomed, so naming a screen column "162.7 degrees" invents a precision
+     * the measurement does not have. Screen columns are reported as a position
+     * across the frame instead.
+     */
+    columnsAreLongitudes = true
+  ): number {
     const W = canvas.width
     const H = canvas.height
     if (W < 64 || H < 64) return 0
@@ -2727,7 +2741,9 @@ export class Globe {
         .map((h) => `${toDeg(h.i).toFixed(1)}deg(${(h.z * 100).toFixed(0)}%)`)
     }
     const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
-    const lon = pick(cols, colMed, (x) => -180 + (x / W) * 360)
+    const lon = columnsAreLongitudes
+      ? pick(cols, colMed, (x) => -180 + (x / W) * 360)
+      : pick(cols, colMed, (x) => (100 * x) / W).map((t) => t.replace('deg', '% across'))
     let worst = 0
     for (let i = 1; i < H; i++) if (rows[i] > worst) worst = rows[i]
     if (quiet) return worst
