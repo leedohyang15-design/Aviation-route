@@ -970,8 +970,8 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
     for (const t of shared) wantedAt.push(Math.floor(t / 600_000) * 600_000)
     opsLog(
       `[weather] cloud: following the rain's clock — ${wantedAt.length} steps, ` +
-        `${Math.round((Date.now() - wantedAt[0]) / 60_000)}분 전부터 ` +
-        `${Math.round((Date.now() - wantedAt[wantedAt.length - 1]) / 60_000)}분 전까지`
+        `${Math.round((Date.now() - wantedAt[0]) / 60_000)}min ago to ` +
+        `${Math.round((Date.now() - wantedAt[wantedAt.length - 1]) / 60_000)}min ago`
     )
   } else {
     for (let back = steps - 1; back >= 1; back--) {
@@ -1038,7 +1038,7 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
   if (series.length > 1) {
     const span = Math.round((series[series.length - 1].time - series[0].time) / 60_000)
     opsLog(
-      `[weather] cloud: ${series.length} steps over ${span}분 — animating ` +
+      `[weather] cloud: ${series.length} steps over ${span}min - animating ` +
         `(${reused} reused, ${series.length - 1 - reused} fetched)`
     )
   }

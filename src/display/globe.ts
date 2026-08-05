@@ -372,8 +372,16 @@ export class Globe {
   /** A ramp measured off the data, applied after applyDecode has set the one
    * the declared unit implies. Null means the declared unit was believed. */
   private rainFit: { lo: number; hi: number; gamma: number } | null = null
-  /** Raised when a new cloud series arrives; cleared by the frame that scans it. */
-  private needEdgeScan = false
+  /**
+   * How many more cloud frames to measure.
+   *
+   * Was a single flag, and it scanned only the first frame of the series — so
+   * the first run reported no straight edges at all while the band was still
+   * on screen. The loop is four steps and a screenshot catches one of them: a
+   * step that is broken on its own is invisible to a scan of step zero. Every
+   * frame of a new series is measured now.
+   */
+  private edgeScansLeft = 0
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -1879,8 +1887,8 @@ export class Globe {
       // Hand the assembled mosaic back once per layer per run, when asked. A
       // 2048-wide PNG is a couple of megabytes and the point is to look at it
       // in an image viewer, not to stream it.
-      if (this.needEdgeScan && frame.layer === 'cloud') {
-        this.needEdgeScan = false
+      if (this.edgeScansLeft > 0 && frame.layer === 'cloud') {
+        this.edgeScansLeft--
         this.scanEdges(canvas, frame)
       }
       if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
@@ -2059,8 +2067,8 @@ export class Globe {
 
       if (flat.length) {
         this.onNote?.(
-          `[weather] cloud: ${flat.length} sensor picture(s) at ${flat.join(', ')}° were a flat ` +
-            `wash with no cloud contrast — dropped rather than stretched into a bright rectangle`
+          `[weather] cloud: dropped ${flat.length} flat-wash sensor picture(s) at ` +
+            `${flat.join(', ')} deg (no contrast to normalise)`
         )
       }
 
@@ -2172,7 +2180,7 @@ export class Globe {
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
     // Measure this series once, on whichever of its frames finishes first.
     if (layer === 'rain') this.needRainCalib = true
-    else this.needEdgeScan = true
+    else this.edgeScansLeft = usable.length
     if (!usable.length) {
       for (const t of slot.textures) t.dispose()
       slot.textures = []
@@ -2291,10 +2299,20 @@ export class Globe {
     }
     const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
     const lon = pick(cols, colMed, (x) => -180 + (x / W) * 360)
+    /*
+     * ASCII only, on purpose.
+     *
+     * The first reading of this line came back as mojibake — the log is read
+     * through a Windows console whose code page is not UTF-8, and a diagnostic
+     * nobody can read is not a diagnostic. Degrees, times and multipliers
+     * survive any code page; the prose does not need to be here.
+     */
+    const hhmm = new Date(frame.time).toISOString().slice(11, 16)
     this.onNote(
-      `[weather] cloud edges (${frame.projection}, ${W}×${H}): ` +
-        `가로선 ${lat.join(' ') || '없음'} | 세로선 ${lon.join(' ') || '없음'} — ` +
-        `대조: Mercator z3 행 ±85.1/±66.5/±41.0/±21.9/0, 패치 bbox ±80, 타일 열 ±135/±90/±45/0`
+      `[weather] cloud edges step ${frame.step ?? 0}/${frame.steps ?? 1} ${hhmm}Z ` +
+        `(${frame.projection} ${W}x${H}): rows ${lat.join(' ') || 'none'} | ` +
+        `cols ${lon.join(' ') || 'none'} | ref: merc-z3-rows +-85.1/66.5/41.0/21.9/0, ` +
+        `patch-bbox +-80, tile-cols +-135/90/45/0`
     )
   }
 
@@ -2352,9 +2370,9 @@ export class Globe {
     const a = rainAnchors(decode)
     const fmt = (v: number): string => (Math.abs(v) >= 0.01 ? v.toFixed(2) : v.toExponential(1))
     let msg =
-      `[weather] rain: ${vals.length} samples — p50 ${fmt(p50)}, p90 ${fmt(p90)}, ` +
-      `p99 ${fmt(p99)}, p99.9 ${fmt(p999)}, max ${fmt(max)} ${unit}; ` +
-      `ramp is ${fmt(a.x)}–${fmt(a.y)} ${unit}`
+      `[weather] rain: ${vals.length} samples p50 ${fmt(p50)} p90 ${fmt(p90)} ` +
+      `p99 ${fmt(p99)} p99.9 ${fmt(p999)} max ${fmt(max)} ${unit}; ` +
+      `ramp ${fmt(a.x)}..${fmt(a.y)} ${unit}`
     /*
      * Refit only on a clear mismatch, in either direction: a world whose
      * heaviest tenth of a percent never reaches a tenth of the ramp's top, or
