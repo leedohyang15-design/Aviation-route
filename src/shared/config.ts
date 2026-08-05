@@ -74,22 +74,15 @@ export const EARTH_NIGHT_URL = 'earth_night.jpg'
  *
  * It was off, on the theory that a wrapping texture's pyramid is built with its
  * edges clamped and draws a hairline where the map joins itself. That theory
- * was never tested and it was answering the wrong symptom. What the exhibit
- * actually shows is a line that CRAWLS when the globe is turned, and a seam
- * does not crawl — it sits still. Rendering the background alone with the wrap
- * forced into the middle of the frame found nothing there: one percent of rows,
- * a third of a grey level.
+ * was never tested, and it was answering the wrong symptom: what the exhibit
+ * shows is a line that CRAWLS when the globe is turned, and a seam sits still.
+ * Rendering the background alone with the wrap forced into the centre of the
+ * frame found one percent of rows stepping there, a third of a grey level.
  *
- * Crawling is what undersampling looks like. The day map is sixteen thousand
- * pixels wide against a sixteen-hundred-pixel frame, so a screen pixel covers
- * about ten texels and a linear sample reads four of them. Move the offset a
- * fraction and it reads four DIFFERENT ones — the map fizzes along its
- * highest-contrast edges. A mip chain is the answer to exactly that, and it
- * brings anisotropic filtering with it, which is what keeps an equirectangular
- * map sharp where it is stretched.
- *
- * Set to 0 to go back, and the seam test in the log reports what the wrap
- * column is doing either way, so the trade is measurable rather than argued.
+ * Crawling is undersampling. The day map is 16384px wide against a 1664px
+ * frame, so a screen pixel covers about ten texels and a linear sample reads
+ * four; move the offset a fraction and it reads four DIFFERENT ones. A mip
+ * chain answers exactly that, and brings anisotropy with it.
  */
 export const EARTH_MIPMAPS = (readEnv('EARTH_MIPMAPS') ?? '1') !== '0'
 
@@ -131,53 +124,83 @@ export const OBSERVER_LON = Number(readEnv('OBSERVER_LON') ?? 126.978)
 // ---------------------------------------------------------------------------
 
 /**
- * OpenWeatherMap: cloud AND rain from ONE model on ONE key.
+ * MapTiler Weather — cloud AND rain from one place, which is the whole point.
  *
- * The exhibit's problem was never that either layer was wrong. It was that they
- * are different KINDS of thing: the cloud a geostationary camera's infrared
- * photograph, the rain a model's opinion. Measured on the same grid at the same
- * instants they correlate at 0.39 — right place, right time, still not the same
- * weather, because infrared sees cold tops rather than cloud and the model
- * parameterises convection inside its cells.
+ * The previous arrangement took cloud from NASA GIBS and rain from RainViewer,
+ * and it showed: two products from two sensors at two resolutions that
+ * disagreed with each other and with the official numbers. GIBS gives infrared
+ * brightness, from which cloud has to be GUESSED by a luminance heuristic —
+ * which is why Korea never matched its published cloud cover. RainViewer's free
+ * tier has no satellite at all, and its radar only exists over countries with
+ * ground radar, so Africa and the oceans were simply blank.
  *
- * Every public map they get compared against solves this the same way: their
- * "cloud" is not a photograph either, it is the model's own total cloud cover.
- * One model, one timestamp, so the two agree by construction.
+ * MapTiler serves both as GFS model fields on one key: real cloud-cover percent
+ * and real radar reflectivity, global, on the same grid, in one tile scheme.
+ * They are DATA tiles — the value is packed into the pixel, not painted — so
+ * the colour ramp is ours, and a wrong-looking rain colour is now a number in
+ * this file rather than somebody else's palette.
  *
- * Two APIs, because which one a free key may use is the thing that cannot be
- * checked from here. Maps 2.0 takes a `date` and so can animate; Maps 1.0 is
- * current-only. It probes 2.0, falls back to 1.0, and the log says which is
- * live and therefore whether the tab animates.
+ * Requires a key (free, non-commercial): https://cloud.maptiler.com/account/keys
+ * Put it in .env as MAPTILER_KEY. Without one the exhibit falls back to the old
+ * GIBS + RainViewer pair rather than showing an empty sky.
  */
+export const MAPTILER_KEY = readEnv('MAPTILER_KEY') ?? ''
+export const MAPTILER_WEATHER_INDEX =
+  readEnv('MAPTILER_WEATHER_INDEX') ?? 'https://api.maptiler.com/weather/latest.json'
+export const MAPTILER_TILE_BASE =
+  readEnv('MAPTILER_TILE_BASE') ?? 'https://api.maptiler.com/tiles'
 /**
- * Tile pyramid level for OpenWeatherMap. 2 = a 4x4 grid, 1024px around the world.
+ * Which variable each layer is, as `id|id|id` — the first one the key's index
+ * actually carries wins.
  *
- * Not 3. A free key allows sixty calls a minute, and level 3 is sixty-four
- * tiles per layer — a hundred and twenty-eight a poll, which walks straight
- * into the limit and comes back 401. Level 2 is thirty-two a poll and stays far
- * under it.
- *
- * The resolution is not the sacrifice it looks like: this is model output, and
- * the model's own grid is a quarter of a degree — about fourteen hundred cells
- * around the equator. A thousand-pixel texture is close to the resolution the
- * numbers actually have, so most of what level 3 bought was a sharper picture
- * of an interpolation.
+ * Alternatives, not a single name, because entitlement varies: the exhibit's
+ * own key answers with temperature, pressure, precipitation, wind and radar,
+ * and NO cloud variable of any kind. So cloud falls through this list and then
+ * out to GIBS, and the log says which happened.
  */
-export const OWM_ZOOM = Number(readEnv('OWM_ZOOM') ?? 2)
-
-export const OPENWEATHER_KEY = readEnv('OPENWEATHER_KEY') ?? ''
-export const OWM_TILE_BASE = readEnv('OWM_TILE_BASE') ?? 'https://tile.openweathermap.org/map'
-export const OWM_TILE_BASE_V2 =
-  readEnv('OWM_TILE_BASE_V2') ?? 'https://maps.openweathermap.org/maps/2.0/weather'
-/** Layer ids: [Maps 1.0 name, Maps 2.0 op code]. */
-export const OWM_LAYERS: Record<'cloud' | 'rain', [string, string]> = {
-  cloud: ['clouds_new', 'CL'],
-  rain: ['precipitation_new', 'PR0']
+export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
+  cloud:
+    readEnv('MAPTILER_CLOUD_VARIABLE') ??
+    'cloud_cover-total:gfs|cloud_cover-high:gfs|cloud-cover:gfs',
+  // Precipitation first, reflectivity second. Reflectivity is what a radar
+  // returns and it is genuinely patchy — the model only lights it up where it
+  // has hydrometeors big enough to scatter. Every public weather map anyone
+  // compares this against, Windy included, paints an hour's precipitation
+  // instead, which is broader, smoother and the thing people mean by "where is
+  // it raining". The ramp already reads the unit off the index, so switching
+  // costs nothing.
+  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'precipitation-1h:gfs|radar-composite:gfs'
 }
-
+/**
+ * How many keyframes to bring back, newest first.
+ *
+ * The index carries a whole time series, which is what makes the tab stop
+ * looking like a photograph: the renderer cross-fades through them so the
+ * weather actually drifts. Each extra keyframe is another full tile grid, so
+ * this is the one knob that trades bandwidth for motion. 1 = a still picture.
+ */
 export const WEATHER_FRAME_COUNT = Number(readEnv('WEATHER_FRAME_COUNT') ?? 4)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 export const WEATHER_FRAME_HOLD_MS = Number(readEnv('WEATHER_FRAME_HOLD_MS') ?? 2200)
+/**
+ * Ceiling on one layer's whole series, in megabytes.
+ *
+ * A two-channel variable's low byte turns over every 1/65536th of its range,
+ * so it is noise even where the field is smooth — and PNG cannot compress
+ * noise. A four-step radar series measured 54MB against a cloud series' 5MB,
+ * and that number gets broadcast to both windows and written to disk. Frames
+ * are fetched newest-first and the fetch stops here, so what a full budget
+ * costs is a shorter animation, never the picture of right now.
+ */
+export const WEATHER_MAX_SERIES_MB = Number(readEnv('WEATHER_MAX_SERIES_MB') ?? 24)
+
+/**
+ * RainViewer's free public index — the fallback rain source, used only when no
+ * MapTiler key is configured.
+ */
+export const WEATHER_INDEX_URL =
+  readEnv('WEATHER_INDEX_URL') ?? 'https://api.rainviewer.com/public/weather-maps.json'
+
 /**
  * How often to look for a newer frame. The source publishes every ten minutes,
  * so five is often enough to pick one up promptly without asking twice for the
@@ -192,8 +215,39 @@ export const WEATHER_POLL_MS = Number(readEnv('WEATHER_POLL_MS') ?? 5 * 60_000)
  * request count and the texture memory for detail the dome cannot show.
  */
 export const WEATHER_ZOOM = Number(readEnv('WEATHER_ZOOM') ?? 3)
+/** Tile edge in pixels. RainViewer serves 256 and 512. */
+export const WEATHER_TILE_PX = Number(readEnv('WEATHER_TILE_PX') ?? 256)
 /** Per-request timeout for the index and for each tile. */
 export const WEATHER_TIMEOUT_MS = Number(readEnv('WEATHER_TIMEOUT_MS') ?? 12_000)
+
+/**
+ * Where the cloud picture comes from.
+ *
+ * NOT from RainViewer: its free tier answers `satellite.infrared: []` — the
+ * product exists in the index and carries no frames, which is the polite way
+ * of saying it is a paid one. Rain still comes from there.
+ *
+ * NASA GIBS serves plate carrée directly, which is the frame's own projection,
+ * so a cloud picture is one request and no reprojection at all.
+ */
+export const WEATHER_CLOUD_SOURCE = readEnv('WEATHER_CLOUD_SOURCE') ?? 'gibs'
+export const WEATHER_GIBS_URL =
+  readEnv('WEATHER_GIBS_URL') ?? 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi'
+/**
+ * EUMETSAT's public WMS. No key, no registration.
+ *
+ * Needed because NASA GIBS does not carry Meteosat. Its catalogue was read in
+ * full on the exhibit machine — 2938 layers — and its only geostationary
+ * infrared is GOES-East, GOES-West and Himawari; everything else that mentions
+ * infrared is a polar-orbiting swath. Those three see from 155W round to about
+ * 5E, which leaves 5E to 61E with no cloud at all: east Africa, the Middle
+ * East and the western Indian Ocean. That is the black gap on the left of the
+ * frame, and no spelling of a NASA layer name was ever going to fill it,
+ * because the pictures are not there. Meteosat is the satellite that looks at
+ * that longitude, and this is where its owner publishes it.
+ */
+export const WEATHER_EUMETSAT_URL =
+  readEnv('WEATHER_EUMETSAT_URL') ?? 'https://view.eumetsat.int/geoserver/wms'
 
 /**
  * The geostationary sensors, as `longitude:name|name|name` slots, optionally
@@ -213,6 +267,56 @@ export const WEATHER_TIMEOUT_MS = Number(readEnv('WEATHER_TIMEOUT_MS') ?? 12_000
  * log names the layer that answered in each slot. Trim this list once the
  * exhibit machine has told us.
  */
+const EUM = `@${WEATHER_EUMETSAT_URL}`
+export const WEATHER_GIBS_SLOTS = (
+  readEnv('WEATHER_GIBS_SLOTS') ??
+  [
+    // No GeoColor spares. GeoColor is a VISIBLE-light true-colour composite,
+    // not a brightness temperature: by day it is white cloud over bright
+    // desert and blue ocean, and it carries the day/night terminator inside
+    // the picture. Dropped into a mosaic of infrared discs and then stretched
+    // onto the common scale, it comes out as a bright patch that stays bright
+    // where the rest of the globe goes dark. It was only ever meant as a spare
+    // spelling; it is a different measurement and there is no scale on which
+    // it agrees with the other four sensors.
+    '-75:GOES-East_ABI_Band13_Clean_Infrared',
+    '-137:GOES-West_ABI_Band13_Clean_Infrared',
+    '140.7:Himawari_AHI_Band13_Clean_Infrared',
+    // msg_fes first: both of these are confirmed answering on the exhibit
+    // machine, and a first choice that always fails is a wasted request on
+    // every poll for as long as the exhibit runs. mtg_fd stays behind it —
+    // the 0-degree position is handing over from Meteosat Second Generation
+    // to Third, and on the day MSG stops answering the spare takes over with
+    // nobody having to notice.
+    `0:msg_fes:ir108|mtg_fd:ir105|meteosat:msg_ir108${EUM}`,
+    `45.5:msg_iodc:ir108|mtg_iodc:ir105|meteosat_iodc:ir108${EUM}`
+  ].join(',')
+)
+  .split(',')
+  .map((entry) => {
+    // The endpoint comes off first: a GeoServer layer name contains a colon
+    // (workspace:layer), so the longitude has to be split off at the FIRST
+    // colon and everything after it kept whole.
+    const at = entry.indexOf('@')
+    const url = at >= 0 ? entry.slice(at + 1).trim() : undefined
+    const rest = (at >= 0 ? entry.slice(0, at) : entry).trim()
+    const colon = rest.indexOf(':')
+    const lon = Number(rest.slice(0, colon))
+    const names = rest
+      .slice(colon + 1)
+      .split('|')
+      .filter(Boolean)
+    return { lon, names, url }
+  })
+  .filter((s) => Number.isFinite(s.lon) && s.names.length)
+
+/**
+ * RainViewer's colour scheme for the rain tiles. 2 is Universal Blue, the one
+ * the free tier serves, and the one the legend on the control screen is drawn
+ * to match — change them together or the key will lie.
+ */
+export const WEATHER_RAIN_COLOR = Number(readEnv('WEATHER_RAIN_COLOR') ?? 2)
+
 /**
  * How strongly the cloud reads against the earth under it.
  *
@@ -223,3 +327,41 @@ export const WEATHER_TIMEOUT_MS = Number(readEnv('WEATHER_TIMEOUT_MS') ?? 12_000
  */
 export const WEATHER_CLOUD_OPACITY = Number(readEnv('WEATHER_CLOUD_OPACITY') ?? 1.45)
 
+/**
+ * Pixel width of ONE geostationary patch — 160 degrees wide, and square.
+ *
+ * This used to be the width of a whole -180..180 image, which is where the
+ * "구름 해상도가 너무 낮다" came from: a sensor sees eighty degrees around the
+ * point it hangs over, so nearly two thirds of that image was empty space and
+ * the disc itself got a third of the pixels. The same 1024 across 160 degrees
+ * is 6.4 pixels per degree against the old 2.8 — two and a quarter times
+ * sharper, for the same bytes on the wire.
+ */
+export const WEATHER_GIBS_WIDTH = Number(readEnv('WEATHER_GIBS_WIDTH') ?? 1024)
+
+/**
+ * A single seamless global infrared layer, tried before the discs. `off` skips
+ * it. Comma-separated alternatives; the catalogue is also searched for anything
+ * that looks like a merged IR product.
+ *
+ * `off` by default, because the exhibit machine has now told us: MERGIR — the
+ * merged infrared this was written for — is not in that endpoint's catalogue,
+ * and neither is anything else global. Leaving it on cost a failed request
+ * every poll to prove a fact we already know. Set it to a layer name if a
+ * different endpoint does carry one; the machinery is still here and is still
+ * the better shape of answer when it exists.
+ */
+export const WEATHER_GIBS_GLOBAL = readEnv('WEATHER_GIBS_GLOBAL') ?? 'off'
+/**
+ * How many past steps the cloud animates over, and how far apart.
+ *
+ * The geostationary sensors publish every ten minutes, so these are real
+ * observations rather than an interpolation — twenty minutes of actual
+ * weather. Each step is another full set of sensor requests, so this is the
+ * knob that trades bandwidth for movement; 1 is a single still picture.
+ */
+export const WEATHER_CLOUD_STEPS = Number(readEnv('WEATHER_CLOUD_STEPS') ?? 4)
+export const WEATHER_CLOUD_STEP_MS = Number(readEnv('WEATHER_CLOUD_STEP_MS') ?? 15 * 60_000)
+
+/** Pixel width of the global image; height is a third of it (360deg by 120). */
+export const WEATHER_GIBS_GLOBAL_WIDTH = Number(readEnv('WEATHER_GIBS_GLOBAL_WIDTH') ?? 3072)

@@ -21,6 +21,7 @@ import type {
   OverlayKey,
   Satellite,
   ViewState,
+  WeatherDecode,
   WeatherFrame,
   WeatherLayer
 } from '@shared/types'
@@ -71,6 +72,63 @@ const HOME_LAT = 37.5
  * constants. They come from the unit, with a proportional fallback for a unit
  * nobody here has seen.
  */
+/** The curve for the intensity ramp: 1 for an already-logarithmic unit, less
+ * than 1 for a linear one that needs its quiet end lifted. */
+function rainGamma(d: WeatherDecode): number {
+  const unit = (d.unit ?? '').toLowerCase()
+  if (unit.includes('dbz')) return 1
+  // Millimetres. 0.5mm/h is a shower you would put a coat on for and sits at
+  // two percent of the range; 0.35 lifts it to about a quarter, which is where
+  // the colour ramp starts saying something.
+  return 0.35
+}
+
+function rainAnchors(d: WeatherDecode): THREE.Vector2 {
+  const unit = (d.unit ?? '').toLowerCase()
+  // 5 dBZ, not 12. Twelve is roughly 0.2mm an hour, and starting the fade
+  // there left light rain at a sixth of full opacity — invisible over a night
+  // ocean, which is why the map looked almost empty next to every public
+  // weather site. Those sites paint from about a tenth of a millimetre, and
+  // this is what that is in reflectivity.
+  if (unit.includes('dbz')) return new THREE.Vector2(5, 65)
+  // mm, mm/h, kg/m² — an hour's rain. 0.05 is the drizzle at the edge of a
+  // system, 12 is a downpour; above that the ramp is already at its last
+  // colour. The top used to be 18, which is a rate a typhoon only reaches in
+  // its eyewall — so the rest of the storm, which is where nearly all of its
+  // rain is, drew as pale blue on a picture of a hurricane.
+  /*
+   * Measured, not guessed. A world's worth of GFS hourly precipitation reads
+   * p50 0.00, p90 0.20, p99 1.37, p99.9 3.73, max 42.9 mm — so the unit is
+   * right and the storms are there; nine wet pixels in ten are lighter than
+   * two tenths of a millimetre. Starting the ramp at 0.05 meant painting all
+   * of them, which is why oceans that every other map leaves empty came out
+   * as solid cyan sheets.
+   *
+   * Raising that floor to 0.15 was an overcorrection and it emptied the map.
+   * Nine wet pixels in ten sit at or below 0.20mm, so a floor just under it
+   * throws away almost all the rain there is, and side by side with a public
+   * map the difference was no longer the colour but the COVERAGE: theirs blue
+   * across whole oceans, ours bare. The footprint was never the problem. Light
+   * rain belongs on the map — it just should not be drawn at the same strength
+   * as a downpour, and that is the opacity ramp's job, not this one's. So the
+   * floor goes back under the field's own quantisation step and the ramp
+   * carries the intensity.
+   *
+   * The top comes down from 12 to 8 for the same reason in the other
+   * direction. Only one pixel in a thousand reaches 3.5mm, so with the top at
+   * a full downpour the whole hot half of the ramp - orange, red, magenta -
+   * was spent on under a tenth of a percent of the world, and a typhoon drew
+   * as a green smudge a few pixels wide. The measured peaks are real storms in
+   * the right places (39mm at 24.5N 137.9E moving north through the loop, 31mm
+   * in the Bay of Bengal, 39mm over the west African monsoon); at 8 their rain
+   * bands reach orange and their cores saturate, which is what a storm looks
+   * like on every map this gets compared against.
+   */
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.05, 8)
+  const span = d.max - d.min
+  return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
+}
+
 export interface SelectionAnchor {
   x: number
   y: number
@@ -326,6 +384,13 @@ export class Globe {
   private debugDumped = new Set<string>()
   /** Set to put a line in the exe's log from the renderer. */
   onNote: ((text: string) => void) | null = null
+  /** A ramp measured off the data, applied after applyDecode has set the one
+   * the declared unit implies. Null means the declared unit was believed. */
+  private rainFit: { lo: number; hi: number; gamma: number } | null = null
+  /** Raised when a new rain series arrives; cleared by the frame that measures it. */
+  private needRainCalib = false
+  /** Once per distinct picture: which cloud steps have been checked for a straight edge. */
+  private edgeScanned = new Set<string>()
   /** Once per series: the strongest rain and where it is. */
   private rainPeaksDone = false
   /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
@@ -1136,6 +1201,252 @@ export class Globe {
     } catch {
       /* a tainted canvas is not worth a crash for a diagnostic */
     }
+  }
+
+  /**
+   * Read what the rain field actually contains, and fit the ramp to it.
+   *
+   * Side by side with a public weather map the difference was not the shape —
+   * the fronts and the storm spirals are in the right places — but the range:
+   * ours drew the entire world in the first colour of a six-colour ramp, so a
+   * typhoon and a grey drizzle over Siberia were the same shade of cyan. That
+   * happens when the numbers are not in the unit the index claims: the ramp's
+   * high anchor is a downpour in millimetres, and if the service is packing
+   * metres, or an accumulation over a different window, every real value lands
+   * in the bottom two percent of the scale and no amount of gamma rescues it.
+   *
+   * So measure rather than assume. The percentiles go in the log either way —
+   * that one line says whether a missing storm is missing from the data or
+   * only from the picture — and the ramp is refitted only when the numbers are
+   * an order of magnitude away from what the declared unit implies.
+   */
+  private calibrateRain(canvas: HTMLCanvasElement, decode: WeatherDecode): void {
+    const ctx = canvas.getContext('2d')
+    if (!ctx || !canvas.width || !canvas.height) return
+    let img: ImageData
+    try {
+      img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    } catch {
+      return // a tainted canvas: not worth a crash for a diagnostic
+    }
+    const order = decode.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
+    const wt: Record<string, number> = { r: 0, g: 0, b: 0 }
+    for (let i = 0; i < order.length; i++) wt[order[i]] = 256 ** (order.length - 1 - i)
+    const packed = 256 ** order.length - 1
+    const px = img.data
+    const vals: number[] = []
+    /*
+     * Where the heaviest rain is, not just how much there is.
+     *
+     * "The typhoon has no rain on it" and "the field peaks at 39mm" cannot
+     * both be judged from a distribution — one is about a place. So the top
+     * few cells are kept with their positions and reported as coordinates. If
+     * they land on the storm and the screen is still empty there, the fault is
+     * in the drawing; if they land somewhere else, it is in the data or the
+     * moment chosen. Either way it stops being a matter of opinion.
+     */
+    const W = canvas.width
+    const H = canvas.height
+    const top: { v: number; x: number; y: number }[] = []
+    // Every fourth pixel each way. The shape of a distribution does not need
+    // four million reads, and this runs on the frame that swaps the texture in.
+    for (let y = 0; y < H; y += 4) {
+      for (let x = 0; x < W; x += 4) {
+        const p = (y * W + x) * 4
+        if (px[p + 3] < 8) continue // alpha 0 is "no data", not "no rain"
+        const raw = (px[p] * wt.r + px[p + 1] * wt.g + px[p + 2] * wt.b) / packed
+        const val = decode.min + raw * (decode.max - decode.min)
+        vals.push(val)
+        if (top.length < 5 || val > top[top.length - 1].v) {
+          top.push({ v: val, x, y })
+          top.sort((a, b) => b.v - a.v)
+          // Keep the peaks apart, or all five land inside one eyewall and say
+          // nothing about whether the rest of the world is covered.
+          for (let i = 1; i < top.length; i++) {
+            for (let j = 0; j < i; j++) {
+              if (Math.abs(top[i].x - top[j].x) < W / 40 && Math.abs(top[i].y - top[j].y) < H / 40) {
+                top.splice(i--, 1)
+                break
+              }
+            }
+          }
+          top.length = Math.min(top.length, 5)
+        }
+      }
+    }
+    if (vals.length < 1000) return
+    vals.sort((a, b) => a - b)
+    const at = (q: number): number => vals[Math.min(vals.length - 1, Math.floor(q * vals.length))]
+    const p50 = at(0.5)
+    const p90 = at(0.9)
+    const p99 = at(0.99)
+    const p999 = at(0.999)
+    const max = vals[vals.length - 1]
+    const unit = decode.unit ?? '?'
+    /*
+     * Pixel to coordinate. The rain mosaic is Web Mercator, so the row has to
+     * be un-projected — reading it as a plain latitude would put a storm in
+     * the wrong hemisphere's worth of error at high latitude, which is exactly
+     * the kind of mistake that would send the next hour chasing nothing.
+     */
+    const where = (x: number, y: number): string => {
+      const lon = -180 + ((x + 0.5) / W) * 360
+      const n = Math.PI * (1 - (2 * (y + 0.5)) / H)
+      const lat =
+        this.bgUniforms.uRainMerc.value > 0.5
+          ? (Math.atan(Math.sinh(n)) * 180) / Math.PI
+          : 90 - ((y + 0.5) / H) * 180
+      return `${lat.toFixed(1)},${lon.toFixed(1)}`
+    }
+    const a = rainAnchors(decode)
+    const fmt = (v: number): string => (Math.abs(v) >= 0.01 ? v.toFixed(2) : v.toExponential(1))
+    let msg =
+      `[weather] rain: ${vals.length} samples p50 ${fmt(p50)} p90 ${fmt(p90)} ` +
+      `p99 ${fmt(p99)} p99.9 ${fmt(p999)} max ${fmt(max)} ${unit}; ` +
+      `ramp ${fmt(a.x)}..${fmt(a.y)} ${unit}; ` +
+      `peaks ${top.map((t) => `${fmt(t.v)}@${where(t.x, t.y)}`).join(' ')}`
+    /*
+     * Refit only on a clear mismatch, in either direction: a world whose
+     * heaviest tenth of a percent never reaches a tenth of the ramp's top, or
+     * one whose median is already past it. Inside that band the declared unit
+     * is believed, because a genuinely calm hour should look calm rather than
+     * being stretched until it looks like a storm.
+     */
+    this.rainFit = null
+    if (p999 > 0 && (p999 < a.y * 0.1 || p50 > a.y)) {
+      const lo = Math.max(0, p90)
+      const hi = Math.max(lo + Math.abs(lo) * 0.01 + 1e-6, p999)
+      // Held, not written: applyDecode runs after this and sets the ramp from
+      // the declared unit, so writing the uniform here would be undone.
+      this.rainFit = { lo, hi, gamma: 0.6 }
+      msg +=
+        ` — that does not match "${unit}", so the ramp is refitted to the data: ` +
+        `${fmt(lo)}–${fmt(hi)}`
+    }
+    this.onNote?.(msg)
+  }
+
+
+
+
+
+
+  private scanEdges(
+    canvas: HTMLCanvasElement,
+    label: string,
+    quiet = false,
+    /*
+     * Whether a column can honestly be called a longitude.
+     *
+     * For a texture it can: the mosaic is the whole world, edge to edge. For
+     * the drawing buffer it cannot — the view is rotated by uLonOffset and can
+     * be zoomed, so naming a screen column "162.7 degrees" invents a precision
+     * the measurement does not have. Screen columns are reported as a position
+     * across the frame instead.
+     */
+    columnsAreLongitudes = true
+  ): number {
+    const W = canvas.width
+    const H = canvas.height
+    if (W < 64 || H < 64) return 0
+    let img: ImageData
+    try {
+      img = canvas.getContext('2d')!.getImageData(0, 0, W, H)
+    } catch {
+      return 0
+    }
+    const d = img.data
+    // What the eye sees is the composed cloud value, which mergePatches writes
+    // into every channel, times its coverage. Alpha is part of the picture: a
+    // patch that covers a rectangle and nothing else shows up in it.
+    const v = (x: number, y: number): number => {
+      const o = (y * W + x) * 4
+      return (d[o] * d[o + 3]) / 65025
+    }
+    /*
+     * Count how much of a line steps hard, do not average the whole line.
+     *
+     * The mean absolute difference across a full row was the wrong statistic
+     * and it is why every scan came back "none" while the band was plainly on
+     * screen. A band covering a quarter of the width contributes its edge to
+     * only a quarter of the row, so the mean dilutes it fourfold — and against
+     * a photographic map, whose ordinary row-to-row difference is already
+     * large, a diluted edge never reaches a multiple of the median.
+     *
+     * Nor is counting the hard steps enough on its own: a busy photographic
+     * map has plenty of them scattered about, and they raise the baseline out
+     * of reach. What actually separates machinery from weather is that a
+     * machine-drawn edge is STRAIGHT — its hard steps are contiguous and all
+     * in the same direction. So the statistic is the longest unbroken run of
+     * same-signed hard steps along the line, as a fraction of its length.
+     * A quarter-width band scores 25%; cloud edges, coastlines and city lights
+     * score nearly nothing, because they bend.
+     */
+    const STEP = 2
+    const HARD = 0.12 // a step this big is not a gradient
+    const longestRun = (n: number, at: (i: number) => number): number => {
+      let best = 0
+      let cur = 0
+      let sign = 0
+      for (let i = 0; i < n; i += STEP) {
+        const d = at(i)
+        const s = d > HARD ? 1 : d < -HARD ? -1 : 0
+        if (s && s === sign) cur++
+        else {
+          cur = s ? 1 : 0
+          sign = s
+        }
+        if (cur > best) best = cur
+      }
+      return (best * STEP) / n
+    }
+    const rows = new Float64Array(H)
+    for (let y = 1; y < H; y++) rows[y] = longestRun(W, (x) => v(x, y) - v(x, y - 1))
+    const cols = new Float64Array(W)
+    for (let x = 1; x < W; x++) cols[x] = longestRun(H, (y) => v(x, y) - v(x - 1, y))
+    const med = (a: Float64Array): number => {
+      const b = Array.from(a).sort((p, q) => p - q)
+      return b.length ? b[b.length >> 1] : 0
+    }
+    const rowMed = med(rows)
+    const colMed = med(cols)
+    const pick = (
+      a: Float64Array,
+      medv: number,
+      toDeg: (i: number) => number
+    ): string[] => {
+      // At least a thirtieth of the line unbroken, and well clear of what this
+      // picture does normally. The floor is what makes it work on a busy map;
+      // the multiple is what makes it work on a mostly empty one.
+      const cut = Math.max(medv * 4, 0.03)
+      const hits: { i: number; z: number }[] = []
+      for (let i = 1; i < a.length; i++) if (a[i] > cut) hits.push({ i, z: a[i] })
+      hits.sort((p, q) => q.z - p.z)
+      return hits
+        .slice(0, 6)
+        .map((h) => `${toDeg(h.i).toFixed(1)}deg(${(h.z * 100).toFixed(0)}%)`)
+    }
+    const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
+    const lon = columnsAreLongitudes
+      ? pick(cols, colMed, (x) => -180 + (x / W) * 360)
+      : pick(cols, colMed, (x) => (100 * x) / W).map((t) => t.replace('deg', '% across'))
+    let worst = 0
+    for (let i = 1; i < H; i++) if (rows[i] > worst) worst = rows[i]
+    if (quiet) return worst
+    /*
+     * ASCII only, on purpose.
+     *
+     * The first reading of this line came back as mojibake — the log is read
+     * through a Windows console whose code page is not UTF-8, and a diagnostic
+     * nobody can read is not a diagnostic. Degrees, times and multipliers
+     * survive any code page; the prose does not need to be here.
+     */
+    this.onNote?.(
+      `[weather] edges ${label} ${W}x${H}: rows ${lat.join(' ') || 'none'} | ` +
+        `cols ${lon.join(' ') || 'none'} | ref: merc-z3-rows +-85.1/66.5/41.0/21.9/0, ` +
+        `patch-bbox +-80, tile-cols +-135/90/45/0`
+    )
+    return worst
   }
 
   private scanBackgroundSeam(): void {
@@ -2279,6 +2590,32 @@ export class Globe {
       // Hand the assembled mosaic back once per layer per run, when asked. A
       // 2048-wide PNG is a couple of megabytes and the point is to look at it
       // in an image viewer, not to stream it.
+      /*
+       * A cloud step with a straight edge in it does not go on the globe.
+       *
+       * A geostationary archive asked for a timestamp hours back can answer
+       * with a part-finished scan, and no check on the bytes catches that — the
+       * picture is the right size and mostly real imagery. What gives it away
+       * is the join, because weather has no straight lines. Six percent is
+       * comfortably above what a clean step measures, which is nothing at all.
+       */
+      const ekey = `${frame.layer}-${frame.time}`
+      if (frame.layer === 'cloud' && !this.edgeScanned.has(ekey)) {
+        this.edgeScanned.add(ekey)
+        if (this.edgeScanned.size > 64) this.edgeScanned.clear()
+        if (this.scanEdges(canvas, '', true) > 0.06) {
+          this.onNote?.(
+            `[weather] cloud: step ${frame.step ?? 0} at ` +
+              `${new Date(frame.time).toISOString().slice(11, 16)}Z has a straight edge across ` +
+              `it - refused, a neighbouring step is held in its place`
+          )
+          return null
+        }
+      }
+      if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
+        this.needRainCalib = false
+        this.calibrateRain(canvas, frame.decode)
+      }
       if (frame.layer === 'rain' && !this.rainPeaksDone) {
         this.rainPeaksDone = true
         this.reportRainPeaks(canvas, frame)
@@ -2566,7 +2903,10 @@ export class Globe {
     const slot = this.wx[layer]
     const token = ++slot.token
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
-    if (layer === 'rain') this.rainPeaksDone = false
+    if (layer === 'rain') {
+      this.rainPeaksDone = false
+      this.needRainCalib = true
+    }
     // Measure this series once, on whichever of its frames finishes first.
     if (!usable.length) {
       for (const t of slot.byTime?.values() ?? []) t.dispose()
@@ -2646,6 +2986,11 @@ export class Globe {
        * the one that cannot be fixed by timing: a model's opinion against a
        * camera's photograph.
        */
+      if (isData && head.decode) this.applyDecode(head.decode, layer)
+      if (layer === 'rain' && this.rainFit) {
+        this.bgUniforms.uRainScale.value = new THREE.Vector2(this.rainFit.lo, this.rainFit.hi)
+        this.bgUniforms.uRainGamma.value = this.rainFit.gamma
+      }
       this.wxTimes[layer] = usable.map((f) => f.time)
       const hm = (t: number): string => new Date(t).toISOString().slice(11, 16)
       const c = this.wxTimes.cloud
@@ -2698,6 +3043,30 @@ export class Globe {
    * stopped. Sampled down to 2048 wide, which keeps a band and costs a
    * hundredth of the memory of an 8k source.
    */
+  /** Teach the shader how to read this variable's pixels — packing weights and
+   * value range both come from the service's index, never guessed here. */
+  private applyDecode(d: WeatherDecode, layer: WeatherLayer): void {
+    const order = d.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
+    const w = new THREE.Vector3(0, 0, 0)
+    const idx: Record<string, 'x' | 'y' | 'z'> = { r: 'x', g: 'y', b: 'z' }
+    for (let i = 0; i < order.length; i++) {
+      // Big-endian: the first channel named is the most significant byte.
+      w[idx[order[i]]] = 256 ** (order.length - 1 - i)
+    }
+    const packed = 256 ** order.length - 1
+    if (layer === 'cloud') {
+      this.bgUniforms.uCloudChanW.value = w
+      this.bgUniforms.uCloudPacked.value = packed
+      this.bgUniforms.uCloudRange.value = new THREE.Vector2(d.min, d.max)
+    } else {
+      this.bgUniforms.uRainChanW.value = w
+      this.bgUniforms.uRainPacked.value = packed
+      this.bgUniforms.uRainRange.value = new THREE.Vector2(d.min, d.max)
+      this.bgUniforms.uRainScale.value = rainAnchors(d)
+      this.bgUniforms.uRainGamma.value = rainGamma(d)
+    }
+  }
+
   /**
    * Walk each layer through its series.
    *

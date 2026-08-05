@@ -14,16 +14,25 @@
 
 import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import type { WeatherFrame, WeatherLayer } from '../src/shared/types'
+import type { WeatherDecode, WeatherFrame, WeatherLayer } from '../src/shared/types'
 import {
+  MAPTILER_KEY,
+  MAPTILER_TILE_BASE,
+  MAPTILER_VARIABLES,
+  MAPTILER_WEATHER_INDEX,
   WEATHER_FRAME_COUNT,
+  WEATHER_MAX_SERIES_MB,
   WEATHER_POLL_MS,
   WEATHER_TIMEOUT_MS,
-  OPENWEATHER_KEY,
-  OWM_TILE_BASE,
-  OWM_TILE_BASE_V2,
-  OWM_LAYERS,
-  OWM_ZOOM
+  WEATHER_ZOOM,
+  WEATHER_CLOUD_SOURCE,
+  WEATHER_GIBS_URL,
+  WEATHER_GIBS_SLOTS,
+  WEATHER_GIBS_WIDTH,
+  WEATHER_GIBS_GLOBAL,
+  WEATHER_GIBS_GLOBAL_WIDTH,
+  WEATHER_CLOUD_STEPS,
+  WEATHER_CLOUD_STEP_MS,
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
 import { dataPath, dataPathCandidates } from './datadir'
@@ -42,8 +51,8 @@ const CACHE_PATH = dataPath(CACHE_NAME)
  * yesterday's format on screen, not today's.
  */
 // 5: frames carry a `source` and OpenWeatherMap frames are painted rather than
-// packed. A cached frame from the old source, replayed under the new badge,
-// would credit the wrong service for the picture on screen.
+// packed. A cached MapTiler frame replayed under the new badge would credit the
+// wrong service for the picture on screen.
 const CACHE_VERSION = 5
 
 interface Persisted {
@@ -53,6 +62,25 @@ interface Persisted {
 }
 
 const LAYERS: WeatherLayer[] = ['cloud', 'rain']
+
+/**
+ * The key, read when it is needed rather than when this file was loaded.
+ *
+ * The config module's constants are frozen at import time, and an entry point
+ * that loads .env after its imports would freeze this one empty — which is
+ * exactly what happened, and it fails silently by falling back to the old
+ * source. `server/boot-env.ts` fixes the ordering; this makes the value
+ * impossible to freeze wrong even if a bundler ever reorders the two.
+ */
+function mtKey(): string {
+  return process.env.MAPTILER_KEY?.trim() || MAPTILER_KEY
+}
+function mtIndexUrl(): string {
+  return process.env.MAPTILER_WEATHER_INDEX || MAPTILER_WEATHER_INDEX
+}
+function mtTileBase(): string {
+  return process.env.MAPTILER_TILE_BASE || MAPTILER_TILE_BASE
+}
 
 /**
  * The newest SERIES we have for each layer, whether from the network or the
@@ -77,6 +105,15 @@ let stopped = true
 let running = false
 /** Consecutive failures, for the backoff. */
 let failures = 0
+
+/**
+ * Past cloud steps, by the timestamp they were taken at.
+ *
+ * The animation walks the last three quarters of an hour, and those pictures
+ * do not change once taken — so they are fetched once and kept, and each poll
+ * downloads only the step that is genuinely new.
+ */
+const cloudSteps = new Map<number, WeatherFrame['tiles']>()
 
 /** What is on screen right now, for a window that has just connected. */
 export function weatherFrames(): WeatherFrame[] {
@@ -107,9 +144,6 @@ function loadCache(): void {
   }
 }
 
-/** Why the last tile that failed, failed - so the log can say more than "no". */
-let lastTileError = ''
-
 /** What was last written, so an unchanged cache is not written again. */
 let savedAt = 0
 
@@ -135,112 +169,99 @@ function saveCache(): void {
   })
 }
 
+/** Why the last tile that failed, failed — so the log can say more than "no". */
+let lastTileError = ''
+
+
+
 // ---------------------------------------------------------------------------
-// OpenWeatherMap - cloud and rain from one model at one instant.
+// MapTiler Weather — the primary source when a key is configured.
 // ---------------------------------------------------------------------------
 
-/**
- * The key, read when it is needed rather than when this file was loaded.
- *
- * The config module's constants are frozen at import time, and an entry point
- * that loads .env after its imports would freeze this one empty - which has
- * happened here before, and it fails silently. server/boot-env.ts fixes the
- * ordering; this makes the value impossible to freeze wrong even if a bundler
- * ever reorders the two.
- */
-function owmKey(): string {
-  return process.env.OPENWEATHER_KEY?.trim() || OPENWEATHER_KEY
+/** `latest.json`. Only the fields we use are described; the shape is taken from
+ * the published @maptiler/weather types. */
+interface MtIndex {
+  variables?: {
+    tile_format?: string
+    metadata?: {
+      maxzoom?: number
+      weather_variable?: {
+        name?: string
+        unit?: string
+        attribution?: string
+        variable_id?: string
+        decoding?: { min?: number; max?: number; channels?: string }
+      }
+    }
+    keyframes?: { id: string; timestamp: string }[]
+  }[]
 }
 
-/** Which OpenWeatherMap API answered this key, decided once per run. */
-let owmApi: 1 | 2 | null = null
+type MtVariable = NonNullable<MtIndex['variables']>[number]
 
-function owmTileUrl(layer: WeatherLayer, x: number, y: number, at: number | null): string {
-  const [v1, v2] = OWM_LAYERS[layer]
-  const key = encodeURIComponent(owmKey())
-  if (owmApi === 2) {
-    const date = at ? `&date=${Math.floor(at / 1000)}` : ''
-    return `${OWM_TILE_BASE_V2}/${v2}/${OWM_ZOOM}/${x}/${y}?appid=${key}${date}`
-  }
-  return `${OWM_TILE_BASE}/${v1}/${OWM_ZOOM}/${x}/${y}.png?appid=${key}`
-}
-
-async function fetchOwmTile(
-  layer: WeatherLayer,
+/** One data tile. Same envelope as the imagery tiles — a data: URL, so the
+ * packaged app's file:// origin never taints the canvas. */
+async function fetchMtTile(
+  tilesetId: string,
+  format: string,
   x: number,
-  y: number,
-  at: number | null
+  y: number
 ): Promise<{ x: number; y: number; url: string } | null> {
+  const url =
+    `${mtTileBase()}/${encodeURIComponent(tilesetId)}/` +
+    `${WEATHER_ZOOM}/${x}/${y}.${format}?key=${encodeURIComponent(mtKey())}`
   try {
-    // Never log the URL: it carries the key.
-    const res = await fetchWithTimeout(owmTileUrl(layer, x, y, at), WEATHER_TIMEOUT_MS)
+    const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
     if (!res.ok) {
-      lastTileError = `HTTP ${res.status} on ${layer} ${OWM_ZOOM}/${x}/${y}`
+      // Never log the URL: it carries the key.
+      lastTileError = `HTTP ${res.status} on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
       return null
     }
     const buf = Buffer.from(await res.arrayBuffer())
     if (!buf.length) {
-      lastTileError = `empty 200 body on ${layer} ${OWM_ZOOM}/${x}/${y}`
+      lastTileError = `empty 200 body on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
       return null
     }
-    return { x, y, url: `data:image/png;base64,${buf.toString('base64')}` }
+    const mime = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png'
+    return { x, y, url: `data:${mime};base64,${buf.toString('base64')}` }
   } catch (err) {
-    lastTileError = `${(err as Error).message} on ${layer} ${OWM_ZOOM}/${x}/${y}`
+    lastTileError = `${(err as Error).message} on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
     return null
   }
 }
 
-/**
- * One moment of one layer.
- *
- * These tiles arrive already painted rather than as packed values, so the
- * renderer takes them down the photo path: for the cloud the alpha IS the
- * cover, and for the rain the service's own palette is used as it stands. That
- * costs the intensity ramp its control over the colours and buys the thing this
- * source exists for — both layers drawn from one model at one instant.
- */
-async function fetchOwmFrame(
+/** Every tile of one keyframe, a few sockets at a time. */
+async function fetchMtKeyframe(
   layer: WeatherLayer,
-  at: number | null,
+  tilesetId: string,
+  format: string,
+  time: number,
+  decode: WeatherDecode,
   step: number,
   steps: number
 ): Promise<WeatherFrame | null> {
-  const n = 1 << OWM_ZOOM
+  const n = 1 << WEATHER_ZOOM
   const wanted: { x: number; y: number }[] = []
   for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) wanted.push({ x, y })
+
   const tiles: WeatherFrame['tiles'] = []
-  /*
-   * Four at a time, over a grid of sixteen.
-   *
-   * Limiting how many run at once was never a rate limit — it caps the sockets,
-   * not the requests per minute, and the free plan counts the latter. At level
-   * 3 that meant a hundred and twenty-eight requests a poll against an
-   * allowance of sixty a minute, and the answer to that is 401 on every tile:
-   * exactly what "the key is not live yet" looks like, which is why it read as
-   * one for a while. Level 2 makes it thirty-two a poll, comfortably inside the
-   * allowance whatever the concurrency.
-   */
-  const BATCH = 4
+  const BATCH = 8
   for (let i = 0; i < wanted.length; i += BATCH) {
     if (stopped) return null
-    const got = await Promise.all(wanted.slice(i, i + BATCH).map((t) => fetchOwmTile(layer, t.x, t.y, at)))
+    const got = await Promise.all(
+      wanted.slice(i, i + BATCH).map((t) => fetchMtTile(tilesetId, format, t.x, t.y))
+    )
     for (const t of got) if (t) tiles.push(t)
   }
   if (!tiles.length) return null
   return {
     layer,
     projection: 'mercator',
-    /*
-     * The cloud is painted white with the cover in its ALPHA, so it must not be
-     * drawn as a photograph — doing that took the tile's own grey as the colour
-     * and laid a murky haze over the whole globe instead of white cloud. The
-     * rain genuinely is a painted picture: its palette carries the intensity,
-     * and that is the one thing here worth keeping as the service drew it.
-     */
-    blend: layer === 'cloud' ? 'cloud' : 'photo',
-    source: '© OpenWeatherMap · 모델 실황',
-    z: OWM_ZOOM,
-    time: at ?? Date.now(),
+    blend: 'data',
+    source: '© MapTiler · GFS 실황',
+    decode,
+    z: WEATHER_ZOOM,
+    time,
     tiles,
     step,
     steps
@@ -248,107 +269,740 @@ async function fetchOwmFrame(
 }
 
 /**
- * One poll of OpenWeatherMap: both layers, same model, same instants.
+ * One layer's animation series from MapTiler.
  *
- * The instants are chosen once and used for BOTH layers, which is the whole
- * point of the source — there is no clock to follow because there is only one
- * clock. Hourly steps ending at the present, matching what the animation
- * already expects.
+ * The index hands back a whole time series per variable; we take the newest
+ * WEATHER_FRAME_COUNT keyframes, oldest first, so the renderer can walk them in
+ * order. Every fact needed to read the pixels — the packing channels and the
+ * value range — comes from the index rather than being hard-coded here, because
+ * the one thing that cannot be checked from a sandbox is what the service
+ * actually sends.
  */
-async function pollOpenWeather(onFrame: (f: WeatherFrame) => boolean | void): Promise<boolean> {
-  if (owmApi === null) {
-    // Probe once. A free key may not be entitled to Maps 2.0, and the
-    // difference decides whether the tab animates or shows a single moment.
-    owmApi = 2
-    const probe = await fetchOwmTile('cloud', 0, 0, Date.now())
-    if (!probe) {
-      owmApi = 1
-      opsLog(
-        `[weather] OpenWeatherMap: Maps 2.0 refused this key (${lastTileError}) - ` +
-          `using Maps 1.0, which is current-only, so the tab shows one moment rather than a loop`
-      )
-    } else {
-      opsLog('[weather] OpenWeatherMap: Maps 2.0 answered - animating')
-    }
+async function fetchMaptilerLayer(
+  index: MtIndex,
+  layer: WeatherLayer
+): Promise<WeatherFrame[] | null> {
+  const wantIds = MAPTILER_VARIABLES[layer].split('|').map((s) => s.trim()).filter(Boolean)
+  const offered = (index.variables ?? []).map((x) => x.metadata?.weather_variable?.variable_id)
+  /*
+   * OUR order of preference, not the index's.
+   *
+   * This was `variables.find(x => wantIds.includes(x.id))`, which walks the
+   * INDEX and stops at the first entry that happens to be on our list — so with
+   * the index ordering precipitation before radar, the second choice won. The
+   * exhibit asked for reflectivity and got millimetres, and the ramp is
+   * calibrated in dBZ, so almost nothing crossed the threshold.
+   */
+  let v: MtVariable | undefined
+  for (const id of wantIds) {
+    v = index.variables?.find((x) => x.metadata?.weather_variable?.variable_id === id)
+    if (v) break
   }
+  if (!v) {
+    // Named alternatives, because which variables a key is entitled to is not
+    // something that can be checked from here — the exhibit's own key turned
+    // out to carry temperature, pressure, precipitation, wind and radar, and
+    // no cloud of any kind.
+    opsLog(
+      `[weather] ${layer}: none of "${wantIds.join('", "')}" is in the index. ` +
+        `It offered: ${offered.filter(Boolean).join(', ') || 'nothing'}`
+    )
+    return null
+  }
+  const wantId = v.metadata?.weather_variable?.variable_id ?? wantIds[0]
+  const wv = v.metadata?.weather_variable
+  const d = wv?.decoding
+  if (!d || typeof d.min !== 'number' || typeof d.max !== 'number' || !d.channels) {
+    opsLog(`[weather] ${layer}: "${wantId}" carries no decoding block — cannot read its pixels`)
+    return null
+  }
+  const keys = v.keyframes ?? []
+  if (!keys.length) {
+    opsLog(`[weather] ${layer}: "${wantId}" has no keyframes`)
+    return null
+  }
+  const decode: WeatherDecode = { min: d.min, max: d.max, channels: d.channels, unit: wv?.unit }
+  const format = v.tile_format && v.tile_format !== 'pbf' ? v.tile_format : 'png'
 
   /*
-   * One tile before a hundred and twenty-eight.
+   * Start at NOW, not at the end of the list.
    *
-   * A key that is not yet live refuses every tile, and asking the whole grid
-   * twice to find that out is a hundred and twenty-eight pointless requests
-   * against a rate limit, every poll. The probe is also why owmApi is reset
-   * below: a key that starts working may well be entitled to Maps 2.0, and
-   * without the reset it would stay pinned to the fallback for the rest of the
-   * run.
+   * These keyframes are a model run: they reach days into the future, and
+   * `slice(-N)` was taking the last four — the furthest forecast steps there
+   * are. The exhibit was showing next week's rain and calling it real time,
+   * which is why it looked nothing like what everyone else was showing for
+   * today. The step nearest the present goes first and the animation runs
+   * forward from there, which is both the honest picture and a moving one.
    */
-  if (!(await fetchOwmTile('cloud', 0, 0, null))) {
-    owmApi = null
-    opsLog(
-      `[weather] OpenWeatherMap: ${lastTileError}. ` +
-        (/401/.test(lastTileError)
-          ? 'A new key is not live immediately - OpenWeatherMap takes anywhere from ten minutes ' +
-            'to a couple of hours to activate one. Nothing to do but wait; this retries every poll. ' +
-            'If it is still 401 tomorrow, check for a stray space or quote around the key in .env.'
-          : 'Falling back to the previous source for this poll.')
-    )
-    return false
+  const now = Date.now()
+  const stamps = keys.map((k) => Date.parse(k.timestamp))
+  /*
+   * The newest step that has already HAPPENED, not merely the nearest one.
+   *
+   * Nearest could be half an hour into the future, and the cloud beside it is
+   * a photograph taken minutes ago. A forecast and an observation of different
+   * moments disagree in exactly the way that was reported: rain sitting where
+   * the sky is empty, and a storm on the picture with nothing falling out of
+   * it. Taking the last step at or before now puts the two layers on the same
+   * side of the present, which is as close as a model and a camera get.
+   */
+  let start = 0
+  let bestPast = -1
+  for (let i = 0; i < keys.length; i++) {
+    if (!Number.isFinite(stamps[i])) continue
+    if (stamps[i] <= now) bestPast = i
+    if (Math.abs(stamps[i] - now) < Math.abs((stamps[start] || 0) - now)) start = i
   }
+  if (bestPast >= 0) start = bestPast
+  /*
+   * The window ENDS at the present and reaches backwards.
+   *
+   * It used to start at the present and run forward through the model's
+   * forecast steps, while the cloud beside it ran backwards through the last
+   * three quarters of an hour of photographs. Two animations, opposite
+   * directions, different spacing — so step 2 of the rain was an hour into the
+   * future and step 2 of the cloud was half an hour into the past, and no
+   * amount of tuning either one could make them agree. Ending both at now and
+   * reaching back puts every step on a moment that has actually happened,
+   * which is the one kind of moment a camera can also be asked about.
+   */
+  const end = Math.max(0, Math.min(start, keys.length - 1))
+  const from = Math.max(0, end - WEATHER_FRAME_COUNT + 1)
+  const wanted = keys.slice(from, end + 1)
+  start = from
+  const off = (t: number): string => {
+    const m = Math.round((t - now) / 60_000)
+    return Number.isFinite(m) ? (m >= 0 ? `+${m}분` : `${m}분`) : '?'
+  }
+  opsLog(
+    `[weather] ${layer}: ${keys.length} keyframes span ${off(stamps[0])}…${off(stamps[keys.length - 1])}; ` +
+      `taking ${wanted.length} from ${off(stamps[start])} (step ${start})`
+  )
 
-  const steps = owmApi === 2 ? Math.max(1, WEATHER_FRAME_COUNT) : 1
-  const HOUR = 3600_000
-  const now = Math.floor(Date.now() / HOUR) * HOUR
-  const times: (number | null)[] =
-    owmApi === 2 ? Array.from({ length: steps }, (_, i) => now - (steps - 1 - i) * HOUR) : [null]
+  /*
+   * Nearest to now first, and stop when the series has spent its byte budget.
+   *
+   * A two-channel variable packs its value across a high and a low byte, and
+   * the low byte turns over every 1/65536th of the range — so it is noise even
+   * where the weather is perfectly smooth, and PNG cannot compress noise. A
+   * four-step radar series measured FIFTY-FOUR megabytes against a cloud
+   * series' five. That is a number that gets broadcast to both windows and
+   * written to the disk cache, so it needs a ceiling rather than a hope.
+   *
+   * The order is what makes the ceiling safe to hit: the fetch runs from the
+   * present BACKWARDS, so a full budget costs the oldest end of the animation
+   * and never the picture of right now. The series is put back into forward
+   * order below, because that is the direction it is watched in.
+   */
+  const budget = WEATHER_MAX_SERIES_MB * 1e6
+  const series: WeatherFrame[] = []
+  let bytes = 0
+  for (const k of [...wanted].reverse()) {
+    if (stopped) return null
+    if (series.length && bytes >= budget) break
+    const time = Date.parse(k.timestamp)
+    const frame = await fetchMtKeyframe(
+      layer,
+      k.id,
+      format,
+      Number.isFinite(time) ? time : Date.now(),
+      decode,
+      0, // renumbered below, once we know how many survived
+      0
+    )
+    if (!frame) continue
+    series.push(frame)
+    bytes += frame.tiles.reduce((m, t) => m + t.url.length, 0)
+  }
+  if (!series.length) {
+    opsLog(`[weather] ${layer}: every tile failed. Last error: ${lastTileError || 'none recorded'}`)
+    return null
+  }
+  series.sort((a, b) => a.time - b.time)
+  series.forEach((f, i) => {
+    f.step = i
+    f.steps = series.length
+  })
+  opsLog(
+    `[weather] ${layer}: ${wv?.name ?? wantId} — ${series.length}/${wanted.length} keyframes, ` +
+      `${series[0].tiles.length}/${1 << (WEATHER_ZOOM * 2)} tiles each, ${(bytes / 1e6).toFixed(1)}MB, ` +
+      `${d.min}–${d.max} ${wv?.unit ?? ''} packed in "${d.channels}"`
+  )
+  if (series.length < wanted.length) {
+    // Never silently: a shorter loop is a visible change and the reason for it
+    // belongs in the log, not in somebody's guess.
+    opsLog(
+      `[weather] ${layer}: stopped at ${series.length} of ${wanted.length} keyframes — ` +
+        `${(bytes / 1e6).toFixed(1)}MB reached the ${WEATHER_MAX_SERIES_MB}MB budget. ` +
+        `The animation is shorter; the current picture is unaffected. ` +
+        `Raise WEATHER_MAX_SERIES_MB or lower WEATHER_FRAME_COUNT to change that.`
+    )
+  }
+  return series
+}
 
-  let delivered = false
-  for (const layer of LAYERS) {
-    if (stopped) return delivered
-    const series: WeatherFrame[] = []
-    for (let i = 0; i < times.length; i++) {
-      const f = await fetchOwmFrame(layer, times[i], i, times.length)
-      if (f) series.push(f)
+
+
+
+
+
+
+/** One poll of MapTiler: index, then both layers' series. */
+async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
+  const url = `${mtIndexUrl()}?key=${encodeURIComponent(mtKey())}`
+  const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
+  // The key is in the URL, so the message says the status and nothing else.
+  if (!res.ok) throw new Error(`weather index HTTP ${res.status} (key rejected?)`)
+  const index = (await res.json()) as MtIndex
+  if (!Array.isArray(index?.variables)) throw new Error('index has no variables — the API shape has changed')
+
+  /*
+   * Rain first, then cloud — the cloud follows the rain's clock.
+   *
+   * Which moments exist at all is the model's to decide: it publishes hourly
+   * steps and the camera can be asked for any minute, so the only order that
+   * can produce one shared timeline is the one that asks the constrained side
+   * first.
+   */
+  let timeline: number[] | null = null
+  for (const layer of [...LAYERS].sort((a, b) => (a === 'rain' ? -1 : b === 'rain' ? 1 : 0))) {
+    if (stopped) return
+    let series = await fetchMaptilerLayer(index, layer)
+    if (series && layer === 'rain' && series.length > 1) {
+      timeline = series.map((f) => f.time)
     }
-    if (!series.length) {
-      opsLog(`[weather] OpenWeatherMap ${layer}: every tile failed. Last: ${lastTileError || 'none'}`)
-      continue
+    if (!series && layer === 'cloud' && WEATHER_CLOUD_SOURCE !== 'off') {
+      // MapTiler has the rain but not the cloud on this key. Falling through to
+      // GIBS beats the alternative, which is what happened the first time: the
+      // layer quietly kept whatever the disk cache held, so the screen showed a
+      // cloud picture from hours ago next to live rain and nothing said so.
+      opsLog('[weather] cloud: falling back to NASA GIBS for this layer')
+      series = await fetchGibsCloud(timeline)
     }
-    delivered = true
-    series.forEach((f, i) => {
-      f.step = i
-      f.steps = series.length
-    })
+    if (!series) continue
+    // Same moment as what is already on screen: nothing to send.
     if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
     latest.set(layer, series)
     for (const f of series) onFrame(f)
-    opsLog(
-      `[weather] OpenWeatherMap ${layer}: ${series.length} step(s), ` +
-        `${series[0].tiles.length}/${1 << (OWM_ZOOM * 2)} tiles each`
-    )
   }
   saveCache()
-  return delivered
+}
+
+/**
+ * The cloud picture, from NASA GIBS.
+ *
+ * One request per layer, plate carrée, full globe — no tile grid and no
+ * reprojection, because this is already the projection the frame is drawn in.
+ * The geostationary layers are discs, so several are requested and stacked at
+ * the same position; the renderer's mosaic canvas composites them in order,
+ * which is how three sensors become one globe.
+ *
+ * Which layers actually exist is the one thing that cannot be checked from
+ * here, so each candidate is tried in turn and the log names the winner.
+ */
+
+/** Every layer name GIBS advertises, fetched once per run and only if needed. */
+let gibsCatalogue: string[] | null = null
+
+/** Punctuation-insensitive words, minus the ones every IR layer shares. */
+const GENERIC = new Set([
+  'band13', 'band', '13', 'clean', 'infrared', 'ir', 'abi', 'ahi', 'seviri',
+  'geocolor', 'msg', 'v1', 'best'
+])
+function tokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t && !GENERIC.has(t))
+}
+
+/**
+ * Ask GIBS what it actually publishes.
+ *
+ * Two of the five sensors were configured with names that do not exist — every
+ * candidate for both Meteosat slots came back as a service exception, so there
+ * was no cloud at all over Africa or the Indian Ocean. Guessing the spelling
+ * has now failed twice, which is the point at which a program should stop
+ * guessing and read the catalogue. GetCapabilities is large, so this runs at
+ * most once per run and only after a slot has actually failed.
+ */
+async function gibsLayerNames(): Promise<string[]> {
+  if (gibsCatalogue) return gibsCatalogue
+  gibsCatalogue = []
+  try {
+    const url = `${WEATHER_GIBS_URL}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`
+    const res = await fetchWithTimeout(url, Math.max(WEATHER_TIMEOUT_MS, 30_000))
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const xml = await res.text()
+    gibsCatalogue = [...xml.matchAll(/<Name>([^<]+)<\/Name>/g)].map((m) => m[1])
+    opsLog(
+      `[weather] cloud: read the GIBS catalogue — ${gibsCatalogue.length} layers, ` +
+        `${(xml.length / 1e6).toFixed(1)}MB`
+    )
+  } catch (err) {
+    opsLog(`[weather] cloud: could not read the GIBS catalogue: ${(err as Error).message}`)
+  }
+  return gibsCatalogue
+}
+
+/**
+ * A real layer name for a slot whose configured names all failed.
+ *
+ * A candidate's distinctive words — "meteosat" and "11", or "iodc" — have to
+ * ALL appear in the real name, and the real name has to be an infrared one.
+ * That matches the same sensor spelled differently without ever matching its
+ * neighbour: Meteosat-9 does not contain "11".
+ */
+async function findGibsLayer(candidates: string[]): Promise<string | null> {
+  const all = await gibsLayerNames()
+  if (!all.length) return null
+  const infrared = all.filter((n) => /band ?_?13|infrared/i.test(n))
+  for (const cand of candidates) {
+    const need = tokens(cand)
+    if (!need.length) continue
+    const hit = infrared.find((n) => {
+      const have = new Set(n.toLowerCase().split(/[^a-z0-9]+/))
+      return need.every((t) => have.has(t))
+    })
+    if (hit) return hit
+  }
+  return null
+}
+
+/**
+ * One seamless global infrared image, if GIBS publishes one.
+ *
+ * Five geostationary discs was always the second-best answer: two of them turn
+ * out not to exist in the catalogue at all — hence no cloud over Africa or the
+ * Indian Ocean — and the three that do have to be feathered into each other,
+ * which is a class of edge artefact rather than a fixed one. A merged IR
+ * product is the same measurement already mosaicked by the people who own the
+ * sensors: one request, no seams, nothing missing between GOES and Himawari.
+ *
+ * It covers 60S to 60N. Neither do the discs reach the poles, and on an
+ * equirectangular dome frame those rows are the extreme top and bottom edge.
+ */
+async function fetchGibsGlobalCloud(
+  get: (
+    layer: string,
+    bbox: [number, number, number, number],
+    w: number,
+    h: number
+  ) => Promise<{ url: string; bytes: number } | null>
+): Promise<WeatherFrame | null> {
+  const wanted = WEATHER_GIBS_GLOBAL.split(',').map((s) => s.trim()).filter(Boolean)
+  if (!wanted.length || wanted[0] === 'off') return null
+  const W = WEATHER_GIBS_GLOBAL_WIDTH
+  const H = Math.round(W / 3) // 360 degrees by 120
+  const frame = (url: string): WeatherFrame => ({
+    layer: 'cloud',
+    projection: 'equirect',
+    blend: 'cloud',
+    z: 0,
+    time: Date.now(),
+    // No centerLon: this is not a disc, so there is no horizon to fade to.
+    tiles: [{ x: 0, y: 0, url, bbox: [-180, -60, 180, 60] }]
+  })
+
+  // The configured name first, and ALONE if it works. Reading the catalogue is
+  // two and a half megabytes of XML, and doing it up front made every cold
+  // start pay for it before the first cloud picture even when the name was
+  // right — the catalogue is for when we are lost, not for when we are not.
+  for (const name of wanted) {
+    if (stopped) return null
+    const got = await get(name, [-180, -60, 180, 60], W, H)
+    if (!got) continue
+    opsLog(`[weather] cloud: one global picture from "${name}" — no discs, no seams`)
+    return frame(got.url)
+  }
+
+  // Configured names exhausted: now it is worth asking what this endpoint
+  // calls a merged infrared product.
+  const names: string[] = []
+  for (const n of await gibsLayerNames()) {
+    if (/merg/i.test(n) && /ir|infrared/i.test(n) && !wanted.includes(n)) names.push(n)
+  }
+  for (const name of names) {
+    if (stopped) return null
+    const got = await get(name, [-180, -60, 180, 60], W, H)
+    if (!got) continue
+    opsLog(
+      `[weather] cloud: one global picture from "${name}" — no discs, no seams. ` +
+        `Put WEATHER_GIBS_GLOBAL="${name}" in .env to skip the catalogue next time`
+    )
+    return frame(got.url)
+  }
+  names.unshift(...wanted)
+  // What the catalogue DOES have that is anything like a global infrared
+  // product. Two rounds have now been spent asking for names that turned out
+  // not to exist; this line ends that by printing the real ones.
+  const all = await gibsLayerNames()
+  const nearby = all
+    .filter((n) => /merg|globa|infrared|band ?_?13|brightness ?_?temp/i.test(n))
+    .slice(0, 25)
+  opsLog(
+    `[weather] cloud: no global IR layer (tried ${names.slice(0, 4).join(', ')}` +
+      `${names.length > 4 ? ` and ${names.length - 4} more` : ''}) — falling back to the discs`
+  )
+  opsLog(
+    `[weather] cloud: the catalogue's IR-ish layers (${nearby.length} of ${all.length} shown): ` +
+      (nearby.join(', ') || 'none matched') +
+      ` — set WEATHER_GIBS_GLOBAL in .env to whichever is the global one`
+  )
+  return null
+}
+
+/**
+ * @param timeline The instants the rain series settled on, oldest first. When
+ *   present the cloud is asked for exactly those moments instead of inventing
+ *   its own, which is what makes the two layers one animation rather than two
+ *   that happen to be on screen together.
+ */
+async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[] | null> {
+  /*
+   * Each disc is requested over ITS OWN patch of the globe, not the whole one.
+   *
+   * A geostationary sensor sees about eighty degrees in every direction from
+   * the point it hangs over. Asking for that disc on a full -180..180 canvas
+   * spends nearly two thirds of the pixels on empty space, and the disc itself
+   * lands on the remaining third — so a 1024-wide request bought about 2.8
+   * pixels per degree and the cloud looked like a smudge. The same 1024 pixels
+   * across 160 degrees is 6.4 per degree: two and a quarter times sharper for
+   * the same bytes on the wire.
+   */
+  const HALF = 80
+  const W = WEATHER_GIBS_WIDTH
+  const H = W // the patch is square in degrees, so square in pixels
+  const get = async (
+    layer: string,
+    bbox: [number, number, number, number],
+    w: number,
+    h: number,
+    endpoint = WEATHER_GIBS_URL,
+    time?: string
+  ): Promise<{ url: string; bytes: number } | null> => {
+    // WMS 1.3.0 with CRS:84-style axis order for EPSG:4326 is lat,lon.
+    const [west, south, east, north] = bbox
+    const url =
+      `${endpoint}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0` +
+      `&LAYERS=${encodeURIComponent(layer)}&CRS=EPSG:4326` +
+      `&BBOX=${south},${west},${north},${east}` +
+      `&WIDTH=${w}&HEIGHT=${h}&FORMAT=image%2Fpng&TRANSPARENT=TRUE` +
+      (time ? `&TIME=${encodeURIComponent(time)}` : '')
+    try {
+      const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
+      const type = res.headers.get('content-type') ?? ''
+      if (!res.ok || !type.includes('image')) {
+        // GIBS answers a service exception as XML with a 200, so the content
+        // type is what tells a picture from a complaint.
+        lastTileError = `${res.status} ${type || 'no content-type'} — ${layer}`
+        return null
+      }
+      const buf = Buffer.from(await res.arrayBuffer())
+      opsLog(`[weather] cloud: ${layer} answered, ${(buf.length / 1e6).toFixed(1)}MB`)
+      // Debug: keep the raw sensor pictures beside the exe. There is a hairline
+      // down the finished map that has survived two rounds of reasoning and
+      // does not appear against synthetic imagery, so the next step is to look
+      // at the actual pixels rather than to guess again. Off unless asked for.
+      if (process.env.WEATHER_DEBUG_DUMP) {
+        const file = dataPath(`weather-disc-${layer.replace(/[^A-Za-z0-9]+/g, '_')}.png`)
+        void writeFile(file, buf)
+          .then(() => opsLog(`[weather] debug: wrote ${file}`))
+          .catch((e: Error) => opsLog(`[weather] debug: could not write ${file}: ${e.message}`))
+      }
+      return { url: `data:image/png;base64,${buf.toString('base64')}`, bytes: buf.length }
+    } catch (err) {
+      lastTileError = `${(err as Error).message} — ${layer}`
+      return null
+    }
+  }
+
+  const global = await fetchGibsGlobalCloud(get)
+  if (global) return [global]
+
+  const got: WeatherFrame['tiles'] = []
+
+  /*
+   * A WMS cannot serve a box that crosses the antimeridian, and three of these
+   * five ask for one.
+   *
+   * Himawari sits at 140.7E, so its eighty degrees reach 220.7 — past 180. The
+   * server does not wrap; it fills everything beyond with nothing and returns
+   * an image with a DEAD STRAIGHT VERTICAL EDGE at 180. Pasting that put a
+   * hard line down the map that no amount of feathering could hide, because
+   * the feather fades by distance from the satellite and this edge is not at a
+   * constant distance from anything. It is exactly the hairline that moved
+   * with the map and only appeared with cloud on, and it is visible in the raw
+   * sensor pictures the debug dump wrote out.
+   *
+   * So a crossing slot becomes two requests, one either side of the
+   * antimeridian, each with its own box and a width in proportion to its span
+   * so both come back at the same pixels per degree.
+   */
+  const spansFor = (lon: number): [number, number][] => {
+    const west = lon - HALF
+    const east = lon + HALF
+    if (west < -180) return [[west + 360, 180], [-180, east]]
+    if (east > 180) return [[west, 180], [-180, east - 360]]
+    return [[west, east]]
+  }
+  /** Compressed bytes per pixel of each sensor's live picture this poll — the
+   * yardstick a past step of the same sensor is measured against. */
+  const liveDensity = new Map<number, number>()
+  const fetchSlot = async (
+    name: string,
+    lon: number,
+    endpoint?: string,
+    time?: string,
+    into: WeatherFrame['tiles'] = got
+  ): Promise<boolean> => {
+    const spans = spansFor(lon)
+    const parts: WeatherFrame['tiles'] = []
+    let bytes = 0
+    let pixels = 0
+    for (const [west, east] of spans) {
+      const deg = east - west
+      // Same pixels per degree in every part, so the renderer can read the
+      // mosaic's scale off whichever one decodes first.
+      const w = Math.max(16, Math.round((W * deg) / (HALF * 2)))
+      const got = await get(name, [west, -HALF, east, HALF], w, H, endpoint, time)
+      if (!got) return false
+      /*
+       * A blank half is not a failure — it is the truth.
+       *
+       * These layers are published clipped at the antimeridian, so the half of
+       * Himawari that lies past 180 does not exist and comes back as a valid,
+       * entirely transparent PNG. Splitting the request did not conjure the
+       * data; it just fetched the emptiness in its own file. Dropping the
+       * empty half keeps the sensor and lets the renderer taper the edge
+       * instead of pasting a rectangle of nothing over its neighbour.
+       *
+       * Blank compresses to about a kilobyte whatever its size, and real
+       * imagery to a hundred times that, so the floor scales with the pixels.
+       */
+      const floor = Math.max(800, Math.round((w * H) / 200))
+      if (got.bytes < floor) {
+        opsLog(
+          `[weather] cloud: ${name} has nothing for ${west.toFixed(0)}..${east.toFixed(0)}° ` +
+            `(${got.bytes} bytes) — that piece is dropped`
+        )
+        continue
+      }
+      parts.push({ x: 0, y: 0, url: got.url, centerLon: lon, bbox: [west, -HALF, east, HALF] })
+      bytes += got.bytes
+      pixels += w * H
+    }
+    if (!parts.length) {
+      lastTileError = `every piece blank — ${name}`
+      return false
+    }
+    /*
+     * A past step has to look like the same sensor, not merely be non-empty.
+     *
+     * The blank floor only catches an empty picture. What it lets through is a
+     * scan that is half finished, or an archive answering a timestamp it does
+     * not really hold with a flat wash — and that lands on the globe as a
+     * rectangle of the patch's own bounding box with a hard straight edge,
+     * which is the one shape weather never has. Compressed size per pixel is a
+     * cheap stand-in for "how much detail is in here": cloud fields sit in a
+     * narrow band, and a wash or a part-scan falls far outside it.
+     *
+     * Only past steps are judged, and only against the live picture from the
+     * same sensor this same poll — so the comparison is like for like, and the
+     * live picture itself is never rejected on a guess.
+     */
+    const density = bytes / Math.max(1, pixels)
+    if (!time) {
+      liveDensity.set(lon, density)
+    } else {
+      const live = liveDensity.get(lon)
+      if (live && (density < live * 0.25 || density > live * 4)) {
+        opsLog(
+          `[weather] cloud: ${name} at ${time} is ${(density / live).toFixed(2)}× the detail of ` +
+            `its live picture — that does not look like ${lon}°'s imagery, so the step is refused`
+        )
+        lastTileError = `implausible step — ${name} at ${time}`
+        return false
+      }
+    }
+    into.push(...parts)
+    return true
+  }
+
+  for (const slot of WEATHER_GIBS_SLOTS) {
+    if (stopped) return null
+    let filled = false
+    for (const name of slot.names) {
+      if (!(await fetchSlot(name, slot.lon, slot.url))) continue
+      filled = true
+      break // one picture per slot; the rest of its names are spares
+    }
+    // Configured names exhausted — ask the catalogue what this sensor is really
+    // called rather than leaving a hole in the globe. Only for slots on the
+    // default endpoint: the catalogue we can read is that one's.
+    if (!filled && !stopped && !slot.url) {
+      const found = await findGibsLayer(slot.names)
+      if (found) {
+        opsLog(`[weather] cloud: ${slot.lon}° is published as "${found}" — using that`)
+        if (await fetchSlot(found, slot.lon)) {
+          filled = true
+          // Say it once, plainly, so the name can be pinned in .env and the
+          // catalogue never has to be read again.
+          opsLog(
+            `[weather] cloud: put WEATHER_GIBS_SLOTS in .env with "${slot.lon}:${found}" ` +
+              `to skip the catalogue lookup next time`
+          )
+        }
+      }
+    }
+    if (!filled) {
+      opsLog(`[weather] cloud: nothing at ${slot.lon}° — tried ${slot.names.join(', ')}. Last: ${lastTileError}`)
+    }
+  }
+  if (!got.length) return null
+  // Count sensors, not images: a slot that crosses the antimeridian is two.
+  const sensors = new Set(got.map((t) => t.centerLon)).size
+  opsLog(
+    `[weather] cloud: ${sensors}/${WEATHER_GIBS_SLOTS.length} sensors — ` +
+      `composited from ${got.length} images`
+  )
+  const nowFrame: WeatherFrame = {
+    layer: 'cloud',
+    projection: 'equirect',
+    blend: 'cloud',
+    z: 0,
+    time: Date.now(),
+    tiles: got
+  }
+
+  /*
+   * The earlier steps, so the cloud moves too.
+   *
+   * GIBS takes a TIME, so the same five sensors can be asked what they saw a
+   * quarter-hour and a half-hour ago — a loop of real observations rather than
+   * an interpolation.
+   *
+   * Each step is kept BY ITS TIMESTAMP and reused. Without that, every poll
+   * re-downloaded the same four pictures under new names: the step that was
+   * "fifteen minutes ago" last time is "thirty minutes ago" this time and is
+   * the identical image, so re-fetching it was pulling tens of megabytes from
+   * NASA every five minutes to show something already in memory. Now only the
+   * genuinely new step is fetched, which is what makes a longer loop
+   * affordable — and a longer loop is the whole point, because over twenty
+   * minutes the clouds barely move and all anybody sees is the jump back to
+   * the start.
+   */
+  const steps = Math.max(1, WEATHER_CLOUD_STEPS)
+  const shared = timeline && timeline.length > 1 ? timeline : null
+  if ((steps < 2 && !shared) || stopped) return [nowFrame]
+  const nowSensors = new Set(got.map((t) => t.centerLon))
+  const wantedAt: number[] = []
+  if (shared) {
+    /*
+     * The rain's own instants, to the sensors' ten-minute cadence.
+     *
+     * Every one of them is in the past — the rain window was moved to end at
+     * the present precisely so that this request is answerable. The live
+     * picture is dropped in this case: it was taken minutes ago and the rain's
+     * newest step can be up to an hour old, and showing them side by side is
+     * the exact mismatch this is here to remove. Being an hour behind together
+     * beats being right now and wrong about each other.
+     */
+    for (const t of shared) wantedAt.push(Math.floor(t / 600_000) * 600_000)
+    opsLog(
+      `[weather] cloud: following the rain's clock — ${wantedAt.length} steps, ` +
+        `${Math.round((Date.now() - wantedAt[0]) / 60_000)}min ago to ` +
+        `${Math.round((Date.now() - wantedAt[wantedAt.length - 1]) / 60_000)}min ago`
+    )
+  } else {
+    for (let back = steps - 1; back >= 1; back--) {
+      // Snap to the sensors' own ten-minute cadence, or the server has to pick
+      // for us and may pick the same picture twice.
+      wantedAt.push(Math.floor((Date.now() - back * WEATHER_CLOUD_STEP_MS) / 600_000) * 600_000)
+    }
+  }
+
+  const series: WeatherFrame[] = []
+  let reused = 0
+  for (const at of wantedAt) {
+    if (stopped) break
+    const have = cloudSteps.get(at)
+    if (have) {
+      series.push({ ...nowFrame, time: at, tiles: have })
+      reused++
+      continue
+    }
+    const stamp = new Date(at).toISOString().replace(/\.\d+Z$/, 'Z')
+    const tiles: WeatherFrame['tiles'] = []
+    for (const slot of WEATHER_GIBS_SLOTS) {
+      // Only the sensors the present frame actually has. Chasing one that is
+      // already missing wastes a request, and a step that covered MORE of the
+      // globe than its neighbours would make that region blink in the loop.
+      if (!nowSensors.has(slot.lon)) continue
+      for (const name of slot.names) {
+        if (await fetchSlot(name, slot.lon, slot.url, stamp, tiles)) break
+      }
+    }
+    // Same sensors as now, or the loop flickers wherever they disagree.
+    if (new Set(tiles.map((t) => t.centerLon)).size === nowSensors.size && tiles.length) {
+      cloudSteps.set(at, tiles)
+      series.push({ ...nowFrame, time: at, tiles })
+    } else if (shared) {
+      /*
+       * Hold the previous picture rather than dropping the step.
+       *
+       * Both layers are played back off the wall clock, so a loop of three
+       * cloud steps against four rain steps runs at a different rate and the
+       * two slide out of phase within a minute — which is the thing this whole
+       * change exists to stop. A repeated frame costs one held beat; a missing
+       * frame costs the synchronisation.
+       */
+      // Nothing earlier to hold on the very first step, so the live picture
+      // stands in for it — stale by a step, but the count is what matters.
+      series.push({ ...(series[series.length - 1] ?? nowFrame), time: at })
+      opsLog(`[weather] cloud: nothing for ${stamp} — holding the previous step to stay in sync`)
+    } else {
+      opsLog(`[weather] cloud: no complete picture for ${stamp} — that step is skipped`)
+    }
+  }
+  // Anything no longer in the loop is memory nobody is looking at.
+  for (const at of [...cloudSteps.keys()]) {
+    if (!wantedAt.includes(at)) cloudSteps.delete(at)
+  }
+  // On the shared clock the live picture is not one of the rain's moments, so
+  // it is not part of the loop. It is still the safety net if every step failed.
+  if (!shared || !series.length) series.push(nowFrame)
+  series.forEach((f, i) => {
+    f.step = i
+    f.steps = series.length
+  })
+  if (series.length > 1) {
+    const span = Math.round((series[series.length - 1].time - series[0].time) / 60_000)
+    opsLog(
+      `[weather] cloud: ${series.length} steps over ${span}min - animating ` +
+        `(${reused} reused, ${series.length - 1 - reused} fetched)`
+    )
+  }
+  return series
 }
 
 /**
  * One poll.
  *
- * OpenWeatherMap and nothing else. There used to be a keyless fallback behind
- * this — NASA GIBS for the cloud, RainViewer for the rain — and it was removed
- * on purpose rather than left as insurance. It was not insurance: its cloud was
- * a geostationary infrared photograph and its rain only existed where a country
- * has ground radar, which is a different pairing of measurements from the one
- * this tab is built to show, with its own seams, its own clock and its own
- * failure modes. Half of the past week's faults came from that pairing rather
- * than from either source alone.
+ * MapTiler for the rain, which it serves as packed VALUES rather than a painted
+ * picture — that is what the intensity ramp is anchored to, and what lets the
+ * log report a storm in millimetres rather than in how strongly somebody
+ * painted it. Its key carries no cloud variable of any kind, so the cloud falls
+ * through to the geostationary satellites inside pollMaptiler, and the log says
+ * so on every poll rather than leaving it to be guessed.
  *
- * So when the key is missing or not yet live, the tab shows nothing and says
- * so. That is a state somebody can fix in a minute; a plausible wrong picture
- * is not.
+ * Nothing sits behind this any more. RainViewer and OpenWeatherMap were each a
+ * different pairing of measurements with their own seams and their own clock,
+ * and reconciling a second pairing cost far more than it ever covered for.
  */
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
-  if (!owmKey()) throw new Error('no OPENWEATHER_KEY — put it in the .env beside the exe')
-  if (!(await pollOpenWeather(onFrame))) throw new Error(lastTileError || 'every tile failed')
+  if (!mtKey()) throw new Error('no MAPTILER_KEY — put it in the .env beside the exe')
+  return pollMaptiler(onFrame)
 }
 
 /**
@@ -368,16 +1022,13 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   setImmediate(() => {
     for (const f of replay) if (!stopped) onFrame(f)
   })
-  // Say which source is live, every time. "Is the key actually on?" is not a
+  // Say which source is live, every time. "Is MapTiler actually on?" is not a
   // question anybody should have to answer by looking at the picture.
   opsLog(
-    owmKey()
-      ? `[weather] source: OpenWeatherMap - key ...${owmKey().slice(-4)}, cloud and rain from ` +
-        `ONE model at ONE instant (${OWM_LAYERS.cloud[0]} + ${OWM_LAYERS.rain[0]})`
-      : '[weather] source: NONE. No OPENWEATHER_KEY reached the hub - put OPENWEATHER_KEY="..." ' +
-        'in the .env beside the exe. There is no fallback any more: the tab stays empty until ' +
-        'the key answers, which is a state somebody can fix rather than a wrong picture nobody spots.'
+    `[weather] source: MapTiler ...${mtKey().slice(-4)} for rain, geostationary satellites ` +
+      `for cloud — ${WEATHER_FRAME_COUNT} keyframes, rain=${MAPTILER_VARIABLES.rain}`
   )
+
 
   const loop = async (): Promise<void> => {
     if (stopped) {
