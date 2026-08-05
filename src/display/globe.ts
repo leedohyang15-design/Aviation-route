@@ -1971,7 +1971,7 @@ export class Globe {
       // One grid per layer, from whichever picture was composed last. Both
       // layers land on the same lat/lon cells, so they can be slid over each
       // other and compared.
-      this.wxGrid[frame.layer] = this.gridOf(canvas, frame.projection === 'mercator')
+      this.wxGrid[frame.layer] = this.gridOf(canvas, frame)
       const key = `${frame.layer}-${frame.blend ?? 'plain'}`
       if (this.onDebugImage && !this.debugDumped.has(key)) {
         this.debugDumped.add(key)
@@ -2446,7 +2446,7 @@ export class Globe {
    * each other, and that is answered by the shape of weather systems, not by
    * their detail.
    */
-  private gridOf(canvas: HTMLCanvasElement, mercator: boolean): Float64Array | null {
+  private gridOf(canvas: HTMLCanvasElement, frame: WeatherFrame): Float64Array | null {
     const GW = 256
     const GH = 128
     let img: ImageData
@@ -2458,6 +2458,33 @@ export class Globe {
     const { width: W, height: H } = canvas
     const d = img.data
     const g = new Float64Array(GW * GH)
+    const mercator = frame.projection === 'mercator'
+    /*
+     * Read the pixel the way the layer says it is packed.
+     *
+     * This used to be max(red, blue), which was a shortcut meant to cover both
+     * a cloud mosaic (the value written into every channel) and a data tile
+     * (the value in one). Against this rain layer it destroyed the field: the
+     * index says the value is packed in "B" alone, and almost the whole world
+     * sits between byte 0 and byte 6 there, so any non-zero red — padding, a
+     * high byte, anything constant — wins the max at every pixel and the grid
+     * comes out flat. A flat field correlates with nothing, which is exactly
+     * what the measurement kept reporting.
+     */
+    const order = (frame.blend === 'data' && frame.decode?.channels ? frame.decode.channels : 'r')
+      .toLowerCase()
+      .replace(/[^rgb]/g, '') || 'r'
+    const off: Record<string, number> = { r: 0, g: 1, b: 2 }
+    const wt = order.split('').map((ch, i) => ({
+      o: off[ch],
+      w: 256 ** (order.length - 1 - i)
+    }))
+    const packed = 256 ** order.length - 1
+    const valueAt = (o: number): number => {
+      let v = 0
+      for (const { o: ch, w } of wt) v += d[o + ch] * w
+      return ((v / packed) * d[o + 3]) / 255
+    }
     const yOf = (lat: number): number => {
       if (!mercator) return ((90 - lat) / 180) * H
       const r = (lat * Math.PI) / 180
@@ -2489,8 +2516,7 @@ export class Globe {
         let n = 0
         for (let y = y0; y < y1; y += ys) {
           for (let x = x0; x < x1; x += xs) {
-            const o = (y * W + x) * 4
-            sum += (Math.max(d[o], d[o + 2]) * d[o + 3]) / 65025
+            sum += valueAt((y * W + x) * 4)
             n++
           }
         }
@@ -2565,6 +2591,28 @@ export class Globe {
      * value. Reporting that as a misalignment would have sent the next hour
      * hunting an eleven-degree shift that does not exist.
      */
+    /*
+     * Report each field's own spread alongside the verdict.
+     *
+     * A flat grid correlates with nothing, and for two rounds that came back
+     * looking like a misalignment instead of like a broken read. If one of
+     * these standard deviations is near zero, the fault is in how the layer is
+     * being sampled and the alignment number means nothing at all — which the
+     * line should say by itself, without anyone having to know that.
+     */
+    const stat = (g: Float64Array): string => {
+      let sa = 0
+      let saa = 0
+      let nz = 0
+      for (const v of g) {
+        sa += v
+        saa += v * v
+        if (v > 1e-6) nz++
+      }
+      const n = g.length
+      const sd = Math.sqrt(Math.max(0, saa / n - (sa / n) ** 2))
+      return `mean ${(sa / n).toExponential(1)} sd ${sd.toExponential(1)} nonzero ${((100 * nz) / n).toFixed(0)}%`
+    }
     const edge = Math.abs(best.x) === RANGE || Math.abs(best.y) === RANGE
     const verdict =
       best.s < 0.15
@@ -2577,7 +2625,7 @@ export class Globe {
     this.onNote(
       `[weather] alignment: rain vs cloud best fit at lon ${dLon >= 0 ? '+' : ''}${dLon.toFixed(1)} ` +
         `lat ${dLat >= 0 ? '+' : ''}${(-dLat).toFixed(1)} deg (r=${best.s.toFixed(3)}), ` +
-        `r=${zero.toFixed(3)} unshifted -> ${verdict}`
+        `r=${zero.toFixed(3)} unshifted -> ${verdict} | cloud ${stat(c)} | rain ${stat(r)}`
     )
   }
 
