@@ -102,11 +102,19 @@ function rainAnchors(d: WeatherDecode): THREE.Vector2 {
    * right and the storms are there; nine wet pixels in ten are lighter than
    * two tenths of a millimetre. Starting the ramp at 0.05 meant painting all
    * of them, which is why oceans that every other map leaves empty came out
-   * as solid cyan sheets. 0.15 keeps the bands and drops the haze. The top
-   * stays at a downpour: the maximum is three times it, so the hot end of the
-   * ramp belongs to real storms.
+   * as solid cyan sheets. 0.15 keeps the bands and drops the haze.
+   *
+   * The top comes down from 12 to 8 for the same reason in the other
+   * direction. Only one pixel in a thousand reaches 3.5mm, so with the top at
+   * a full downpour the whole hot half of the ramp - orange, red, magenta -
+   * was spent on under a tenth of a percent of the world, and a typhoon drew
+   * as a green smudge a few pixels wide. The measured peaks are real storms in
+   * the right places (39mm at 24.5N 137.9E moving north through the loop, 31mm
+   * in the Bay of Bengal, 39mm over the west African monsoon); at 8 their rain
+   * bands reach orange and their cores saturate, which is what a storm looks
+   * like on every map this gets compared against.
    */
-  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.15, 12)
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.15, 8)
   const span = d.max - d.min
   return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
 }
@@ -1875,7 +1883,7 @@ export class Globe {
     let side = 0
     const patches = frame.tiles.filter((t) => t.bbox && t.centerLon != null)
 
-    const finishTexture = (): THREE.Texture => {
+    const finishTexture = (): THREE.Texture | null => {
       const tex = new THREE.CanvasTexture(canvas)
       this.tuneTexture(tex)
       /*
@@ -1909,6 +1917,32 @@ export class Globe {
           canvas,
           `${frame.layer} step ${frame.step ?? 0}/${frame.steps ?? 1} ${hhmm}Z ${frame.projection}`
         )
+      }
+      /*
+       * A step with a straight edge in it does not go on the globe.
+       *
+       * The measurement finally caught this: of four cloud steps, only the
+       * oldest carried machine-straight rows — 24.6 to 30.2 degrees and 43.2
+       * to 63.3, which is the pale band, at nine and ten percent of the width
+       * unbroken. The other three were clean. That is why the band appeared
+       * and vanished on its own: the loop shows one step at a time and only
+       * one of them was broken, and it is why scanning the first frame alone
+       * once reported everything fine.
+       *
+       * A geostationary archive asked for a timestamp three hours back can
+       * answer with a part-finished scan, and no plausibility check on the
+       * bytes catches that — the picture is the right size and mostly real.
+       * The one thing that gives it away is the join, and weather has no
+       * straight lines. Six percent is comfortably above what a clean step
+       * measures (nothing at all) and below what a broken one does.
+       */
+      if (frame.layer === 'cloud' && this.scanEdges(canvas, '', true) > 0.06) {
+        this.onNote?.(
+          `[weather] cloud: step ${frame.step ?? 0} at ` +
+            `${new Date(frame.time).toISOString().slice(11, 16)}Z has a straight edge across it ` +
+            `- refused, a neighbouring step is held in its place`
+        )
+        return null
       }
       if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
         this.needRainCalib = false
@@ -2234,8 +2268,20 @@ export class Globe {
     ).then((built) => {
       // A newer series started while this one was decoding: throw this away.
       if (token !== slot.token) return
+      /*
+       * Fill a refused step with its nearest good neighbour rather than
+       * dropping it. Playback is off the wall clock, so a three-step loop
+       * beside a four-step one drifts out of phase within a minute — the
+       * length is what keeps the two layers on the same moment.
+       */
+      for (let i = 0; i < built.length; i++) {
+        if (built[i]) continue
+        for (let d = 1; d < built.length && !built[i]; d++) {
+          built[i] = built[i - d] ?? built[i + d] ?? null
+        }
+      }
       const textures = built.filter((t): t is THREE.Texture => !!t)
-      if (!textures.length) return
+      if (textures.length !== built.length || !textures.length) return
       // Anything no longer in the loop is GPU memory nobody is looking at.
       for (const [time, tex] of slot.byTime ?? []) {
         if (!wanted.has(`${time}`)) {
@@ -2381,15 +2427,15 @@ export class Globe {
     }
   }
 
-  private scanEdges(canvas: HTMLCanvasElement, label: string): void {
+  private scanEdges(canvas: HTMLCanvasElement, label: string, quiet = false): number {
     const W = canvas.width
     const H = canvas.height
-    if (!this.onNote || W < 64 || H < 64) return
+    if (W < 64 || H < 64) return 0
     let img: ImageData
     try {
       img = canvas.getContext('2d')!.getImageData(0, 0, W, H)
     } catch {
-      return
+      return 0
     }
     const d = img.data
     // What the eye sees is the composed cloud value, which mergePatches writes
@@ -2464,6 +2510,9 @@ export class Globe {
     }
     const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
     const lon = pick(cols, colMed, (x) => -180 + (x / W) * 360)
+    let worst = 0
+    for (let i = 1; i < H; i++) if (rows[i] > worst) worst = rows[i]
+    if (quiet) return worst
     /*
      * ASCII only, on purpose.
      *
@@ -2472,11 +2521,12 @@ export class Globe {
      * nobody can read is not a diagnostic. Degrees, times and multipliers
      * survive any code page; the prose does not need to be here.
      */
-    this.onNote(
+    this.onNote?.(
       `[weather] edges ${label} ${W}x${H}: rows ${lat.join(' ') || 'none'} | ` +
         `cols ${lon.join(' ') || 'none'} | ref: merc-z3-rows +-85.1/66.5/41.0/21.9/0, ` +
         `patch-bbox +-80, tile-cols +-135/90/45/0`
     )
+    return worst
   }
 
   /**
