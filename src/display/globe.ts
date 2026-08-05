@@ -402,6 +402,9 @@ export class Globe {
   private edgeScanned = new Set<string>()
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [] }
+  /** Each layer's newest field on one common equirectangular grid, for the
+   * alignment check. Kept coarse: this asks where things are, not what. */
+  private wxGrid: Record<WeatherLayer, Float64Array | null> = { cloud: null, rain: null }
   /** When to read the drawing buffer back and measure it, epoch ms; 0 = never.
    * Deferred a few seconds so the measurement lands on a settled picture. */
   private screenScanAt = 0
@@ -1965,6 +1968,10 @@ export class Globe {
         this.needRainCalib = false
         this.calibrateRain(canvas, frame.decode)
       }
+      // One grid per layer, from whichever picture was composed last. Both
+      // layers land on the same lat/lon cells, so they can be slid over each
+      // other and compared.
+      this.wxGrid[frame.layer] = this.gridOf(canvas, frame.projection === 'mercator')
       const key = `${frame.layer}-${frame.blend ?? 'plain'}`
       if (this.onDebugImage && !this.debugDumped.has(key)) {
         this.debugDumped.add(key)
@@ -2342,6 +2349,8 @@ export class Globe {
       // Measure the finished picture a few seconds after the last series
       // lands, once per poll.
       if (whole) this.screenScanAt = Date.now() + 4000
+      // Both layers present and settled: check they are in the same place.
+      if (whole && this.wxGrid.cloud && this.wxGrid.rain) this.correlateLayers()
       if (whole && c.length && r.length) {
         const same = c.length === r.length && c.every((t, i) => Math.abs(t - r[i]) <= 600_000)
         this.onNote?.(
@@ -2426,6 +2435,111 @@ export class Globe {
     } catch {
       /* readPixels can fail on a lost context; a diagnostic is not worth a crash */
     }
+  }
+
+  /**
+   * Reduce a composed layer to a small equirectangular grid.
+   *
+   * Both layers get put on the SAME grid — the rain mosaic is Web Mercator and
+   * is un-projected on the way in — so the two can be compared cell for cell.
+   * Coarse on purpose: the question is whether the two fields sit on top of
+   * each other, and that is answered by the shape of weather systems, not by
+   * their detail.
+   */
+  private gridOf(canvas: HTMLCanvasElement, mercator: boolean): Float64Array | null {
+    const GW = 256
+    const GH = 128
+    let img: ImageData
+    try {
+      img = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height)
+    } catch {
+      return null
+    }
+    const { width: W, height: H } = canvas
+    const g = new Float64Array(GW * GH)
+    for (let j = 0; j < GH; j++) {
+      const lat = 90 - ((j + 0.5) / GH) * 180
+      let sy: number
+      if (mercator) {
+        if (Math.abs(lat) > 85) continue
+        const r = (lat * Math.PI) / 180
+        sy = (0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)) * H
+      } else {
+        sy = ((90 - lat) / 180) * H
+      }
+      const y = Math.max(0, Math.min(H - 1, Math.round(sy)))
+      for (let i = 0; i < GW; i++) {
+        const x = Math.max(0, Math.min(W - 1, Math.round(((i + 0.5) / GW) * W)))
+        const o = (y * W + x) * 4
+        // Brightness times coverage: for the cloud that is how much cloud, for
+        // the rain how much rain. Only the shape matters to a correlation.
+        g[j * GW + i] = (Math.max(img.data[o], img.data[o + 2]) * img.data[o + 3]) / 65025
+      }
+    }
+    return g
+  }
+
+  /**
+   * Is the rain drawn where the cloud is, or is it offset?
+   *
+   * Same timestamps and still not lining up has two possible causes, and they
+   * need completely different fixes: either the two describe the weather
+   * differently — a model's opinion against a camera's photograph, which no
+   * amount of code will reconcile — or one of them is being PUT in the wrong
+   * place, a projection or offset bug that is entirely ours.
+   *
+   * Sliding one field over the other and finding where they agree best tells
+   * them apart. A best fit at zero means the georeferencing is right and the
+   * disagreement is physical. A best fit anywhere else is a bug, and the shift
+   * says how big it is and in which direction.
+   */
+  private correlateLayers(): void {
+    const c = this.wxGrid.cloud
+    const r = this.wxGrid.rain
+    if (!c || !r || !this.onNote) return
+    const GW = 256
+    const GH = 128
+    const RANGE = 8 // +-8 cells = +-11 degrees
+    const score = (dx: number, dy: number): number => {
+      let sa = 0
+      let sb = 0
+      let saa = 0
+      let sbb = 0
+      let sab = 0
+      let n = 0
+      for (let j = RANGE; j < GH - RANGE; j++) {
+        for (let i = 0; i < GW; i++) {
+          const a = c[j * GW + i]
+          const b = r[(j + dy) * GW + (((i + dx) % GW) + GW) % GW]
+          sa += a
+          sb += b
+          saa += a * a
+          sbb += b * b
+          sab += a * b
+          n++
+        }
+      }
+      const va = saa - (sa * sa) / n
+      const vb = sbb - (sb * sb) / n
+      if (va <= 0 || vb <= 0) return 0
+      return (sab - (sa * sb) / n) / Math.sqrt(va * vb)
+    }
+    let best = { x: 0, y: 0, s: -2 }
+    for (let dy = -RANGE; dy <= RANGE; dy++) {
+      for (let dx = -RANGE; dx <= RANGE; dx++) {
+        const s = score(dx, dy)
+        if (s > best.s) best = { x: dx, y: dy, s }
+      }
+    }
+    const zero = score(0, 0)
+    const dLon = (best.x * 360) / GW
+    const dLat = (best.y * 180) / GH
+    this.onNote(
+      `[weather] alignment: rain vs cloud best fit at lon ${dLon >= 0 ? '+' : ''}${dLon.toFixed(1)} ` +
+        `lat ${dLat >= 0 ? '+' : ''}${(-dLat).toFixed(1)} deg (r=${best.s.toFixed(3)}), ` +
+        `r=${zero.toFixed(3)} unshifted -> ` +
+        `${best.x === 0 && best.y === 0 ? 'ALIGNED' : 'OFFSET - the two are not in the same place'}`
+    )
   }
 
   private scanTexture(tex: THREE.Texture, label: string): void {
