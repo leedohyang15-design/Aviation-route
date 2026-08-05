@@ -381,7 +381,9 @@ export class Globe {
    * step that is broken on its own is invisible to a scan of step zero. Every
    * frame of a new series is measured now.
    */
-  private edgeScansLeft = 0
+  private edgeScanned = new Set<string>()
+  /** The moments each layer is currently showing, for the clock report. */
+  private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [] }
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -413,7 +415,10 @@ export class Globe {
    * leave whichever finished LAST on screen, which is not necessarily the one
    * that was asked for.
    */
-  private wx: Record<WeatherLayer, { textures: THREE.Texture[]; token: number }> = {
+  private wx: Record<
+    WeatherLayer,
+    { textures: THREE.Texture[]; token: number; byTime?: Map<number, THREE.Texture> }
+  > = {
     cloud: { textures: [], token: 0 },
     rain: { textures: [], token: 0 }
   }
@@ -984,6 +989,7 @@ export class Globe {
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
         console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
+        this.scanTexture(tex, 'earth-day')
       },
       () => {
         console.warn(
@@ -1001,6 +1007,7 @@ export class Globe {
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
         console.log(`[earth] loaded night texture`)
+        this.scanTexture(tex, 'earth-night')
       },
       () => {
         /* no night texture — night side just dims globally */
@@ -1887,9 +1894,18 @@ export class Globe {
       // Hand the assembled mosaic back once per layer per run, when asked. A
       // 2048-wide PNG is a couple of megabytes and the point is to look at it
       // in an image viewer, not to stream it.
-      if (this.edgeScansLeft > 0 && frame.layer === 'cloud') {
-        this.edgeScansLeft--
-        this.scanEdges(canvas, frame)
+      // Once per distinct picture, both layers. Keyed by moment rather than by
+      // a countdown, because a series is rebuilt every time another of its
+      // frames arrives and the same step was being measured three times over.
+      const ekey = `${frame.layer}-${frame.time}`
+      if (!this.edgeScanned.has(ekey)) {
+        this.edgeScanned.add(ekey)
+        if (this.edgeScanned.size > 64) this.edgeScanned.clear()
+        const hhmm = new Date(frame.time).toISOString().slice(11, 16)
+        this.scanEdges(
+          canvas,
+          `${frame.layer} step ${frame.step ?? 0}/${frame.steps ?? 1} ${hhmm}Z ${frame.projection}`
+        )
       }
       if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
         this.needRainCalib = false
@@ -2180,24 +2196,50 @@ export class Globe {
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
     // Measure this series once, on whichever of its frames finishes first.
     if (layer === 'rain') this.needRainCalib = true
-    else this.edgeScansLeft = usable.length
     if (!usable.length) {
-      for (const t of slot.textures) t.dispose()
+      for (const t of slot.byTime?.values() ?? []) t.dispose()
+      slot.byTime?.clear()
       slot.textures = []
       this.bgUniforms[layer === 'cloud' ? 'uHasCloud' : 'uHasRain'].value = 0
       this.bgUniforms[layer === 'cloud' ? 'uCloud' : 'uRain'].value = null
       this.bgUniforms[layer === 'cloud' ? 'uCloudB' : 'uRainB'].value = null
       return
     }
-    void Promise.all(usable.map((f) => this.buildWeatherTexture(f))).then((built) => {
+    /*
+     * Decode each MOMENT once, not each arrival.
+     *
+     * The hub sends a series a frame at a time, and this rebuilt every step of
+     * it on every one of those messages: four frames arriving meant ten full
+     * mosaics decoded and thrown away, each one a 2048x1024 canvas with five
+     * satellite images resampled into it. That is the stutter — the picture
+     * freezes while the same pictures are built again. The log made it visible
+     * before the eye did: the same step measured three times in a row.
+     *
+     * A texture is keyed by the moment it shows, so a rebuild costs only the
+     * step that is genuinely new.
+     */
+    const wanted = new Set(usable.map((f) => `${f.time}`))
+    void Promise.all(
+      usable.map((f) => {
+        const have = slot.byTime?.get(f.time)
+        if (have) return Promise.resolve(have)
+        return this.buildWeatherTexture(f).then((t) => {
+          if (t) (slot.byTime ??= new Map()).set(f.time, t)
+          return t
+        })
+      })
+    ).then((built) => {
       // A newer series started while this one was decoding: throw this away.
-      if (token !== slot.token) {
-        for (const t of built) t?.dispose()
-        return
-      }
+      if (token !== slot.token) return
       const textures = built.filter((t): t is THREE.Texture => !!t)
       if (!textures.length) return
-      for (const t of slot.textures) t.dispose()
+      // Anything no longer in the loop is GPU memory nobody is looking at.
+      for (const [time, tex] of slot.byTime ?? []) {
+        if (!wanted.has(`${time}`)) {
+          tex.dispose()
+          slot.byTime?.delete(time)
+        }
+      }
       slot.textures = textures
       const head = usable[0]
       const isData = head.blend === 'data'
@@ -2212,6 +2254,27 @@ export class Globe {
         this.bgUniforms.uRainData.value = isData ? 1 : 0
       }
       if (isData && head.decode) this.applyDecode(head.decode, layer)
+      /*
+       * Print both layers' timelines whenever either changes.
+       *
+       * Whether the two are on the same clock is a fact about two lists of
+       * numbers, and until now the only way to judge it was to look at the
+       * globe and argue. If the steps line up here and the picture still looks
+       * wrong, the clock is not the problem and the remaining difference is
+       * the one that cannot be fixed by timing: a model's opinion against a
+       * camera's photograph.
+       */
+      this.wxTimes[layer] = usable.map((f) => f.time)
+      const hm = (t: number): string => new Date(t).toISOString().slice(11, 16)
+      const c = this.wxTimes.cloud
+      const r = this.wxTimes.rain
+      if (c.length && r.length) {
+        const same = c.length === r.length && c.every((t, i) => Math.abs(t - r[i]) <= 600_000)
+        this.onNote?.(
+          `[weather] clocks: cloud [${c.map(hm).join(' ')}] rain [${r.map(hm).join(' ')}] ` +
+            `-> ${same ? 'IN SYNC' : 'NOT IN SYNC'}`
+        )
+      }
       if (layer === 'rain' && this.rainFit) {
         this.bgUniforms.uRainScale.value = new THREE.Vector2(this.rainFit.lo, this.rainFit.hi)
         this.bgUniforms.uRainGamma.value = this.rainFit.gamma
@@ -2239,7 +2302,34 @@ export class Globe {
    * fourth guess. The reference boundaries are printed alongside so the match
    * can be read directly rather than worked out.
    */
-  private scanEdges(canvas: HTMLCanvasElement, frame: WeatherFrame): void {
+  /**
+   * The same measurement, applied to a loaded map image.
+   *
+   * The weather textures came back clean on every step, so whatever draws the
+   * band is underneath them — and the base map is the one thing on screen in
+   * all three modes, which matches the report that the line is there with the
+   * planes and the satellites too. A truncated or part-decoded image file
+   * shows exactly this: flat rows with a hard boundary where the decode
+   * stopped. Sampled down to 2048 wide, which keeps a band and costs a
+   * hundredth of the memory of an 8k source.
+   */
+  private scanTexture(tex: THREE.Texture, label: string): void {
+    const img = tex.image as HTMLImageElement | undefined
+    if (!this.onNote || !img?.width) return
+    try {
+      const W = Math.min(2048, img.width)
+      const H = Math.max(1, Math.round((W * img.height) / img.width))
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = H
+      c.getContext('2d')!.drawImage(img, 0, 0, W, H)
+      this.scanEdges(c, label)
+    } catch {
+      /* a cross-origin image would taint the canvas; not worth a crash */
+    }
+  }
+
+  private scanEdges(canvas: HTMLCanvasElement, label: string): void {
     const W = canvas.width
     const H = canvas.height
     if (!this.onNote || W < 64 || H < 64) return
@@ -2295,7 +2385,7 @@ export class Globe {
       hits.sort((p, q) => q.z - p.z)
       return hits
         .slice(0, 5)
-        .map((h) => `${toDeg(h.i).toFixed(1)}°(${(h.z / Math.max(medv, 1e-6)).toFixed(0)}×)`)
+        .map((h) => `${toDeg(h.i).toFixed(1)}deg(${(h.z / Math.max(medv, 1e-6)).toFixed(0)}x)`)
     }
     const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
     const lon = pick(cols, colMed, (x) => -180 + (x / W) * 360)
@@ -2307,10 +2397,8 @@ export class Globe {
      * nobody can read is not a diagnostic. Degrees, times and multipliers
      * survive any code page; the prose does not need to be here.
      */
-    const hhmm = new Date(frame.time).toISOString().slice(11, 16)
     this.onNote(
-      `[weather] cloud edges step ${frame.step ?? 0}/${frame.steps ?? 1} ${hhmm}Z ` +
-        `(${frame.projection} ${W}x${H}): rows ${lat.join(' ') || 'none'} | ` +
+      `[weather] edges ${label} ${W}x${H}: rows ${lat.join(' ') || 'none'} | ` +
         `cols ${lon.join(' ') || 'none'} | ref: merc-z3-rows +-85.1/66.5/41.0/21.9/0, ` +
         `patch-bbox +-80, tile-cols +-135/90/45/0`
     )
