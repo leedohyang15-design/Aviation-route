@@ -925,6 +925,40 @@ export class Globe {
    *                                       wrapping repeats a column
    *   join about the interior             the file is fine and the line is ours
    */
+  /**
+   * How hard the map is being squeezed, and what the GPU was told to do about it.
+   *
+   * The files wrap cleanly, so the line is in the drawing — and the two ways it
+   * can be are opposites. Minifying sixteen thousand pixels into sixteen
+   * hundred means every screen pixel covers ten texels, and with no mip chain a
+   * linear sample reads four of them and guesses; that is aliasing, and it is
+   * worst where the sampling pattern is discontinuous, which is the wrap. Turn
+   * the chain on and the reduced levels are built with their edges CLAMPED —
+   * the driver's generateMipmap does not know the texture repeats — so the two
+   * sides of the wrap disagree at every level but the largest, which draws a
+   * hairline in exactly the same place for the opposite reason.
+   *
+   * Which one is happening is not something to reason about from a photograph
+   * of a screen, so this states the numbers and the A/B settles it.
+   */
+  private reportSampling(tex: THREE.Texture, label: string): void {
+    const img = tex.image as HTMLImageElement | undefined
+    if (!this.onNote || !img?.width) return
+    const caps = this.renderer.capabilities
+    const gl = this.renderer.getContext()
+    const across = gl.drawingBufferWidth || 1
+    // At full world view the whole texture spans the frame; zoomed in, less of
+    // it does. iSpan is the fraction of the world on screen.
+    const texelsPerPixel = (img.width * Math.max(0.02, this.iSpan)) / across
+    this.onNote(
+      `[earth] ${label} sampling: ${img.width}px wide into ${across}px = ` +
+        `${texelsPerPixel.toFixed(1)} texels per pixel at this zoom; ` +
+        `mipmaps ${tex.generateMipmaps ? 'ON' : 'OFF'}, anisotropy ${tex.anisotropy}, ` +
+        `gpu max texture ${caps.maxTextureSize}px, max anisotropy ${caps.getMaxAnisotropy()}` +
+        `${img.width > caps.maxTextureSize ? ' - TOO BIG FOR THIS GPU' : ''}`
+    )
+  }
+
   private measureWrap(tex: THREE.Texture, label: string): void {
     const img = tex.image as HTMLImageElement | undefined
     if (!this.onNote || !img?.width) return
@@ -1011,6 +1045,7 @@ export class Globe {
         this.hasEarthTexture = true
         console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
         this.measureWrap(tex, 'day')
+        this.reportSampling(tex, 'day')
       },
       () => {
         console.warn(
@@ -1029,6 +1064,7 @@ export class Globe {
         this.bgUniforms.uHasNight.value = 1
         console.log(`[earth] loaded night texture`)
         this.measureWrap(tex, 'night')
+        this.reportSampling(tex, 'night')
       },
       () => {
         /* no night texture — night side just dims globally */
