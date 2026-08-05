@@ -182,6 +182,35 @@ export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
  * weather actually drifts. Each extra keyframe is another full tile grid, so
  * this is the one knob that trades bandwidth for motion. 1 = a still picture.
  */
+/**
+ * OpenWeatherMap: cloud AND rain from ONE model on ONE key.
+ *
+ * The exhibit's problem was never that either layer was wrong. It was that they
+ * are different KINDS of thing: the cloud a geostationary camera's infrared
+ * photograph, the rain a model's opinion. Measured on the same grid at the same
+ * instants they correlate at 0.39 — right place, right time, still not the same
+ * weather, because infrared sees cold tops rather than cloud and the model
+ * parameterises convection inside its cells.
+ *
+ * Every public map they get compared against solves this the same way: their
+ * "cloud" is not a photograph either, it is the model's own total cloud cover.
+ * One model, one timestamp, so the two agree by construction.
+ *
+ * Two APIs, because which one a free key may use is the thing that cannot be
+ * checked from here. Maps 2.0 takes a `date` and so can animate; Maps 1.0 is
+ * current-only. It probes 2.0, falls back to 1.0, and the log says which is
+ * live and therefore whether the tab animates.
+ */
+export const OPENWEATHER_KEY = readEnv('OPENWEATHER_KEY') ?? ''
+export const OWM_TILE_BASE = readEnv('OWM_TILE_BASE') ?? 'https://tile.openweathermap.org/map'
+export const OWM_TILE_BASE_V2 =
+  readEnv('OWM_TILE_BASE_V2') ?? 'https://maps.openweathermap.org/maps/2.0/weather'
+/** Layer ids: [Maps 1.0 name, Maps 2.0 op code]. */
+export const OWM_LAYERS: Record<'cloud' | 'rain', [string, string]> = {
+  cloud: ['clouds_new', 'CL'],
+  rain: ['precipitation_new', 'PR0']
+}
+
 export const WEATHER_FRAME_COUNT = Number(readEnv('WEATHER_FRAME_COUNT') ?? 4)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 export const WEATHER_FRAME_HOLD_MS = Number(readEnv('WEATHER_FRAME_HOLD_MS') ?? 2200)

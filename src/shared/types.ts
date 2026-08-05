@@ -65,6 +65,10 @@ export interface WeatherDecode {
  * each carried as a data URL so the renderer can draw it into a canvas without
  * tripping over cross-origin tainting (the packaged app runs from file://). */
 export interface WeatherFrame {
+  /** Who to credit, and what the operator sees on the badge. Carried on the
+   * frame rather than in the state so it can never disagree with the picture
+   * actually on screen. */
+  source?: string
   layer: WeatherLayer
   /**
    * How the imagery is laid out. Tile services hand out Web Mercator, which the

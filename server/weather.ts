@@ -35,7 +35,11 @@ import {
   WEATHER_GIBS_GLOBAL_WIDTH,
   WEATHER_CLOUD_STEPS,
   WEATHER_CLOUD_STEP_MS,
-  WEATHER_RAIN_COLOR
+  WEATHER_RAIN_COLOR,
+  OPENWEATHER_KEY,
+  OWM_TILE_BASE,
+  OWM_TILE_BASE_V2,
+  OWM_LAYERS
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
 import { dataPath, dataPathCandidates } from './datadir'
@@ -53,7 +57,10 @@ const CACHE_PATH = dataPath(CACHE_NAME)
  * as a rectangle and only became a globe once the first poll landed: it was
  * yesterday's format on screen, not today's.
  */
-const CACHE_VERSION = 4
+// 5: frames carry a `source` and OpenWeatherMap frames are painted rather than
+// packed. A cached MapTiler frame replayed under the new badge would credit the
+// wrong service for the picture on screen.
+const CACHE_VERSION = 5
 
 /** RainViewer's index. Only the fields we use are described. */
 interface Index {
@@ -330,7 +337,18 @@ async function fetchMtKeyframe(
     for (const t of got) if (t) tiles.push(t)
   }
   if (!tiles.length) return null
-  return { layer, projection: 'mercator', blend: 'data', decode, z: WEATHER_ZOOM, time, tiles, step, steps }
+  return {
+    layer,
+    projection: 'mercator',
+    blend: 'data',
+    source: '© MapTiler · GFS 실황',
+    decode,
+    z: WEATHER_ZOOM,
+    time,
+    tiles,
+    step,
+    steps
+  }
 }
 
 /**
@@ -504,6 +522,149 @@ async function fetchMaptilerLayer(
     )
   }
   return series
+}
+
+/**
+ * The key, read late for the same reason MapTiler's is — see mtKey.
+ */
+function owmKey(): string {
+  return process.env.OPENWEATHER_KEY?.trim() || OPENWEATHER_KEY
+}
+
+/** Which OpenWeatherMap API answered this key, decided once per run. */
+let owmApi: 1 | 2 | null = null
+
+function owmTileUrl(layer: WeatherLayer, x: number, y: number, at: number | null): string {
+  const [v1, v2] = OWM_LAYERS[layer]
+  const key = encodeURIComponent(owmKey())
+  if (owmApi === 2) {
+    const date = at ? `&date=${Math.floor(at / 1000)}` : ''
+    return `${OWM_TILE_BASE_V2}/${v2}/${WEATHER_ZOOM}/${x}/${y}?appid=${key}${date}`
+  }
+  return `${OWM_TILE_BASE}/${v1}/${WEATHER_ZOOM}/${x}/${y}.png?appid=${key}`
+}
+
+async function fetchOwmTile(
+  layer: WeatherLayer,
+  x: number,
+  y: number,
+  at: number | null
+): Promise<{ x: number; y: number; url: string } | null> {
+  try {
+    // Never log the URL: it carries the key.
+    const res = await fetchWithTimeout(owmTileUrl(layer, x, y, at), WEATHER_TIMEOUT_MS)
+    if (!res.ok) {
+      lastTileError = `HTTP ${res.status} on ${layer} ${WEATHER_ZOOM}/${x}/${y}`
+      return null
+    }
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (!buf.length) {
+      lastTileError = `empty 200 body on ${layer} ${WEATHER_ZOOM}/${x}/${y}`
+      return null
+    }
+    return { x, y, url: `data:image/png;base64,${buf.toString('base64')}` }
+  } catch (err) {
+    lastTileError = `${(err as Error).message} on ${layer} ${WEATHER_ZOOM}/${x}/${y}`
+    return null
+  }
+}
+
+/**
+ * One moment of one layer.
+ *
+ * These tiles arrive already painted rather than as packed values, so the
+ * renderer takes them down the photo path: for the cloud the alpha IS the
+ * cover, and for the rain the service's own palette is used as it stands. That
+ * costs the intensity ramp its control over the colours and buys the thing this
+ * source exists for — both layers drawn from one model at one instant.
+ */
+async function fetchOwmFrame(
+  layer: WeatherLayer,
+  at: number | null,
+  step: number,
+  steps: number
+): Promise<WeatherFrame | null> {
+  const n = 1 << WEATHER_ZOOM
+  const wanted: { x: number; y: number }[] = []
+  for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) wanted.push({ x, y })
+  const tiles: WeatherFrame['tiles'] = []
+  // Six at a time: the free plan allows sixty calls a minute and a full grid is
+  // sixty-four, so a burst of the whole grid would trip the limit on its own.
+  const BATCH = 6
+  for (let i = 0; i < wanted.length; i += BATCH) {
+    if (stopped) return null
+    const got = await Promise.all(wanted.slice(i, i + BATCH).map((t) => fetchOwmTile(layer, t.x, t.y, at)))
+    for (const t of got) if (t) tiles.push(t)
+  }
+  if (!tiles.length) return null
+  return {
+    layer,
+    projection: 'mercator',
+    blend: 'photo',
+    source: '© OpenWeatherMap · 모델 실황',
+    z: WEATHER_ZOOM,
+    time: at ?? Date.now(),
+    tiles,
+    step,
+    steps
+  }
+}
+
+/**
+ * One poll of OpenWeatherMap: both layers, same model, same instants.
+ *
+ * The instants are chosen once and used for BOTH layers, which is the whole
+ * point of the source — there is no clock to follow because there is only one
+ * clock. Hourly steps ending at the present, matching what the animation
+ * already expects.
+ */
+async function pollOpenWeather(onFrame: (f: WeatherFrame) => void): Promise<void> {
+  if (owmApi === null) {
+    // Probe once. A free key may not be entitled to Maps 2.0, and the
+    // difference decides whether the tab animates or shows a single moment.
+    owmApi = 2
+    const probe = await fetchOwmTile('cloud', 0, 0, Date.now())
+    if (!probe) {
+      owmApi = 1
+      opsLog(
+        `[weather] OpenWeatherMap: Maps 2.0 refused this key (${lastTileError}) - ` +
+          `using Maps 1.0, which is current-only, so the tab shows one moment rather than a loop`
+      )
+    } else {
+      opsLog('[weather] OpenWeatherMap: Maps 2.0 answered - animating')
+    }
+  }
+
+  const steps = owmApi === 2 ? Math.max(1, WEATHER_FRAME_COUNT) : 1
+  const HOUR = 3600_000
+  const now = Math.floor(Date.now() / HOUR) * HOUR
+  const times: (number | null)[] =
+    owmApi === 2 ? Array.from({ length: steps }, (_, i) => now - (steps - 1 - i) * HOUR) : [null]
+
+  for (const layer of LAYERS) {
+    if (stopped) return
+    const series: WeatherFrame[] = []
+    for (let i = 0; i < times.length; i++) {
+      const f = await fetchOwmFrame(layer, times[i], i, times.length)
+      if (f) series.push(f)
+    }
+    if (!series.length) {
+      opsLog(`[weather] OpenWeatherMap ${layer}: every tile failed. Last: ${lastTileError || 'none'}`)
+      continue
+    }
+    series.forEach((f, i) => {
+      f.step = i
+      f.steps = series.length
+    })
+    if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
+    latest.set(layer, series)
+    for (const f of series) onFrame(f)
+    opsLog(
+      `[weather] OpenWeatherMap ${layer}: ${series.length} step(s), ` +
+        `${series[0].tiles.length}/${1 << (WEATHER_ZOOM * 2)} tiles each`
+    )
+  }
+  saveCache()
 }
 
 /** One poll of MapTiler: index, then both layers' series. */
@@ -1046,6 +1207,16 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
 }
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
+  /*
+   * OpenWeatherMap first when it has a key.
+   *
+   * It is the only source configured here that serves BOTH layers, so it is
+   * the only one on which they cannot disagree about the moment or about what
+   * cloud means. MapTiler stays behind it: its rain is real values rather than
+   * a painted picture, which is what the intensity ramp and the percentile
+   * measurement are built on, and it is what runs when no OWM key is set.
+   */
+  if (owmKey()) return pollOpenWeather(onFrame)
   if (mtKey()) return pollMaptiler(onFrame)
   const res = await fetchWithTimeout(WEATHER_INDEX_URL, WEATHER_TIMEOUT_MS)
   if (!res.ok) throw new Error(`index HTTP ${res.status}`)
@@ -1122,8 +1293,11 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   // Say which source is live, every time. "Is MapTiler actually on?" is not a
   // question anybody should have to answer by looking at the picture.
   opsLog(
-    mtKey()
-      ? `[weather] source: MapTiler — key ...${mtKey().slice(-4)}, ` +
+    owmKey()
+      ? `[weather] source: OpenWeatherMap - key ...${owmKey().slice(-4)}, cloud and rain from ` +
+        `ONE model at ONE instant (${OWM_LAYERS.cloud[0]} + ${OWM_LAYERS.rain[0]})`
+      : mtKey()
+      ? `[weather] source: MapTiler - key ...${mtKey().slice(-4)}, ` +
         `${WEATHER_FRAME_COUNT} keyframes, cloud=${MAPTILER_VARIABLES.cloud} rain=${MAPTILER_VARIABLES.rain}`
       : '[weather] source: NASA GIBS + RainViewer (FALLBACK). No MAPTILER_KEY reached the hub — ' +
         'put MAPTILER_KEY="..." in the .env beside the exe. Rain will be missing over Africa and the oceans.'

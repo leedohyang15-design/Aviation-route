@@ -222,7 +222,8 @@ export function ControlApp(): JSX.Element {
     satellites,
     satDetail,
     weather,
-    weatherAgeMin
+    weatherAgeMin,
+    weatherSource
   } = useHub('control')
   const mode = state.mode
   const isSat = mode === 'satellite'
@@ -562,7 +563,7 @@ export function ControlApp(): JSX.Element {
           {/* Attribution — the exhibit's only place for it. Both layers now
               come from the one service, which is the point of the change. */}
           {isWeather
-            ? '© MapTiler · GFS 실황'
+            ? (weatherSource ?? '기상 영상 불러오는 중')
             : isSat
             ? '위성 궤도 · 실시간 계산'
             : statusText}

@@ -38,6 +38,7 @@ export interface HubView {
   weather: { cloud: WeatherFrame[]; rain: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
   weatherAgeMin: number | null
+  weatherSource: string | null
 }
 
 /**
@@ -160,6 +161,10 @@ export function useHub(role: 'control' | 'display'): HubView {
     satellites,
     satDetail,
     weather,
+    /** Whose imagery is on screen, taken from the newest frame so the badge
+     * can never credit a source the picture did not come from. */
+    weatherSource:
+      [...weather.cloud, ...weather.rain].sort((a, b) => b.time - a.time)[0]?.source ?? null,
     weatherAgeMin: (() => {
       const newest = [...weather.cloud, ...weather.rain].reduce(
         (n, f) => Math.max(n, f?.time ?? 0),
