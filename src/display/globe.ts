@@ -102,7 +102,17 @@ function rainAnchors(d: WeatherDecode): THREE.Vector2 {
    * right and the storms are there; nine wet pixels in ten are lighter than
    * two tenths of a millimetre. Starting the ramp at 0.05 meant painting all
    * of them, which is why oceans that every other map leaves empty came out
-   * as solid cyan sheets. 0.15 keeps the bands and drops the haze.
+   * as solid cyan sheets.
+   *
+   * Raising that floor to 0.15 was an overcorrection and it emptied the map.
+   * Nine wet pixels in ten sit at or below 0.20mm, so a floor just under it
+   * throws away almost all the rain there is, and side by side with a public
+   * map the difference was no longer the colour but the COVERAGE: theirs blue
+   * across whole oceans, ours bare. The footprint was never the problem. Light
+   * rain belongs on the map — it just should not be drawn at the same strength
+   * as a downpour, and that is the opacity ramp's job, not this one's. So the
+   * floor goes back under the field's own quantisation step and the ramp
+   * carries the intensity.
    *
    * The top comes down from 12 to 8 for the same reason in the other
    * direction. Only one pixel in a thousand reaches 3.5mm, so with the top at
@@ -114,7 +124,7 @@ function rainAnchors(d: WeatherDecode): THREE.Vector2 {
    * bands reach orange and their cores saturate, which is what a storm looks
    * like on every map this gets compared against.
    */
-  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.15, 8)
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.05, 8)
   const span = d.max - d.min
   return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
 }
@@ -711,11 +721,18 @@ export class Globe {
              * drizzle over the Southern Ocean. A floor keeps light rain
              * visible without letting it shout: a wash at the bottom, solid by
              * the time it is worth carrying a coat for.
+             *
+             * That floor is 0.45, not 0.30. The field is quantised in steps of
+             * about two tenths of a millimetre, so the lightest rain there is
+             * IS the ninetieth percentile — there is nothing fainter for the
+             * ramp to separate it from. At 0.30 over a night ocean it was
+             * invisible, and beside a public map the difference read as our
+             * having no rain at all rather than as our rain being lighter.
              */
             // The floor applies to rain, not to everywhere: a dry pixel sits at
             // t = 0 and the first factor holds it at nothing. Without it the
             // floor would wash the whole planet pale blue.
-            float a = smoothstep(0.0, 0.02, t) * mix(0.30, 1.0, smoothstep(0.10, 0.55, t)) * d.y
+            float a = smoothstep(0.0, 0.02, t) * mix(0.45, 1.0, smoothstep(0.10, 0.55, t)) * d.y
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
