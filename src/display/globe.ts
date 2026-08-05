@@ -1830,12 +1830,32 @@ export class Globe {
       // crossfade. At 32 every pair meets in the fade zone.
       const NEAR = Math.cos(32 * RAD)
       const FAR = Math.cos(78 * RAD)
+      /*
+       * An extra taper wherever the DATA is cut rather than the view.
+       *
+       * These layers are published clipped at the antimeridian, so Himawari
+       * simply stops at 180 and GOES-West starts again at -180 — two sensors
+       * with different calibration, abutting, with no overlap to blend across.
+       * That is a knife-edge down the whole globe and no amount of fading by
+       * distance-from-satellite can help, because both are at full strength
+       * there. Fading each one out as it approaches its own cut turns the edge
+       * into a soft gap over empty Pacific, which is a thing nobody notices.
+       *
+       * Only an edge sitting exactly on ±180 is a cut: every real patch edge
+       * is at a sub-satellite longitude ±80 and none of those land there.
+       */
+      const CUT = 12
+      const cutW = Math.abs(Math.abs(west) - 180) < 0.01
+      const cutE = Math.abs(Math.abs(east) - 180) < 0.01
       for (let j = 0; j < MH; j++) {
         const lat = (north - ((j + 0.5) / MH) * (north - south)) * RAD
         for (let i = 0; i < MW; i++) {
-          const lon = (west + ((i + 0.5) / MW) * (east - west) - centerLon) * RAD
+          const lonDeg = west + ((i + 0.5) / MW) * (east - west)
+          const lon = (lonDeg - centerLon) * RAD
           const cosD = Math.cos(lat) * Math.cos(lon)
-          const t = Math.max(0, Math.min(1, (cosD - FAR) / (NEAR - FAR)))
+          let t = Math.max(0, Math.min(1, (cosD - FAR) / (NEAR - FAR)))
+          if (cutW) t *= Math.max(0, Math.min(1, (lonDeg - west) / CUT))
+          if (cutE) t *= Math.max(0, Math.min(1, (east - lonDeg) / CUT))
           data.data[(j * MW + i) * 4 + 3] = Math.round(255 * t * t * (3 - 2 * t))
         }
       }

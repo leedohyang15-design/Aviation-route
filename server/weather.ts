@@ -775,22 +775,34 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
       // mosaic's scale off whichever one decodes first.
       const w = Math.max(16, Math.round((W * deg) / (HALF * 2)))
       const got = await get(name, [west, -HALF, east, HALF], w, H, endpoint, time)
-      if (!got) return false // a half picture is worse than none
+      if (!got) return false
+      /*
+       * A blank half is not a failure — it is the truth.
+       *
+       * These layers are published clipped at the antimeridian, so the half of
+       * Himawari that lies past 180 does not exist and comes back as a valid,
+       * entirely transparent PNG. Splitting the request did not conjure the
+       * data; it just fetched the emptiness in its own file. Dropping the
+       * empty half keeps the sensor and lets the renderer taper the edge
+       * instead of pasting a rectangle of nothing over its neighbour.
+       *
+       * Blank compresses to about a kilobyte whatever its size, and real
+       * imagery to a hundred times that, so the floor scales with the pixels.
+       */
+      const floor = Math.max(800, Math.round((w * H) / 200))
+      if (got.bytes < floor) {
+        opsLog(
+          `[weather] cloud: ${name} has nothing for ${west.toFixed(0)}..${east.toFixed(0)}° ` +
+            `(${got.bytes} bytes) — that piece is dropped`
+        )
+        continue
+      }
       parts.push({ x: 0, y: 0, url: got.url, centerLon: lon, bbox: [west, -HALF, east, HALF] })
       bytes += got.bytes
       pixels += w * H
     }
-    /*
-     * A fully transparent image is a valid PNG and a useless picture, so a
-     * layer that answers with one has to count as a miss and let the next
-     * candidate name try. The test is on the SENSOR, not on each request: a
-     * slot that crosses the antimeridian is split into a wide half and a
-     * narrow one, and judging the narrow half on its own called it blank and
-     * threw the whole working sensor away.
-     */
-    const floor = Math.max(2000, Math.round(pixels / 300))
-    if (bytes < floor) {
-      lastTileError = `${bytes} bytes over ${parts.length} request(s), under ${floor} (blank?) — ${name}`
+    if (!parts.length) {
+      lastTileError = `every piece blank — ${name}`
       return false
     }
     into.push(...parts)

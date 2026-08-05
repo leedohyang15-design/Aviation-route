@@ -149,7 +149,14 @@ export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
   cloud:
     readEnv('MAPTILER_CLOUD_VARIABLE') ??
     'cloud_cover-total:gfs|cloud_cover-high:gfs|cloud-cover:gfs',
-  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'radar-composite:gfs|precipitation-1h:gfs'
+  // Precipitation first, reflectivity second. Reflectivity is what a radar
+  // returns and it is genuinely patchy — the model only lights it up where it
+  // has hydrometeors big enough to scatter. Every public weather map anyone
+  // compares this against, Windy included, paints an hour's precipitation
+  // instead, which is broader, smoother and the thing people mean by "where is
+  // it raining". The ramp already reads the unit off the index, so switching
+  // costs nothing.
+  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'precipitation-1h:gfs|radar-composite:gfs'
 }
 /**
  * How many keyframes to bring back, newest first.
