@@ -599,9 +599,21 @@ async function fetchGibsGlobalCloud(
       tiles: [{ x: 0, y: 0, url, bbox: [-180, -60, 180, 60] }]
     }
   }
+  // What the catalogue DOES have that is anything like a global infrared
+  // product. Two rounds have now been spent asking for names that turned out
+  // not to exist; this line ends that by printing the real ones.
+  const all = await gibsLayerNames()
+  const nearby = all
+    .filter((n) => /merg|globa|infrared|band ?_?13|brightness ?_?temp/i.test(n))
+    .slice(0, 25)
   opsLog(
     `[weather] cloud: no global IR layer (tried ${names.slice(0, 4).join(', ')}` +
       `${names.length > 4 ? ` and ${names.length - 4} more` : ''}) — falling back to the discs`
+  )
+  opsLog(
+    `[weather] cloud: the catalogue's IR-ish layers (${nearby.length} of ${all.length} shown): ` +
+      (nearby.join(', ') || 'none matched') +
+      ` — set WEATHER_GIBS_GLOBAL in .env to whichever is the global one`
   )
   return null
 }
