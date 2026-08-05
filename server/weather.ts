@@ -419,9 +419,22 @@ async function fetchMaptilerLayer(
     if (Math.abs(stamps[i] - now) < Math.abs((stamps[start] || 0) - now)) start = i
   }
   if (bestPast >= 0) start = bestPast
-  // Keep the whole animation inside the series even near its end.
-  start = Math.max(0, Math.min(start, keys.length - WEATHER_FRAME_COUNT))
-  const wanted = keys.slice(start, start + WEATHER_FRAME_COUNT)
+  /*
+   * The window ENDS at the present and reaches backwards.
+   *
+   * It used to start at the present and run forward through the model's
+   * forecast steps, while the cloud beside it ran backwards through the last
+   * three quarters of an hour of photographs. Two animations, opposite
+   * directions, different spacing — so step 2 of the rain was an hour into the
+   * future and step 2 of the cloud was half an hour into the past, and no
+   * amount of tuning either one could make them agree. Ending both at now and
+   * reaching back puts every step on a moment that has actually happened,
+   * which is the one kind of moment a camera can also be asked about.
+   */
+  const end = Math.max(0, Math.min(start, keys.length - 1))
+  const from = Math.max(0, end - WEATHER_FRAME_COUNT + 1)
+  const wanted = keys.slice(from, end + 1)
+  start = from
   const off = (t: number): string => {
     const m = Math.round((t - now) / 60_000)
     return Number.isFinite(m) ? (m >= 0 ? `+${m}분` : `${m}분`) : '?'
@@ -441,14 +454,15 @@ async function fetchMaptilerLayer(
    * series' five. That is a number that gets broadcast to both windows and
    * written to the disk cache, so it needs a ceiling rather than a hope.
    *
-   * The order is what makes the ceiling safe to hit: `wanted` starts at the
-   * present and runs forward, so a full budget costs the far end of the
-   * animation and never the picture of right now.
+   * The order is what makes the ceiling safe to hit: the fetch runs from the
+   * present BACKWARDS, so a full budget costs the oldest end of the animation
+   * and never the picture of right now. The series is put back into forward
+   * order below, because that is the direction it is watched in.
    */
   const budget = WEATHER_MAX_SERIES_MB * 1e6
   const series: WeatherFrame[] = []
   let bytes = 0
-  for (const k of wanted) {
+  for (const k of [...wanted].reverse()) {
     if (stopped) return null
     if (series.length && bytes >= budget) break
     const time = Date.parse(k.timestamp)
@@ -469,6 +483,7 @@ async function fetchMaptilerLayer(
     opsLog(`[weather] ${layer}: every tile failed. Last error: ${lastTileError || 'none recorded'}`)
     return null
   }
+  series.sort((a, b) => a.time - b.time)
   series.forEach((f, i) => {
     f.step = i
     f.steps = series.length
@@ -500,16 +515,28 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
   const index = (await res.json()) as MtIndex
   if (!Array.isArray(index?.variables)) throw new Error('index has no variables — the API shape has changed')
 
-  for (const layer of LAYERS) {
+  /*
+   * Rain first, then cloud — the cloud follows the rain's clock.
+   *
+   * Which moments exist at all is the model's to decide: it publishes hourly
+   * steps and the camera can be asked for any minute, so the only order that
+   * can produce one shared timeline is the one that asks the constrained side
+   * first.
+   */
+  let timeline: number[] | null = null
+  for (const layer of [...LAYERS].sort((a, b) => (a === 'rain' ? -1 : b === 'rain' ? 1 : 0))) {
     if (stopped) return
     let series = await fetchMaptilerLayer(index, layer)
+    if (series && layer === 'rain' && series.length > 1) {
+      timeline = series.map((f) => f.time)
+    }
     if (!series && layer === 'cloud' && WEATHER_CLOUD_SOURCE !== 'off') {
       // MapTiler has the rain but not the cloud on this key. Falling through to
       // GIBS beats the alternative, which is what happened the first time: the
       // layer quietly kept whatever the disk cache held, so the screen showed a
       // cloud picture from hours ago next to live rain and nothing said so.
       opsLog('[weather] cloud: falling back to NASA GIBS for this layer')
-      series = await fetchGibsCloud()
+      series = await fetchGibsCloud(timeline)
     }
     if (!series) continue
     // Same moment as what is already on screen: nothing to send.
@@ -684,7 +711,13 @@ async function fetchGibsGlobalCloud(
   return null
 }
 
-async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
+/**
+ * @param timeline The instants the rain series settled on, oldest first. When
+ *   present the cloud is asked for exactly those moments instead of inventing
+ *   its own, which is what makes the two layers one animation rather than two
+ *   that happen to be on screen together.
+ */
+async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[] | null> {
   /*
    * Each disc is requested over ITS OWN patch of the globe, not the whole one.
    *
@@ -887,13 +920,33 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
    * the start.
    */
   const steps = Math.max(1, WEATHER_CLOUD_STEPS)
-  if (steps < 2 || stopped) return [nowFrame]
+  const shared = timeline && timeline.length > 1 ? timeline : null
+  if ((steps < 2 && !shared) || stopped) return [nowFrame]
   const nowSensors = new Set(got.map((t) => t.centerLon))
   const wantedAt: number[] = []
-  for (let back = steps - 1; back >= 1; back--) {
-    // Snap to the sensors' own ten-minute cadence, or the server has to pick
-    // for us and may pick the same picture twice.
-    wantedAt.push(Math.floor((Date.now() - back * WEATHER_CLOUD_STEP_MS) / 600_000) * 600_000)
+  if (shared) {
+    /*
+     * The rain's own instants, to the sensors' ten-minute cadence.
+     *
+     * Every one of them is in the past — the rain window was moved to end at
+     * the present precisely so that this request is answerable. The live
+     * picture is dropped in this case: it was taken minutes ago and the rain's
+     * newest step can be up to an hour old, and showing them side by side is
+     * the exact mismatch this is here to remove. Being an hour behind together
+     * beats being right now and wrong about each other.
+     */
+    for (const t of shared) wantedAt.push(Math.floor(t / 600_000) * 600_000)
+    opsLog(
+      `[weather] cloud: following the rain's clock — ${wantedAt.length} steps, ` +
+        `${Math.round((Date.now() - wantedAt[0]) / 60_000)}분 전부터 ` +
+        `${Math.round((Date.now() - wantedAt[wantedAt.length - 1]) / 60_000)}분 전까지`
+    )
+  } else {
+    for (let back = steps - 1; back >= 1; back--) {
+      // Snap to the sensors' own ten-minute cadence, or the server has to pick
+      // for us and may pick the same picture twice.
+      wantedAt.push(Math.floor((Date.now() - back * WEATHER_CLOUD_STEP_MS) / 600_000) * 600_000)
+    }
   }
 
   const series: WeatherFrame[] = []
@@ -921,6 +974,20 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
     if (new Set(tiles.map((t) => t.centerLon)).size === nowSensors.size && tiles.length) {
       cloudSteps.set(at, tiles)
       series.push({ ...nowFrame, time: at, tiles })
+    } else if (shared) {
+      /*
+       * Hold the previous picture rather than dropping the step.
+       *
+       * Both layers are played back off the wall clock, so a loop of three
+       * cloud steps against four rain steps runs at a different rate and the
+       * two slide out of phase within a minute — which is the thing this whole
+       * change exists to stop. A repeated frame costs one held beat; a missing
+       * frame costs the synchronisation.
+       */
+      // Nothing earlier to hold on the very first step, so the live picture
+      // stands in for it — stale by a step, but the count is what matters.
+      series.push({ ...(series[series.length - 1] ?? nowFrame), time: at })
+      opsLog(`[weather] cloud: nothing for ${stamp} — holding the previous step to stay in sync`)
     } else {
       opsLog(`[weather] cloud: no complete picture for ${stamp} — that step is skipped`)
     }
@@ -929,13 +996,15 @@ async function fetchGibsCloud(): Promise<WeatherFrame[] | null> {
   for (const at of [...cloudSteps.keys()]) {
     if (!wantedAt.includes(at)) cloudSteps.delete(at)
   }
-  series.push(nowFrame)
+  // On the shared clock the live picture is not one of the rain's moments, so
+  // it is not part of the loop. It is still the safety net if every step failed.
+  if (!shared || !series.length) series.push(nowFrame)
   series.forEach((f, i) => {
     f.step = i
     f.steps = series.length
   })
   if (series.length > 1) {
-    const span = ((series.length - 1) * WEATHER_CLOUD_STEP_MS) / 60_000
+    const span = Math.round((series[series.length - 1].time - series[0].time) / 60_000)
     opsLog(
       `[weather] cloud: ${series.length} steps over ${span}분 — animating ` +
         `(${reused} reused, ${series.length - 1 - reused} fetched)`

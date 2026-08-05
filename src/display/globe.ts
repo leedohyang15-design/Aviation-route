@@ -624,31 +624,21 @@ export class Globe {
           }
 
           /*
-           * Rain falls out of cloud, so it is only drawn where there is some.
+           * The rain is drawn at full strength, wherever the model puts it.
            *
-           * The two layers are not the same kind of thing and never will be:
-           * the cloud is a photograph taken minutes ago by a satellite, the
-           * rain is a numerical model's opinion about the hour. They disagree
-           * in detail — a model puts a front a hundred kilometres from where
-           * the camera sees it — and on a globe that reads as rain falling out
-           * of a clear black sky, which is the one thing everybody knows does
-           * not happen.
+           * It was briefly multiplied by how much cloud the camera saw at the
+           * same pixel, to stop rain appearing under a clear black sky. That
+           * treated a timing bug as a physics problem: the two layers were on
+           * opposite clocks — the rain animating an hour into the future, the
+           * cloud three quarters of an hour into the past — so of course they
+           * disagreed about where a storm was, and multiplying them just
+           * deleted the rain instead. A typhoon with no rain falling out of it
+           * is a worse lie than rain slightly offset from its cloud.
            *
-           * Where the camera says there is nothing, believe the camera. It
-           * cannot make the two agree about a front's exact position, but it
-           * removes the case that looks broken, and it costs nothing where
-           * they do agree. Only applies while the cloud layer is actually on —
-           * with it off, the rain is the whole picture and stands alone.
+           * The clocks are shared now (see the rain window in server/weather.ts,
+           * which the cloud follows), so the two agree because they are about
+           * the same moment, which is the only way they ever could.
            */
-          float cloudHere = 1.0;
-          if (uHasCloud > 0.5) {
-            vec4 cc = texture2D(uCloud, uCloudMerc > 0.5 ? mercUV : flatUV);
-            float amt = uCloudData > 0.5
-              ? cc.a
-              : cc.a * max(dot(cc.rgb, vec3(0.299, 0.587, 0.114)),
-                           (max(cc.r, max(cc.g, cc.b)) - min(cc.r, min(cc.g, cc.b))) * 0.85);
-            cloudHere = smoothstep(0.02, 0.30, amt);
-          }
 
           // Rain goes in last: it is a data overlay, not a photograph, and a
           // storm that vanishes at sunset is a storm nobody can point at.
@@ -671,12 +661,12 @@ export class Globe {
             // ramp; making faint rain also faint means the two effects
             // multiply and light rain disappears entirely, which is the
             // difference between this map and every other one.
-            float a = smoothstep(0.0, 0.10, t) * d.y * cloudHere
+            float a = smoothstep(0.0, 0.10, t) * d.y
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
             vec4 r = texture2D(uRain, uRainMerc > 0.5 ? mercUV : flatUV);
-            col = mix(col, r.rgb, r.a * cloudHere * (uRainMerc > 0.5 ? inMerc : 1.0));
+            col = mix(col, r.rgb, r.a * (uRainMerc > 0.5 ? inMerc : 1.0));
           }
           gl_FragColor = vec4(col, 1.0);
         }
