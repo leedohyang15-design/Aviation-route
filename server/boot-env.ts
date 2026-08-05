@@ -13,7 +13,7 @@
 // build its constants — had already frozen every one of them from an
 // environment that did not yet have the .env in it. Values with a default
 // carried on quietly using the default, which is why nobody noticed until a
-// MAPTILER_KEY sitting correctly in .env produced "no key, using the fallback"
+// a weather API key sitting correctly in .env produced "no key, using the fallback"
 // and the weather tab kept drawing the old source.
 //
 // A side-effect import fixes it properly: it is an import, so it is evaluated

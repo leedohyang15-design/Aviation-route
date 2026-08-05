@@ -44,7 +44,7 @@ export type WeatherLayer = 'cloud' | 'rain'
 /**
  * How to turn a data tile's pixel back into a real-world number.
  *
- * MapTiler's weather tiles are measurements, not pictures: the value is packed
+ * Some services publish measurements rather than pictures: the value is packed
  * big-endian across one to three colour channels and linearly mapped onto
  * [min, max] in the variable's own unit (percent for cloud, dBZ for radar).
  * Alpha is the no-data mask. The renderer decodes it and applies OUR colour

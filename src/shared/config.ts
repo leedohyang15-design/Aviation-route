@@ -127,62 +127,6 @@ export const OBSERVER_LON = Number(readEnv('OBSERVER_LON') ?? 126.978)
 // ---------------------------------------------------------------------------
 
 /**
- * MapTiler Weather — cloud AND rain from one place, which is the whole point.
- *
- * The previous arrangement took cloud from NASA GIBS and rain from RainViewer,
- * and it showed: two products from two sensors at two resolutions that
- * disagreed with each other and with the official numbers. GIBS gives infrared
- * brightness, from which cloud has to be GUESSED by a luminance heuristic —
- * which is why Korea never matched its published cloud cover. RainViewer's free
- * tier has no satellite at all, and its radar only exists over countries with
- * ground radar, so Africa and the oceans were simply blank.
- *
- * MapTiler serves both as GFS model fields on one key: real cloud-cover percent
- * and real radar reflectivity, global, on the same grid, in one tile scheme.
- * They are DATA tiles — the value is packed into the pixel, not painted — so
- * the colour ramp is ours, and a wrong-looking rain colour is now a number in
- * this file rather than somebody else's palette.
- *
- * Requires a key (free, non-commercial): https://cloud.maptiler.com/account/keys
- * Put it in .env as MAPTILER_KEY. Without one the exhibit falls back to the old
- * GIBS + RainViewer pair rather than showing an empty sky.
- */
-export const MAPTILER_KEY = readEnv('MAPTILER_KEY') ?? ''
-export const MAPTILER_WEATHER_INDEX =
-  readEnv('MAPTILER_WEATHER_INDEX') ?? 'https://api.maptiler.com/weather/latest.json'
-export const MAPTILER_TILE_BASE =
-  readEnv('MAPTILER_TILE_BASE') ?? 'https://api.maptiler.com/tiles'
-/**
- * Which variable each layer is, as `id|id|id` — the first one the key's index
- * actually carries wins.
- *
- * Alternatives, not a single name, because entitlement varies: the exhibit's
- * own key answers with temperature, pressure, precipitation, wind and radar,
- * and NO cloud variable of any kind. So cloud falls through this list and then
- * out to GIBS, and the log says which happened.
- */
-export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
-  cloud:
-    readEnv('MAPTILER_CLOUD_VARIABLE') ??
-    'cloud_cover-total:gfs|cloud_cover-high:gfs|cloud-cover:gfs',
-  // Precipitation first, reflectivity second. Reflectivity is what a radar
-  // returns and it is genuinely patchy — the model only lights it up where it
-  // has hydrometeors big enough to scatter. Every public weather map anyone
-  // compares this against, Windy included, paints an hour's precipitation
-  // instead, which is broader, smoother and the thing people mean by "where is
-  // it raining". The ramp already reads the unit off the index, so switching
-  // costs nothing.
-  rain: readEnv('MAPTILER_RAIN_VARIABLE') ?? 'precipitation-1h:gfs|radar-composite:gfs'
-}
-/**
- * How many keyframes to bring back, newest first.
- *
- * The index carries a whole time series, which is what makes the tab stop
- * looking like a photograph: the renderer cross-fades through them so the
- * weather actually drifts. Each extra keyframe is another full tile grid, so
- * this is the one knob that trades bandwidth for motion. 1 = a still picture.
- */
-/**
  * OpenWeatherMap: cloud AND rain from ONE model on ONE key.
  *
  * The exhibit's problem was never that either layer was wrong. It was that they
@@ -228,7 +172,7 @@ export const WEATHER_MAX_SERIES_MB = Number(readEnv('WEATHER_MAX_SERIES_MB') ?? 
 
 /**
  * RainViewer's free public index — the fallback rain source, used only when no
- * MapTiler key is configured.
+ * weather key is configured.
  */
 export const WEATHER_INDEX_URL =
   readEnv('WEATHER_INDEX_URL') ?? 'https://api.rainviewer.com/public/weather-maps.json'

@@ -14,14 +14,9 @@
 
 import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import type { WeatherDecode, WeatherFrame, WeatherLayer } from '../src/shared/types'
+import type { WeatherFrame, WeatherLayer } from '../src/shared/types'
 import {
-  MAPTILER_KEY,
-  MAPTILER_TILE_BASE,
-  MAPTILER_VARIABLES,
-  MAPTILER_WEATHER_INDEX,
   WEATHER_FRAME_COUNT,
-  WEATHER_MAX_SERIES_MB,
   WEATHER_INDEX_URL,
   WEATHER_POLL_MS,
   WEATHER_TILE_PX,
@@ -58,8 +53,8 @@ const CACHE_PATH = dataPath(CACHE_NAME)
  * yesterday's format on screen, not today's.
  */
 // 5: frames carry a `source` and OpenWeatherMap frames are painted rather than
-// packed. A cached MapTiler frame replayed under the new badge would credit the
-// wrong service for the picture on screen.
+// packed. A cached frame from the old source, replayed under the new badge,
+// would credit the wrong service for the picture on screen.
 const CACHE_VERSION = 5
 
 /** RainViewer's index. Only the fields we use are described. */
@@ -76,25 +71,6 @@ interface Persisted {
 }
 
 const LAYERS: WeatherLayer[] = ['cloud', 'rain']
-
-/**
- * The key, read when it is needed rather than when this file was loaded.
- *
- * The config module's constants are frozen at import time, and an entry point
- * that loads .env after its imports would freeze this one empty — which is
- * exactly what happened, and it fails silently by falling back to the old
- * source. `server/boot-env.ts` fixes the ordering; this makes the value
- * impossible to freeze wrong even if a bundler ever reorders the two.
- */
-function mtKey(): string {
-  return process.env.MAPTILER_KEY?.trim() || MAPTILER_KEY
-}
-function mtIndexUrl(): string {
-  return process.env.MAPTILER_WEATHER_INDEX || MAPTILER_WEATHER_INDEX
-}
-function mtTileBase(): string {
-  return process.env.MAPTILER_TILE_BASE || MAPTILER_TILE_BASE
-}
 
 /**
  * The newest SERIES we have for each layer, whether from the network or the
@@ -258,274 +234,17 @@ async function fetchFrame(
 }
 
 // ---------------------------------------------------------------------------
-// MapTiler Weather — the primary source when a key is configured.
+// OpenWeatherMap - cloud and rain from one model at one instant.
 // ---------------------------------------------------------------------------
 
-/** `latest.json`. Only the fields we use are described; the shape is taken from
- * the published @maptiler/weather types. */
-interface MtIndex {
-  variables?: {
-    tile_format?: string
-    metadata?: {
-      maxzoom?: number
-      weather_variable?: {
-        name?: string
-        unit?: string
-        attribution?: string
-        variable_id?: string
-        decoding?: { min?: number; max?: number; channels?: string }
-      }
-    }
-    keyframes?: { id: string; timestamp: string }[]
-  }[]
-}
-
-type MtVariable = NonNullable<MtIndex['variables']>[number]
-
-/** One data tile. Same envelope as the imagery tiles — a data: URL, so the
- * packaged app's file:// origin never taints the canvas. */
-async function fetchMtTile(
-  tilesetId: string,
-  format: string,
-  x: number,
-  y: number
-): Promise<{ x: number; y: number; url: string } | null> {
-  const url =
-    `${mtTileBase()}/${encodeURIComponent(tilesetId)}/` +
-    `${WEATHER_ZOOM}/${x}/${y}.${format}?key=${encodeURIComponent(mtKey())}`
-  try {
-    const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
-    if (!res.ok) {
-      // Never log the URL: it carries the key.
-      lastTileError = `HTTP ${res.status} on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
-      return null
-    }
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (!buf.length) {
-      lastTileError = `empty 200 body on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
-      return null
-    }
-    const mime = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png'
-    return { x, y, url: `data:${mime};base64,${buf.toString('base64')}` }
-  } catch (err) {
-    lastTileError = `${(err as Error).message} on ${tilesetId} ${WEATHER_ZOOM}/${x}/${y}`
-    return null
-  }
-}
-
-/** Every tile of one keyframe, a few sockets at a time. */
-async function fetchMtKeyframe(
-  layer: WeatherLayer,
-  tilesetId: string,
-  format: string,
-  time: number,
-  decode: WeatherDecode,
-  step: number,
-  steps: number
-): Promise<WeatherFrame | null> {
-  const n = 1 << WEATHER_ZOOM
-  const wanted: { x: number; y: number }[] = []
-  for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) wanted.push({ x, y })
-
-  const tiles: WeatherFrame['tiles'] = []
-  const BATCH = 8
-  for (let i = 0; i < wanted.length; i += BATCH) {
-    if (stopped) return null
-    const got = await Promise.all(
-      wanted.slice(i, i + BATCH).map((t) => fetchMtTile(tilesetId, format, t.x, t.y))
-    )
-    for (const t of got) if (t) tiles.push(t)
-  }
-  if (!tiles.length) return null
-  return {
-    layer,
-    projection: 'mercator',
-    blend: 'data',
-    source: '© MapTiler · GFS 실황',
-    decode,
-    z: WEATHER_ZOOM,
-    time,
-    tiles,
-    step,
-    steps
-  }
-}
-
 /**
- * One layer's animation series from MapTiler.
+ * The key, read when it is needed rather than when this file was loaded.
  *
- * The index hands back a whole time series per variable; we take the newest
- * WEATHER_FRAME_COUNT keyframes, oldest first, so the renderer can walk them in
- * order. Every fact needed to read the pixels — the packing channels and the
- * value range — comes from the index rather than being hard-coded here, because
- * the one thing that cannot be checked from a sandbox is what the service
- * actually sends.
- */
-async function fetchMaptilerLayer(
-  index: MtIndex,
-  layer: WeatherLayer
-): Promise<WeatherFrame[] | null> {
-  const wantIds = MAPTILER_VARIABLES[layer].split('|').map((s) => s.trim()).filter(Boolean)
-  const offered = (index.variables ?? []).map((x) => x.metadata?.weather_variable?.variable_id)
-  /*
-   * OUR order of preference, not the index's.
-   *
-   * This was `variables.find(x => wantIds.includes(x.id))`, which walks the
-   * INDEX and stops at the first entry that happens to be on our list — so with
-   * the index ordering precipitation before radar, the second choice won. The
-   * exhibit asked for reflectivity and got millimetres, and the ramp is
-   * calibrated in dBZ, so almost nothing crossed the threshold.
-   */
-  let v: MtVariable | undefined
-  for (const id of wantIds) {
-    v = index.variables?.find((x) => x.metadata?.weather_variable?.variable_id === id)
-    if (v) break
-  }
-  if (!v) {
-    // Named alternatives, because which variables a key is entitled to is not
-    // something that can be checked from here — the exhibit's own key turned
-    // out to carry temperature, pressure, precipitation, wind and radar, and
-    // no cloud of any kind.
-    opsLog(
-      `[weather] ${layer}: none of "${wantIds.join('", "')}" is in the index. ` +
-        `It offered: ${offered.filter(Boolean).join(', ') || 'nothing'}`
-    )
-    return null
-  }
-  const wantId = v.metadata?.weather_variable?.variable_id ?? wantIds[0]
-  const wv = v.metadata?.weather_variable
-  const d = wv?.decoding
-  if (!d || typeof d.min !== 'number' || typeof d.max !== 'number' || !d.channels) {
-    opsLog(`[weather] ${layer}: "${wantId}" carries no decoding block — cannot read its pixels`)
-    return null
-  }
-  const keys = v.keyframes ?? []
-  if (!keys.length) {
-    opsLog(`[weather] ${layer}: "${wantId}" has no keyframes`)
-    return null
-  }
-  const decode: WeatherDecode = { min: d.min, max: d.max, channels: d.channels, unit: wv?.unit }
-  const format = v.tile_format && v.tile_format !== 'pbf' ? v.tile_format : 'png'
-
-  /*
-   * Start at NOW, not at the end of the list.
-   *
-   * These keyframes are a model run: they reach days into the future, and
-   * `slice(-N)` was taking the last four — the furthest forecast steps there
-   * are. The exhibit was showing next week's rain and calling it real time,
-   * which is why it looked nothing like what everyone else was showing for
-   * today. The step nearest the present goes first and the animation runs
-   * forward from there, which is both the honest picture and a moving one.
-   */
-  const now = Date.now()
-  const stamps = keys.map((k) => Date.parse(k.timestamp))
-  /*
-   * The newest step that has already HAPPENED, not merely the nearest one.
-   *
-   * Nearest could be half an hour into the future, and the cloud beside it is
-   * a photograph taken minutes ago. A forecast and an observation of different
-   * moments disagree in exactly the way that was reported: rain sitting where
-   * the sky is empty, and a storm on the picture with nothing falling out of
-   * it. Taking the last step at or before now puts the two layers on the same
-   * side of the present, which is as close as a model and a camera get.
-   */
-  let start = 0
-  let bestPast = -1
-  for (let i = 0; i < keys.length; i++) {
-    if (!Number.isFinite(stamps[i])) continue
-    if (stamps[i] <= now) bestPast = i
-    if (Math.abs(stamps[i] - now) < Math.abs((stamps[start] || 0) - now)) start = i
-  }
-  if (bestPast >= 0) start = bestPast
-  /*
-   * The window ENDS at the present and reaches backwards.
-   *
-   * It used to start at the present and run forward through the model's
-   * forecast steps, while the cloud beside it ran backwards through the last
-   * three quarters of an hour of photographs. Two animations, opposite
-   * directions, different spacing — so step 2 of the rain was an hour into the
-   * future and step 2 of the cloud was half an hour into the past, and no
-   * amount of tuning either one could make them agree. Ending both at now and
-   * reaching back puts every step on a moment that has actually happened,
-   * which is the one kind of moment a camera can also be asked about.
-   */
-  const end = Math.max(0, Math.min(start, keys.length - 1))
-  const from = Math.max(0, end - WEATHER_FRAME_COUNT + 1)
-  const wanted = keys.slice(from, end + 1)
-  start = from
-  const off = (t: number): string => {
-    const m = Math.round((t - now) / 60_000)
-    return Number.isFinite(m) ? (m >= 0 ? `+${m}분` : `${m}분`) : '?'
-  }
-  opsLog(
-    `[weather] ${layer}: ${keys.length} keyframes span ${off(stamps[0])}…${off(stamps[keys.length - 1])}; ` +
-      `taking ${wanted.length} from ${off(stamps[start])} (step ${start})`
-  )
-
-  /*
-   * Nearest to now first, and stop when the series has spent its byte budget.
-   *
-   * A two-channel variable packs its value across a high and a low byte, and
-   * the low byte turns over every 1/65536th of the range — so it is noise even
-   * where the weather is perfectly smooth, and PNG cannot compress noise. A
-   * four-step radar series measured FIFTY-FOUR megabytes against a cloud
-   * series' five. That is a number that gets broadcast to both windows and
-   * written to the disk cache, so it needs a ceiling rather than a hope.
-   *
-   * The order is what makes the ceiling safe to hit: the fetch runs from the
-   * present BACKWARDS, so a full budget costs the oldest end of the animation
-   * and never the picture of right now. The series is put back into forward
-   * order below, because that is the direction it is watched in.
-   */
-  const budget = WEATHER_MAX_SERIES_MB * 1e6
-  const series: WeatherFrame[] = []
-  let bytes = 0
-  for (const k of [...wanted].reverse()) {
-    if (stopped) return null
-    if (series.length && bytes >= budget) break
-    const time = Date.parse(k.timestamp)
-    const frame = await fetchMtKeyframe(
-      layer,
-      k.id,
-      format,
-      Number.isFinite(time) ? time : Date.now(),
-      decode,
-      0, // renumbered below, once we know how many survived
-      0
-    )
-    if (!frame) continue
-    series.push(frame)
-    bytes += frame.tiles.reduce((m, t) => m + t.url.length, 0)
-  }
-  if (!series.length) {
-    opsLog(`[weather] ${layer}: every tile failed. Last error: ${lastTileError || 'none recorded'}`)
-    return null
-  }
-  series.sort((a, b) => a.time - b.time)
-  series.forEach((f, i) => {
-    f.step = i
-    f.steps = series.length
-  })
-  opsLog(
-    `[weather] ${layer}: ${wv?.name ?? wantId} — ${series.length}/${wanted.length} keyframes, ` +
-      `${series[0].tiles.length}/${1 << (WEATHER_ZOOM * 2)} tiles each, ${(bytes / 1e6).toFixed(1)}MB, ` +
-      `${d.min}–${d.max} ${wv?.unit ?? ''} packed in "${d.channels}"`
-  )
-  if (series.length < wanted.length) {
-    // Never silently: a shorter loop is a visible change and the reason for it
-    // belongs in the log, not in somebody's guess.
-    opsLog(
-      `[weather] ${layer}: stopped at ${series.length} of ${wanted.length} keyframes — ` +
-        `${(bytes / 1e6).toFixed(1)}MB reached the ${WEATHER_MAX_SERIES_MB}MB budget. ` +
-        `The animation is shorter; the current picture is unaffected. ` +
-        `Raise WEATHER_MAX_SERIES_MB or lower WEATHER_FRAME_COUNT to change that.`
-    )
-  }
-  return series
-}
-
-/**
- * The key, read late for the same reason MapTiler's is — see mtKey.
+ * The config module's constants are frozen at import time, and an entry point
+ * that loads .env after its imports would freeze this one empty - which has
+ * happened here before, and it fails silently. server/boot-env.ts fixes the
+ * ordering; this makes the value impossible to freeze wrong even if a bundler
+ * ever reorders the two.
  */
 function owmKey(): string {
   return process.env.OPENWEATHER_KEY?.trim() || OPENWEATHER_KEY
@@ -691,47 +410,6 @@ async function pollOpenWeather(onFrame: (f: WeatherFrame) => boolean | void): Pr
   }
   saveCache()
   return delivered
-}
-
-/** One poll of MapTiler: index, then both layers' series. */
-async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
-  const url = `${mtIndexUrl()}?key=${encodeURIComponent(mtKey())}`
-  const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
-  // The key is in the URL, so the message says the status and nothing else.
-  if (!res.ok) throw new Error(`weather index HTTP ${res.status} (key rejected?)`)
-  const index = (await res.json()) as MtIndex
-  if (!Array.isArray(index?.variables)) throw new Error('index has no variables — the API shape has changed')
-
-  /*
-   * Rain first, then cloud — the cloud follows the rain's clock.
-   *
-   * Which moments exist at all is the model's to decide: it publishes hourly
-   * steps and the camera can be asked for any minute, so the only order that
-   * can produce one shared timeline is the one that asks the constrained side
-   * first.
-   */
-  let timeline: number[] | null = null
-  for (const layer of [...LAYERS].sort((a, b) => (a === 'rain' ? -1 : b === 'rain' ? 1 : 0))) {
-    if (stopped) return
-    let series = await fetchMaptilerLayer(index, layer)
-    if (series && layer === 'rain' && series.length > 1) {
-      timeline = series.map((f) => f.time)
-    }
-    if (!series && layer === 'cloud' && WEATHER_CLOUD_SOURCE !== 'off') {
-      // MapTiler has the rain but not the cloud on this key. Falling through to
-      // GIBS beats the alternative, which is what happened the first time: the
-      // layer quietly kept whatever the disk cache held, so the screen showed a
-      // cloud picture from hours ago next to live rain and nothing said so.
-      opsLog('[weather] cloud: falling back to NASA GIBS for this layer')
-      series = await fetchGibsCloud(timeline)
-    }
-    if (!series) continue
-    // Same moment as what is already on screen: nothing to send.
-    if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
-    latest.set(layer, series)
-    for (const f of series) onFrame(f)
-  }
-  saveCache()
 }
 
 /**
@@ -1234,15 +912,6 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
   /*
-   * OpenWeatherMap first when it has a key.
-   *
-   * It is the only source configured here that serves BOTH layers, so it is
-   * the only one on which they cannot disagree about the moment or about what
-   * cloud means. MapTiler stays behind it: its rain is real values rather than
-   * a painted picture, which is what the intensity ramp and the percentile
-   * measurement are built on, and it is what runs when no OWM key is set.
-   */
-  /*
    * Fall THROUGH when it fails, do not fall over.
    *
    * Setting the key made OpenWeatherMap the only source tried, so the first
@@ -1251,7 +920,6 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
    * the one that was working before still runs on the same poll.
    */
   if (owmKey() && (await pollOpenWeather(onFrame))) return
-  if (mtKey()) return pollMaptiler(onFrame)
   const res = await fetchWithTimeout(WEATHER_INDEX_URL, WEATHER_TIMEOUT_MS)
   if (!res.ok) throw new Error(`index HTTP ${res.status}`)
   const index = (await res.json()) as Index
@@ -1324,17 +992,15 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   setImmediate(() => {
     for (const f of replay) if (!stopped) onFrame(f)
   })
-  // Say which source is live, every time. "Is MapTiler actually on?" is not a
+  // Say which source is live, every time. "Is the key actually on?" is not a
   // question anybody should have to answer by looking at the picture.
   opsLog(
     owmKey()
       ? `[weather] source: OpenWeatherMap - key ...${owmKey().slice(-4)}, cloud and rain from ` +
         `ONE model at ONE instant (${OWM_LAYERS.cloud[0]} + ${OWM_LAYERS.rain[0]})`
-      : mtKey()
-      ? `[weather] source: MapTiler - key ...${mtKey().slice(-4)}, ` +
-        `${WEATHER_FRAME_COUNT} keyframes, cloud=${MAPTILER_VARIABLES.cloud} rain=${MAPTILER_VARIABLES.rain}`
-      : '[weather] source: NASA GIBS + RainViewer (FALLBACK). No MAPTILER_KEY reached the hub — ' +
-        'put MAPTILER_KEY="..." in the .env beside the exe. Rain will be missing over Africa and the oceans.'
+      : '[weather] source: NASA GIBS + RainViewer (FALLBACK). No OPENWEATHER_KEY reached the hub - ' +
+        'put OPENWEATHER_KEY="..." in the .env beside the exe. Until then the cloud is a satellite ' +
+        'photograph and the rain only exists where a country has ground radar.'
   )
 
   const loop = async (): Promise<void> => {
