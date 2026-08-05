@@ -3,9 +3,11 @@
 //  - opens two windows: the operator's control map on the primary display and
 //    the equirectangular frame full-screen on the projector display.
 
+// FIRST, above every import that can reach the config module: it populates
+// process.env from .env, and config reads process.env at evaluation time.
+import '../server/boot-env'
 import { app, BrowserWindow, screen, dialog } from 'electron'
 import { join } from 'node:path'
-import { loadEnv } from '../server/env'
 import { startHub, type Hub } from '../server/hub'
 import { opsLog, LOG_PATH } from '../server/log'
 
@@ -25,8 +27,6 @@ function logCrash(kind: string, err: unknown): void {
 }
 process.on('uncaughtException', (err) => logCrash('uncaughtException', err))
 process.on('unhandledRejection', (reason) => logCrash('unhandledRejection', reason))
-
-loadEnv() // read OPENSKY_* from .env (project root in dev) before starting the hub
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL
 

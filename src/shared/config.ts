@@ -158,6 +158,17 @@ export const MAPTILER_VARIABLES: Record<'cloud' | 'rain', string> = {
 export const WEATHER_FRAME_COUNT = Number(readEnv('WEATHER_FRAME_COUNT') ?? 4)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 export const WEATHER_FRAME_HOLD_MS = Number(readEnv('WEATHER_FRAME_HOLD_MS') ?? 1600)
+/**
+ * Ceiling on one layer's whole series, in megabytes.
+ *
+ * A two-channel variable's low byte turns over every 1/65536th of its range,
+ * so it is noise even where the field is smooth — and PNG cannot compress
+ * noise. A four-step radar series measured 54MB against a cloud series' 5MB,
+ * and that number gets broadcast to both windows and written to disk. Frames
+ * are fetched newest-first and the fetch stops here, so what a full budget
+ * costs is a shorter animation, never the picture of right now.
+ */
+export const WEATHER_MAX_SERIES_MB = Number(readEnv('WEATHER_MAX_SERIES_MB') ?? 24)
 
 /**
  * RainViewer's free public index — the fallback rain source, used only when no

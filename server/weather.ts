@@ -21,6 +21,7 @@ import {
   MAPTILER_VARIABLES,
   MAPTILER_WEATHER_INDEX,
   WEATHER_FRAME_COUNT,
+  WEATHER_MAX_SERIES_MB,
   WEATHER_INDEX_URL,
   WEATHER_POLL_MS,
   WEATHER_TILE_PX,
@@ -64,6 +65,25 @@ interface Persisted {
 }
 
 const LAYERS: WeatherLayer[] = ['cloud', 'rain']
+
+/**
+ * The key, read when it is needed rather than when this file was loaded.
+ *
+ * The config module's constants are frozen at import time, and an entry point
+ * that loads .env after its imports would freeze this one empty — which is
+ * exactly what happened, and it fails silently by falling back to the old
+ * source. `server/boot-env.ts` fixes the ordering; this makes the value
+ * impossible to freeze wrong even if a bundler ever reorders the two.
+ */
+function mtKey(): string {
+  return process.env.MAPTILER_KEY?.trim() || MAPTILER_KEY
+}
+function mtIndexUrl(): string {
+  return process.env.MAPTILER_WEATHER_INDEX || MAPTILER_WEATHER_INDEX
+}
+function mtTileBase(): string {
+  return process.env.MAPTILER_TILE_BASE || MAPTILER_TILE_BASE
+}
 
 /**
  * The newest SERIES we have for each layer, whether from the network or the
@@ -256,8 +276,8 @@ async function fetchMtTile(
   y: number
 ): Promise<{ x: number; y: number; url: string } | null> {
   const url =
-    `${MAPTILER_TILE_BASE}/${encodeURIComponent(tilesetId)}/` +
-    `${WEATHER_ZOOM}/${x}/${y}.${format}?key=${encodeURIComponent(MAPTILER_KEY)}`
+    `${mtTileBase()}/${encodeURIComponent(tilesetId)}/` +
+    `${WEATHER_ZOOM}/${x}/${y}.${format}?key=${encodeURIComponent(mtKey())}`
   try {
     const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
     if (!res.ok) {
@@ -343,9 +363,26 @@ async function fetchMaptilerLayer(
   const format = v.tile_format && v.tile_format !== 'pbf' ? v.tile_format : 'png'
   const wanted = keys.slice(Math.max(0, keys.length - WEATHER_FRAME_COUNT))
 
-  const series: WeatherFrame[] = []
-  for (const [i, k] of wanted.entries()) {
+  /*
+   * Newest keyframe first, and stop when the series has spent its byte budget.
+   *
+   * A two-channel variable packs its value across a high and a low byte, and
+   * the low byte turns over every 1/65536th of the range — so it is noise even
+   * where the weather is perfectly smooth, and PNG cannot compress noise. A
+   * four-step radar series measured FIFTY-FOUR megabytes against a cloud
+   * series' five. That is a number that gets broadcast to both windows and
+   * written to the disk cache, so it needs a ceiling rather than a hope.
+   *
+   * Newest-first is what makes the ceiling safe to hit: whatever gets dropped
+   * is the far end of the animation, never the picture of right now.
+   */
+  const budget = WEATHER_MAX_SERIES_MB * 1e6
+  const newestFirst: WeatherFrame[] = []
+  let bytes = 0
+  for (let i = wanted.length - 1; i >= 0; i--) {
     if (stopped) return null
+    if (newestFirst.length && bytes >= budget) break
+    const k = wanted[i]
     const time = Date.parse(k.timestamp)
     const frame = await fetchMtKeyframe(
       layer,
@@ -353,27 +390,43 @@ async function fetchMaptilerLayer(
       format,
       Number.isFinite(time) ? time : Date.now(),
       decode,
-      i,
-      wanted.length
+      0, // renumbered below, once we know how many survived
+      0
     )
-    if (frame) series.push(frame)
+    if (!frame) continue
+    newestFirst.push(frame)
+    bytes += frame.tiles.reduce((m, t) => m + t.url.length, 0)
   }
-  if (!series.length) {
+  if (!newestFirst.length) {
     opsLog(`[weather] ${layer}: every tile failed. Last error: ${lastTileError || 'none recorded'}`)
     return null
   }
-  const bytes = series.reduce((n, f) => n + f.tiles.reduce((m, t) => m + t.url.length, 0), 0)
+  const series = newestFirst.reverse()
+  series.forEach((f, i) => {
+    f.step = i
+    f.steps = series.length
+  })
   opsLog(
     `[weather] ${layer}: ${wv?.name ?? wantId} — ${series.length}/${wanted.length} keyframes, ` +
       `${series[0].tiles.length}/${1 << (WEATHER_ZOOM * 2)} tiles each, ${(bytes / 1e6).toFixed(1)}MB, ` +
       `${d.min}–${d.max} ${wv?.unit ?? ''} packed in "${d.channels}"`
   )
+  if (series.length < wanted.length) {
+    // Never silently: a shorter loop is a visible change and the reason for it
+    // belongs in the log, not in somebody's guess.
+    opsLog(
+      `[weather] ${layer}: stopped at ${series.length} of ${wanted.length} keyframes — ` +
+        `${(bytes / 1e6).toFixed(1)}MB reached the ${WEATHER_MAX_SERIES_MB}MB budget. ` +
+        `The animation is shorter; the current picture is unaffected. ` +
+        `Raise WEATHER_MAX_SERIES_MB or lower WEATHER_FRAME_COUNT to change that.`
+    )
+  }
   return series
 }
 
 /** One poll of MapTiler: index, then both layers' series. */
 async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
-  const url = `${MAPTILER_WEATHER_INDEX}?key=${encodeURIComponent(MAPTILER_KEY)}`
+  const url = `${mtIndexUrl()}?key=${encodeURIComponent(mtKey())}`
   const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
   // The key is in the URL, so the message says the status and nothing else.
   if (!res.ok) throw new Error(`weather index HTTP ${res.status} (key rejected?)`)
@@ -463,7 +516,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
 }
 
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
-  if (MAPTILER_KEY) return pollMaptiler(onFrame)
+  if (mtKey()) return pollMaptiler(onFrame)
   const res = await fetchWithTimeout(WEATHER_INDEX_URL, WEATHER_TIMEOUT_MS)
   if (!res.ok) throw new Error(`index HTTP ${res.status}`)
   const index = (await res.json()) as Index
@@ -536,10 +589,14 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   setImmediate(() => {
     for (const f of replay) if (!stopped) onFrame(f)
   })
+  // Say which source is live, every time. "Is MapTiler actually on?" is not a
+  // question anybody should have to answer by looking at the picture.
   opsLog(
-    MAPTILER_KEY
-      ? '[weather] source: MapTiler (구름+비 한 곳에서, 애니메이션)'
-      : '[weather] source: NASA GIBS + RainViewer — no MAPTILER_KEY in .env, running on the fallback'
+    mtKey()
+      ? `[weather] source: MapTiler — key ...${mtKey().slice(-4)}, ` +
+        `${WEATHER_FRAME_COUNT} keyframes, cloud=${MAPTILER_VARIABLES.cloud} rain=${MAPTILER_VARIABLES.rain}`
+      : '[weather] source: NASA GIBS + RainViewer (FALLBACK). No MAPTILER_KEY reached the hub — ' +
+        'put MAPTILER_KEY="..." in the .env beside the exe. Rain will be missing over Africa and the oceans.'
   )
 
   const loop = async (): Promise<void> => {
