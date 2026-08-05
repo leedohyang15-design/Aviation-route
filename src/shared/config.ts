@@ -274,9 +274,17 @@ const EUM = `@${WEATHER_EUMETSAT_URL}`
 export const WEATHER_GIBS_SLOTS = (
   readEnv('WEATHER_GIBS_SLOTS') ??
   [
-    '-75:GOES-East_ABI_Band13_Clean_Infrared|GOES-East_ABI_GeoColor',
-    '-137:GOES-West_ABI_Band13_Clean_Infrared|GOES-West_ABI_GeoColor',
-    '140.7:Himawari_AHI_Band13_Clean_Infrared|Himawari_AHI_GeoColor',
+    // No GeoColor spares. GeoColor is a VISIBLE-light true-colour composite,
+    // not a brightness temperature: by day it is white cloud over bright
+    // desert and blue ocean, and it carries the day/night terminator inside
+    // the picture. Dropped into a mosaic of infrared discs and then stretched
+    // onto the common scale, it comes out as a bright patch that stays bright
+    // where the rest of the globe goes dark. It was only ever meant as a spare
+    // spelling; it is a different measurement and there is no scale on which
+    // it agrees with the other four sensors.
+    '-75:GOES-East_ABI_Band13_Clean_Infrared',
+    '-137:GOES-West_ABI_Band13_Clean_Infrared',
+    '140.7:Himawari_AHI_Band13_Clean_Infrared',
     // msg_fes first: both of these are confirmed answering on the exhibit
     // machine, and a first choice that always fails is a wasted request on
     // every poll for as long as the exhibit runs. mtg_fd stays behind it —

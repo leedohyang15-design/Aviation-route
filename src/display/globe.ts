@@ -384,6 +384,9 @@ export class Globe {
   private edgeScanned = new Set<string>()
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [] }
+  /** When to read the drawing buffer back and measure it, epoch ms; 0 = never.
+   * Deferred a few seconds so the measurement lands on a settled picture. */
+  private screenScanAt = 0
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -2268,7 +2271,15 @@ export class Globe {
       const hm = (t: number): string => new Date(t).toISOString().slice(11, 16)
       const c = this.wxTimes.cloud
       const r = this.wxTimes.rain
-      if (c.length && r.length) {
+      // Only once a series is all here. The hub sends frames one at a time, so
+      // a partial series compared against a complete one reads as out of sync
+      // for a second or two — three false alarms per poll, and the true "IN
+      // SYNC" at the end was the easiest line to miss.
+      const whole = usable.length >= (head.steps ?? usable.length)
+      // Measure the finished picture a few seconds after the last series
+      // lands, once per poll.
+      if (whole) this.screenScanAt = Date.now() + 4000
+      if (whole && c.length && r.length) {
         const same = c.length === r.length && c.every((t, i) => Math.abs(t - r[i]) <= 600_000)
         this.onNote?.(
           `[weather] clocks: cloud [${c.map(hm).join(' ')}] rain [${r.map(hm).join(' ')}] ` +
@@ -2313,6 +2324,47 @@ export class Globe {
    * stopped. Sampled down to 2048 wide, which keeps a band and costs a
    * hundredth of the memory of an 8k source.
    */
+  /**
+   * Measure the finished picture, straight off the GPU.
+   *
+   * Every input has now been measured and every one came back clean: all four
+   * cloud steps, all four rain steps, and the two map images. The band is
+   * still on screen, and it stays bright where the globe goes dark at the
+   * terminator — which places it after the day/night shading, not in any of
+   * the textures that feed it. So the last thing left to measure is the output
+   * itself. Read the drawing buffer, run the same detector, and the rows and
+   * columns it names are the ones a person is actually looking at.
+   */
+  private scanScreen(): void {
+    if (!this.onNote) return
+    try {
+      const gl = this.renderer.getContext()
+      const W = gl.drawingBufferWidth
+      const H = gl.drawingBufferHeight
+      if (W < 64 || H < 64) return
+      const buf = new Uint8Array(W * H * 4)
+      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = H
+      const ctx = c.getContext('2d')!
+      const img = ctx.createImageData(W, H)
+      // readPixels hands back the buffer bottom-up; the detector reports rows
+      // as latitudes, so a flipped image would name the wrong hemisphere.
+      for (let y = 0; y < H; y++) {
+        const src = (H - 1 - y) * W * 4
+        img.data.set(buf.subarray(src, src + W * 4), y * W * 4)
+      }
+      // Alpha off the drawing buffer is not coverage, and the detector
+      // multiplies by it. Opaque, so it measures brightness alone.
+      for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255
+      ctx.putImageData(img, 0, 0)
+      this.scanEdges(c, 'SCREEN')
+    } catch {
+      /* readPixels can fail on a lost context; a diagnostic is not worth a crash */
+    }
+  }
+
   private scanTexture(tex: THREE.Texture, label: string): void {
     const img = tex.image as HTMLImageElement | undefined
     if (!this.onNote || !img?.width) return
@@ -2982,6 +3034,10 @@ export class Globe {
     this.updateSun()
     this.tickWeather()
     this.renderer.render(this.scene, this.camera)
+    if (this.screenScanAt && Date.now() >= this.screenScanAt) {
+      this.screenScanAt = 0
+      this.scanScreen()
+    }
     this.raf = requestAnimationFrame(this.frame)
   }
 
