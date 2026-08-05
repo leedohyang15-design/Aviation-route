@@ -96,7 +96,17 @@ function rainAnchors(d: WeatherDecode): THREE.Vector2 {
   // colour. The top used to be 18, which is a rate a typhoon only reaches in
   // its eyewall — so the rest of the storm, which is where nearly all of its
   // rain is, drew as pale blue on a picture of a hurricane.
-  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.05, 12)
+  /*
+   * Measured, not guessed. A world's worth of GFS hourly precipitation reads
+   * p50 0.00, p90 0.20, p99 1.37, p99.9 3.73, max 42.9 mm — so the unit is
+   * right and the storms are there; nine wet pixels in ten are lighter than
+   * two tenths of a millimetre. Starting the ramp at 0.05 meant painting all
+   * of them, which is why oceans that every other map leaves empty came out
+   * as solid cyan sheets. 0.15 keeps the bands and drops the haze. The top
+   * stays at a downpour: the maximum is three times it, so the hot end of the
+   * ramp belongs to real storms.
+   */
+  if (unit.includes('mm') || unit.includes('kg')) return new THREE.Vector2(0.15, 12)
   const span = d.max - d.min
   return new THREE.Vector2(d.min + span * 0.08, d.min + span * 0.75)
 }
@@ -665,11 +675,21 @@ export class Globe {
             // error; for reflectivity, already a log scale by definition, it
             // is 1 and this does nothing.
             float t = pow(lin, uRainGamma);
-            // Reach full opacity early. The intensity is carried by the COLOUR
-            // ramp; making faint rain also faint means the two effects
-            // multiply and light rain disappears entirely, which is the
-            // difference between this map and every other one.
-            float a = smoothstep(0.0, 0.10, t) * d.y
+            /*
+             * Opacity carries intensity too, not just the colour.
+             *
+             * This used to reach full opacity at a tenth of the ramp, which
+             * for the measured field is 0.07mm an hour — so ninety-nine
+             * percent of the world's rain was drawn at full strength in the
+             * ramp's first colour, and a typhoon was the same solid cyan as
+             * drizzle over the Southern Ocean. A floor keeps light rain
+             * visible without letting it shout: a wash at the bottom, solid by
+             * the time it is worth carrying a coat for.
+             */
+            // The floor applies to rain, not to everywhere: a dry pixel sits at
+            // t = 0 and the first factor holds it at nothing. Without it the
+            // floor would wash the whole planet pale blue.
+            float a = smoothstep(0.0, 0.02, t) * mix(0.30, 1.0, smoothstep(0.10, 0.55, t)) * d.y
                       * (uRainMerc > 0.5 ? inMerc : 1.0);
             col = mix(col, rainRamp(t), a * 0.92);
           } else if (uHasRain > 0.5) {
@@ -1935,6 +1955,8 @@ export class Globe {
         return Math.max(lum, sat * 0.85)
       }
 
+      /** Sensors whose picture carried no usable contrast this frame. */
+      const flat: number[] = []
       for (const [i, t] of patches.entries()) {
         const img = imgs.get(i)
         if (!img) continue
@@ -1977,7 +1999,29 @@ export class Globe {
           return 1
         }
         const lo = at(0.5) // half of what a satellite sees is not cloud
-        const hi = Math.max(lo + 0.02, at(0.98))
+        const spread = at(0.98) - lo
+        /*
+         * A patch with no contrast is not cloud, and stretching it is what drew
+         * the pale rectangle over the north Pacific.
+         *
+         * The stretch divides by (p98 - median), and the floor under that
+         * divisor used to be a fiftieth. So an image that is nearly all one
+         * value — a half-finished scan, or an archive answering a timestamp it
+         * does not hold with a flat wash — had its remaining two percent of
+         * variation blown up to the full range, and landed on the globe as a
+         * bright rectangle of the patch's own bounding box. The normalisation
+         * that makes five sensors agree was manufacturing the artefact.
+         *
+         * Sixty-four bins put the quantisation at about 0.016, so four bins of
+         * spread is the least a real cloud field can show. Below that there is
+         * nothing to normalise and the patch is dropped: a gap where one sensor
+         * is missing is honest, and its neighbours already overlap it.
+         */
+        if (spread < 0.06) {
+          flat.push(centerLon)
+          continue
+        }
+        const hi = lo + spread
 
         for (let j = 0; j < ph; j++) {
           const y = y0 + j
@@ -2005,6 +2049,13 @@ export class Globe {
             acc[k] += c * w
           }
         }
+      }
+
+      if (flat.length) {
+        this.onNote?.(
+          `[weather] cloud: ${flat.length} sensor picture(s) at ${flat.join(', ')}° were a flat ` +
+            `wash with no cloud contrast — dropped rather than stretched into a bright rectangle`
+        )
       }
 
       const out = ctx.createImageData(W, H)
