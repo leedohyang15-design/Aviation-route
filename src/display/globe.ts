@@ -351,6 +351,9 @@ export class Globe {
   private extraAvoid: { u: number; y: number }[] = []
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
+  /** Set to hand a finished weather texture back for inspection (debug only). */
+  onDebugImage: ((name: string, dataUrl: string) => void) | null = null
+  private debugDumped = new Set<string>()
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -1832,6 +1835,18 @@ export class Globe {
        */
       tex.generateMipmaps = false
       tex.minFilter = THREE.LinearFilter
+      // Hand the assembled mosaic back once per layer per run, when asked. A
+      // 2048-wide PNG is a couple of megabytes and the point is to look at it
+      // in an image viewer, not to stream it.
+      const key = `${frame.layer}-${frame.blend ?? 'plain'}`
+      if (this.onDebugImage && !this.debugDumped.has(key)) {
+        this.debugDumped.add(key)
+        try {
+          this.onDebugImage(key, canvas.toDataURL('image/png'))
+        } catch {
+          /* a tainted canvas would throw; the dump is not worth a crash */
+        }
+      }
       return tex
     }
 

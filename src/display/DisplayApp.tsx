@@ -33,7 +33,7 @@ const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
-  const { aircraft, state, route, detail, satellites, satDetail, weather, weatherAgeMin } =
+  const { send, aircraft, state, route, detail, satellites, satDetail, weather, weatherAgeMin } =
     useHub('display')
   const mode = state.mode
   const isSat = mode === 'satellite'
@@ -139,6 +139,18 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => {
     if (isSat) globeRef.current?.setSatellites(satVisible)
   }, [isSat, satVisible])
+  // Hand the assembled weather textures back to the hub when it has asked for
+  // them, so they can be looked at as files. The display only — the control
+  // window builds the identical mosaic and two copies of a two-megabyte PNG is
+  // one copy too many.
+  useEffect(() => {
+    const g = globeRef.current
+    if (!g) return
+    g.onDebugImage = state.debugWeatherDump
+      ? (name, dataUrl) => send({ type: 'debugImage', name, dataUrl })
+      : null
+  }, [state.debugWeatherDump, send])
+
   // Each layer is hung on or taken off the earth on its own, so a chip toggles
   // instantly instead of waiting for the next poll.
   useEffect(() => {
