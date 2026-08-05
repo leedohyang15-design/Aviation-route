@@ -580,9 +580,17 @@ export class Globe {
             float mx = max(c.r, max(c.g, c.b));
             float mn = min(c.r, min(c.g, c.b));
             float sat = mx > 0.001 ? (mx - mn) / mx : 0.0;
-            float lifted =
-              clamp(smoothstep(0.16, 0.52, lum) * uCloudAmt, 0.0, 1.0)
-              * (1.0 - smoothstep(0.30, 0.65, sat));
+            // Colour means COLDER, so it means more cloud, not less.
+            //
+            // These layers are not greyscale. The raw sensor pictures show a
+            // rainbow palette laid over the grey: the coldest tops — the deep
+            // convection, the thing anybody would point at — come back green,
+            // red and violet. The old rule subtracted saturation to reject
+            // city lights and desert from a true-colour composite, and against
+            // THIS palette it threw away exactly the storms. So brightness and
+            // colour both count as cloud, whichever is the stronger signal.
+            float cold = max(lum, sat * 0.85);
+            float lifted = clamp(smoothstep(0.14, 0.50, cold) * uCloudAmt, 0.0, 1.0);
             float a = c.a
               * (uCloudPhoto > 0.5 ? 1.0 : lifted)
               * (uCloudMerc > 0.5 ? inMerc : 1.0);

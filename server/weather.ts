@@ -703,9 +703,13 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
         return null
       }
       const buf = Buffer.from(await res.arrayBuffer())
-      // A fully transparent image is a valid PNG and a useless picture.
-      if (buf.length < 20_000) {
-        lastTileError = `only ${buf.length} bytes (blank?) — ${layer}`
+      // A fully transparent image is a valid PNG and a useless picture. The
+      // floor scales with the pixels asked for: a slot that crosses the
+      // antimeridian is split into two narrower requests, and a fixed 20kB
+      // would call the narrow half blank and throw the whole sensor away.
+      const floor = Math.max(1200, Math.round((w * h) / 500))
+      if (buf.length < floor) {
+        lastTileError = `only ${buf.length} bytes, under ${floor} (blank?) — ${layer}`
         return null
       }
       opsLog(`[weather] cloud: ${layer} answered, ${(buf.length / 1e6).toFixed(1)}MB`)
@@ -730,16 +734,52 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
   if (global) return global
 
   const got: WeatherFrame['tiles'] = []
-  const place = (url: string, lon: number): void => {
-    got.push({ x: 0, y: 0, url, centerLon: lon, bbox: [lon - HALF, -HALF, lon + HALF, HALF] })
+
+  /*
+   * A WMS cannot serve a box that crosses the antimeridian, and three of these
+   * five ask for one.
+   *
+   * Himawari sits at 140.7E, so its eighty degrees reach 220.7 — past 180. The
+   * server does not wrap; it fills everything beyond with nothing and returns
+   * an image with a DEAD STRAIGHT VERTICAL EDGE at 180. Pasting that put a
+   * hard line down the map that no amount of feathering could hide, because
+   * the feather fades by distance from the satellite and this edge is not at a
+   * constant distance from anything. It is exactly the hairline that moved
+   * with the map and only appeared with cloud on, and it is visible in the raw
+   * sensor pictures the debug dump wrote out.
+   *
+   * So a crossing slot becomes two requests, one either side of the
+   * antimeridian, each with its own box and a width in proportion to its span
+   * so both come back at the same pixels per degree.
+   */
+  const spansFor = (lon: number): [number, number][] => {
+    const west = lon - HALF
+    const east = lon + HALF
+    if (west < -180) return [[west + 360, 180], [-180, east]]
+    if (east > 180) return [[west, 180], [-180, east - 360]]
+    return [[west, east]]
   }
+  const fetchSlot = async (name: string, lon: number, endpoint?: string): Promise<boolean> => {
+    const spans = spansFor(lon)
+    const parts: WeatherFrame['tiles'] = []
+    for (const [west, east] of spans) {
+      const deg = east - west
+      // Same pixels per degree in every part, so the renderer can read the
+      // mosaic's scale off whichever one decodes first.
+      const w = Math.max(16, Math.round((W * deg) / (HALF * 2)))
+      const url = await get(name, [west, -HALF, east, HALF], w, H, endpoint)
+      if (!url) return false // a half picture is worse than none
+      parts.push({ x: 0, y: 0, url, centerLon: lon, bbox: [west, -HALF, east, HALF] })
+    }
+    got.push(...parts)
+    return true
+  }
+
   for (const slot of WEATHER_GIBS_SLOTS) {
     if (stopped) return null
     let filled = false
     for (const name of slot.names) {
-      const url = await get(name, [slot.lon - HALF, -HALF, slot.lon + HALF, HALF], W, H, slot.url)
-      if (!url) continue
-      place(url, slot.lon)
+      if (!(await fetchSlot(name, slot.lon, slot.url))) continue
       filled = true
       break // one picture per slot; the rest of its names are spares
     }
@@ -750,9 +790,7 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
       const found = await findGibsLayer(slot.names)
       if (found) {
         opsLog(`[weather] cloud: ${slot.lon}° is published as "${found}" — using that`)
-        const url = await get(found, [slot.lon - HALF, -HALF, slot.lon + HALF, HALF], W, H)
-        if (url) {
-          place(url, slot.lon)
+        if (await fetchSlot(found, slot.lon)) {
           filled = true
           // Say it once, plainly, so the name can be pinned in .env and the
           // catalogue never has to be read again.
@@ -768,7 +806,12 @@ async function fetchGibsCloud(): Promise<WeatherFrame | null> {
     }
   }
   if (!got.length) return null
-  opsLog(`[weather] cloud: ${got.length}/${WEATHER_GIBS_SLOTS.length} sensors — composited`)
+  // Count sensors, not images: a slot that crosses the antimeridian is two.
+  const sensors = new Set(got.map((t) => t.centerLon)).size
+  opsLog(
+    `[weather] cloud: ${sensors}/${WEATHER_GIBS_SLOTS.length} sensors — ` +
+      `composited from ${got.length} images`
+  )
   return {
     layer: 'cloud',
     projection: 'equirect',
