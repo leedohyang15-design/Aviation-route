@@ -212,10 +212,12 @@ export const WEATHER_WIND_FRAMES = Number(readEnv('WEATHER_WIND_FRAMES') ?? 1)
  * jet streams, the way air turns around a low — and that reads correctly at any
  * speed so long as fast air visibly outruns slow air.
  */
-export const WEATHER_WIND_PARTICLES = Number(readEnv('WEATHER_WIND_PARTICLES') ?? 2400)
-export const WEATHER_WIND_TAIL = Number(readEnv('WEATHER_WIND_TAIL') ?? 6)
+export const WEATHER_WIND_PARTICLES = Number(readEnv('WEATHER_WIND_PARTICLES') ?? 1600)
+export const WEATHER_WIND_TAIL = Number(readEnv('WEATHER_WIND_TAIL') ?? 9)
 export const WEATHER_WIND_LIFE = Number(readEnv('WEATHER_WIND_LIFE') ?? 90)
 export const WEATHER_WIND_SPEED = Number(readEnv('WEATHER_WIND_SPEED') ?? 14000)
+/** Streak width in pixels at the head, tapering to about a third at the tail. */
+export const WEATHER_WIND_WIDTH = Number(readEnv('WEATHER_WIND_WIDTH') ?? 2.6)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 /**
  * Wall clock per keyframe. Slower now that the wind carries the motion.

@@ -34,6 +34,7 @@ import {
   WEATHER_WIND_TAIL,
   WEATHER_WIND_LIFE,
   WEATHER_WIND_SPEED,
+  WEATHER_WIND_WIDTH,
   WEATHER_CLOUD_OPACITY,
   WEATHER_FRAME_HOLD_MS
 } from '@shared/config'
@@ -403,7 +404,7 @@ export class Globe {
   private windAge: Int32Array | null = null
   private windLife: Int32Array | null = null
   private windTrail: Float32Array | null = null
-  private windLines: THREE.LineSegments | null = null
+  private windLines: THREE.Mesh | null = null
   private windLast = 0
   private windWanted = false
   /** Once per series: the strongest rain and where it is. */
@@ -1576,10 +1577,25 @@ export class Globe {
     // rather than a dot; a dot in a flow field reads as noise.
     this.windTrail = new Float32Array(N * T * 2)
     for (let i = 0; i < N; i++) this.respawnWind(i, true)
+    /*
+     * Quads, not lines.
+     *
+     * A LineSegments streak is one pixel wide and cannot be made wider —
+     * linewidth is clamped to 1 on essentially every desktop GL driver — and a
+     * field of one-pixel marks reads as static rather than as moving air. Each
+     * segment is therefore two triangles, which can be given a real width in
+     * PIXELS and tapered along the streak.
+     */
     const segs = N * (T - 1)
     const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segs * 2 * 3), 3))
-    geo.setAttribute('alpha', new THREE.BufferAttribute(new Float32Array(segs * 2), 1))
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segs * 4 * 3), 3))
+    geo.setAttribute('alpha', new THREE.BufferAttribute(new Float32Array(segs * 4), 1))
+    const idx = new Uint32Array(segs * 6)
+    for (let i = 0; i < segs; i++) {
+      const v = i * 4
+      idx.set([v, v + 1, v + 2, v + 2, v + 1, v + 3], i * 6)
+    }
+    geo.setIndex(new THREE.BufferAttribute(idx, 1))
     const mat = new THREE.ShaderMaterial({
       transparent: true,
       depthTest: false,
@@ -1594,7 +1610,7 @@ export class Globe {
         void main() { gl_FragColor = vec4(uColor, vA * uOpacity); }
       `
     })
-    this.windLines = new THREE.LineSegments(geo, mat)
+    this.windLines = new THREE.Mesh(geo, mat)
     this.windLines.renderOrder = 3
     this.windLines.visible = false
     this.windLines.frustumCulled = false
@@ -1687,6 +1703,18 @@ export class Globe {
     const al = g.geometry.getAttribute('alpha') as THREE.BufferAttribute
     const pa = pos.array as Float32Array
     const aa = al.array as Float32Array
+    /*
+     * Width is measured in PIXELS, which the scene units are not.
+     *
+     * The camera spans 0..1 in both axes over a frame that is twice as wide as
+     * it is tall, so a step of 0.001 in x is half the pixels of the same step
+     * in y. The perpendicular is therefore taken in pixel space and converted
+     * back, or every streak would be thick when horizontal and thin when
+     * vertical.
+     */
+    const gl = this.renderer.getContext()
+    const PW = gl.drawingBufferWidth || 1664
+    const PH = gl.drawingBufferHeight || 838
     let n = 0
     for (let i = 0; i < N; i++) {
       // Fade in and out over the particle's life so nothing pops.
@@ -1695,20 +1723,39 @@ export class Globe {
       for (let sgm = 0; sgm < T - 1; sgm++) {
         const p0 = projectNorm(trail[(i * T + sgm) * 2], trail[(i * T + sgm) * 2 + 1], this.lonOffset)
         const p1 = projectNorm(trail[(i * T + sgm + 1) * 2], trail[(i * T + sgm + 1) * 2 + 1], this.lonOffset)
-        const o = n * 6
+        const x0 = p0.u
+        const y0 = 1 - p0.v
+        const x1 = p1.u
+        const y1 = 1 - p1.v
         // A streak that straddles the seam would be drawn right across the
         // world, so it is dropped for the one frame it takes to cross.
-        const cut = Math.abs(p1.u - p0.u) > 0.5
-        pa[o] = p0.u
-        pa[o + 1] = 1 - p0.v
-        pa[o + 2] = 0.6
-        pa[o + 3] = p1.u
-        pa[o + 4] = 1 - p1.v
-        pa[o + 5] = 0.6
-        // Older parts of the streak are fainter, which is what gives direction.
-        const taper = ((sgm + 1) / (T - 1)) ** 2
-        aa[n * 2] = cut ? 0 : taper * life * 0.55
-        aa[n * 2 + 1] = cut ? 0 : ((sgm + 2) / (T - 1)) ** 2 * life * 0.55
+        const cut = Math.abs(x1 - x0) > 0.5
+        let dx = (x1 - x0) * PW
+        let dy = (y1 - y0) * PH
+        const len = Math.hypot(dx, dy) || 1
+        dx /= len
+        dy /= len
+        // Older parts of the streak are thinner as well as fainter — that
+        // taper is what makes a streak read as having a direction.
+        const t0 = (sgm + 1) / (T - 1)
+        const t1 = (sgm + 2) / (T - 1)
+        const w0 = ((WEATHER_WIND_WIDTH * (0.35 + 0.65 * t0)) / 2) * (cut ? 0 : 1)
+        const w1 = ((WEATHER_WIND_WIDTH * (0.35 + 0.65 * t1)) / 2) * (cut ? 0 : 1)
+        const nx0 = (-dy * w0) / PW
+        const ny0 = (dx * w0) / PH
+        const nx1 = (-dy * w1) / PW
+        const ny1 = (dx * w1) / PH
+        const o = n * 12
+        pa[o] = x0 + nx0; pa[o + 1] = y0 + ny0; pa[o + 2] = 0.6
+        pa[o + 3] = x0 - nx0; pa[o + 4] = y0 - ny0; pa[o + 5] = 0.6
+        pa[o + 6] = x1 + nx1; pa[o + 7] = y1 + ny1; pa[o + 8] = 0.6
+        pa[o + 9] = x1 - nx1; pa[o + 10] = y1 - ny1; pa[o + 11] = 0.6
+        const a0 = cut ? 0 : t0 * t0 * life * 0.7
+        const a1 = cut ? 0 : t1 * t1 * life * 0.7
+        aa[n * 4] = a0
+        aa[n * 4 + 1] = a0
+        aa[n * 4 + 2] = a1
+        aa[n * 4 + 3] = a1
         n++
       }
     }

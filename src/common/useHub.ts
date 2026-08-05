@@ -37,7 +37,6 @@ export interface HubView {
   /** The newest animation series for each weather layer, in loop order. */
   weather: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
-  weatherAgeMin: number | null
   weatherAt: number | null
   weatherSource: string | null
 }
@@ -89,13 +88,6 @@ export function useHub(role: 'control' | 'display'): HubView {
     rain: [],
     wind: []
   })
-  // Recomputed on a slow tick rather than per render: the caption counts whole
-  // minutes, so anything faster is work nobody can see.
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(t)
-  }, [])
   const busRef = useRef<Bus | null>(null)
 
   useEffect(() => {
@@ -180,12 +172,5 @@ export function useHub(role: 'control' | 'display'): HubView {
       const newest = [...weather.cloud, ...weather.rain].reduce((n, f) => Math.max(n, f?.time ?? 0), 0)
       return newest || null
     })(),
-    weatherAgeMin: (() => {
-      const newest = [...weather.cloud, ...weather.rain].reduce(
-        (n, f) => Math.max(n, f?.time ?? 0),
-        0
-      )
-      return newest ? Math.max(0, Math.round((now - newest) / 60_000)) : null
-    })()
-  }
+ }
 }
