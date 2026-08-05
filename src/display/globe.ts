@@ -1836,12 +1836,21 @@ export class Globe {
             side = img.width || 256
             if (t.bbox) {
               // A patch image covers only its own corner of the world, so it
-              // cannot set the canvas size. Give the mosaic a fixed 2:1 world
-              // at the patch's own pixels-per-degree, so nothing is thrown away
-              // in the paste that the extra resolution was fetched for.
+              // cannot set the canvas size. Give the mosaic a 2:1 world at
+              // roughly the patch's own pixels-per-degree, so nothing is thrown
+              // away in the paste that the extra resolution was fetched for.
+              //
+              // POWER OF TWO, and that is not a nicety. This texture wraps in
+              // longitude, and a wrapping texture whose width is not a power of
+              // two is the one case where mipmapping and REPEAT do not have to
+              // agree — which draws a hairline down the map exactly where it
+              // wraps. The mosaic itself is seamless; the seam was the sampler.
+              // 160 degrees at 1024 wanted a 2304-wide world; 2048 is the
+              // nearest power of two and still finer than the dome can show.
               const ppd = side / Math.max(1, t.bbox[2] - t.bbox[0])
-              canvas.width = Math.min(8192, Math.round(360 * ppd))
-              canvas.height = Math.round(canvas.width / 2)
+              const pot = 2 ** Math.round(Math.log2(Math.min(8192, 360 * ppd)))
+              canvas.width = pot
+              canvas.height = pot / 2
             } else {
               canvas.width = canvas.height = side * n
             }

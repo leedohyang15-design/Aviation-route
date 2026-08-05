@@ -384,10 +384,39 @@ async function fetchMaptilerLayer(
   }
   const decode: WeatherDecode = { min: d.min, max: d.max, channels: d.channels, unit: wv?.unit }
   const format = v.tile_format && v.tile_format !== 'pbf' ? v.tile_format : 'png'
-  const wanted = keys.slice(Math.max(0, keys.length - WEATHER_FRAME_COUNT))
 
   /*
-   * Newest keyframe first, and stop when the series has spent its byte budget.
+   * Start at NOW, not at the end of the list.
+   *
+   * These keyframes are a model run: they reach days into the future, and
+   * `slice(-N)` was taking the last four — the furthest forecast steps there
+   * are. The exhibit was showing next week's rain and calling it real time,
+   * which is why it looked nothing like what everyone else was showing for
+   * today. The step nearest the present goes first and the animation runs
+   * forward from there, which is both the honest picture and a moving one.
+   */
+  const now = Date.now()
+  const stamps = keys.map((k) => Date.parse(k.timestamp))
+  let start = 0
+  for (let i = 1; i < keys.length; i++) {
+    const a = Math.abs((stamps[i] || 0) - now)
+    const b = Math.abs((stamps[start] || 0) - now)
+    if (Number.isFinite(stamps[i]) && a < b) start = i
+  }
+  // Keep the whole animation inside the series even near its end.
+  start = Math.max(0, Math.min(start, keys.length - WEATHER_FRAME_COUNT))
+  const wanted = keys.slice(start, start + WEATHER_FRAME_COUNT)
+  const off = (t: number): string => {
+    const m = Math.round((t - now) / 60_000)
+    return Number.isFinite(m) ? (m >= 0 ? `+${m}분` : `${m}분`) : '?'
+  }
+  opsLog(
+    `[weather] ${layer}: ${keys.length} keyframes span ${off(stamps[0])}…${off(stamps[keys.length - 1])}; ` +
+      `taking ${wanted.length} from ${off(stamps[start])} (step ${start})`
+  )
+
+  /*
+   * Nearest to now first, and stop when the series has spent its byte budget.
    *
    * A two-channel variable packs its value across a high and a low byte, and
    * the low byte turns over every 1/65536th of the range — so it is noise even
@@ -396,16 +425,16 @@ async function fetchMaptilerLayer(
    * series' five. That is a number that gets broadcast to both windows and
    * written to the disk cache, so it needs a ceiling rather than a hope.
    *
-   * Newest-first is what makes the ceiling safe to hit: whatever gets dropped
-   * is the far end of the animation, never the picture of right now.
+   * The order is what makes the ceiling safe to hit: `wanted` starts at the
+   * present and runs forward, so a full budget costs the far end of the
+   * animation and never the picture of right now.
    */
   const budget = WEATHER_MAX_SERIES_MB * 1e6
-  const newestFirst: WeatherFrame[] = []
+  const series: WeatherFrame[] = []
   let bytes = 0
-  for (let i = wanted.length - 1; i >= 0; i--) {
+  for (const k of wanted) {
     if (stopped) return null
-    if (newestFirst.length && bytes >= budget) break
-    const k = wanted[i]
+    if (series.length && bytes >= budget) break
     const time = Date.parse(k.timestamp)
     const frame = await fetchMtKeyframe(
       layer,
@@ -417,14 +446,13 @@ async function fetchMaptilerLayer(
       0
     )
     if (!frame) continue
-    newestFirst.push(frame)
+    series.push(frame)
     bytes += frame.tiles.reduce((m, t) => m + t.url.length, 0)
   }
-  if (!newestFirst.length) {
+  if (!series.length) {
     opsLog(`[weather] ${layer}: every tile failed. Last error: ${lastTileError || 'none recorded'}`)
     return null
   }
-  const series = newestFirst.reverse()
   series.forEach((f, i) => {
     f.step = i
     f.steps = series.length
