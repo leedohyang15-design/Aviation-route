@@ -372,6 +372,8 @@ export class Globe {
   /** A ramp measured off the data, applied after applyDecode has set the one
    * the declared unit implies. Null means the declared unit was believed. */
   private rainFit: { lo: number; hi: number; gamma: number } | null = null
+  /** Raised when a new cloud series arrives; cleared by the frame that scans it. */
+  private needEdgeScan = false
   private iCenterLon = 127.5
   private iCenterLat = 37.5
   private iSpan = 1
@@ -1877,6 +1879,10 @@ export class Globe {
       // Hand the assembled mosaic back once per layer per run, when asked. A
       // 2048-wide PNG is a couple of megabytes and the point is to look at it
       // in an image viewer, not to stream it.
+      if (this.needEdgeScan && frame.layer === 'cloud') {
+        this.needEdgeScan = false
+        this.scanEdges(canvas, frame)
+      }
       if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
         this.needRainCalib = false
         this.calibrateRain(canvas, frame.decode)
@@ -2166,6 +2172,7 @@ export class Globe {
     const usable = (frames ?? []).filter((f) => f && f.tiles.length)
     // Measure this series once, on whichever of its frames finishes first.
     if (layer === 'rain') this.needRainCalib = true
+    else this.needEdgeScan = true
     if (!usable.length) {
       for (const t of slot.textures) t.dispose()
       slot.textures = []
@@ -2203,6 +2210,92 @@ export class Globe {
       }
       this.tickWeather()
     })
+  }
+
+  /**
+   * Find the straight edges in a composed cloud texture and say where they are.
+   *
+   * A bright band with hard horizontal sides keeps coming back, and it has now
+   * been "fixed" three times from the shape of a screenshot alone. Weather has
+   * no straight edges, so whatever draws one is machinery — but which piece of
+   * machinery is decided entirely by WHERE the edge falls, and a photograph of
+   * a screen cannot be measured. Each candidate leaves a different fingerprint:
+   *
+   *   ±85.05, ±66.51, ±40.98, ±21.94, 0°   a Mercator tile row at zoom 3
+   *   ±80°                                 a geostationary patch's bounding box
+   *   ±180, ±135, ±90, ±45, 0°             a tile column, either way
+   *
+   * So the renderer measures its own output — mean absolute difference between
+   * neighbouring rows, then columns, against the median row — and prints the
+   * outliers in degrees. One log line then names the culprit instead of a
+   * fourth guess. The reference boundaries are printed alongside so the match
+   * can be read directly rather than worked out.
+   */
+  private scanEdges(canvas: HTMLCanvasElement, frame: WeatherFrame): void {
+    const W = canvas.width
+    const H = canvas.height
+    if (!this.onNote || W < 64 || H < 64) return
+    let img: ImageData
+    try {
+      img = canvas.getContext('2d')!.getImageData(0, 0, W, H)
+    } catch {
+      return
+    }
+    const d = img.data
+    // What the eye sees is the composed cloud value, which mergePatches writes
+    // into every channel, times its coverage. Alpha is part of the picture: a
+    // patch that covers a rectangle and nothing else shows up in it.
+    const v = (x: number, y: number): number => {
+      const o = (y * W + x) * 4
+      return (d[o] * d[o + 3]) / 65025
+    }
+    const STEP = 2
+    const rows = new Float64Array(H)
+    for (let y = 1; y < H; y++) {
+      let s = 0
+      let n = 0
+      for (let x = 0; x < W; x += STEP) {
+        s += Math.abs(v(x, y) - v(x, y - 1))
+        n++
+      }
+      rows[y] = s / Math.max(1, n)
+    }
+    const cols = new Float64Array(W)
+    for (let x = 1; x < W; x++) {
+      let s = 0
+      let n = 0
+      for (let y = 0; y < H; y += STEP) {
+        s += Math.abs(v(x, y) - v(x - 1, y))
+        n++
+      }
+      cols[x] = s / Math.max(1, n)
+    }
+    const med = (a: Float64Array): number => {
+      const b = Array.from(a).filter((z) => z > 0).sort((p, q) => p - q)
+      return b.length ? b[b.length >> 1] : 0
+    }
+    const rowMed = med(rows)
+    const colMed = med(cols)
+    const pick = (
+      a: Float64Array,
+      medv: number,
+      toDeg: (i: number) => number
+    ): string[] => {
+      const cut = Math.max(medv * 6, 0.02)
+      const hits: { i: number; z: number }[] = []
+      for (let i = 1; i < a.length; i++) if (a[i] > cut) hits.push({ i, z: a[i] })
+      hits.sort((p, q) => q.z - p.z)
+      return hits
+        .slice(0, 5)
+        .map((h) => `${toDeg(h.i).toFixed(1)}°(${(h.z / Math.max(medv, 1e-6)).toFixed(0)}×)`)
+    }
+    const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
+    const lon = pick(cols, colMed, (x) => -180 + (x / W) * 360)
+    this.onNote(
+      `[weather] cloud edges (${frame.projection}, ${W}×${H}): ` +
+        `가로선 ${lat.join(' ') || '없음'} | 세로선 ${lon.join(' ') || '없음'} — ` +
+        `대조: Mercator z3 행 ±85.1/±66.5/±41.0/±21.9/0, 패치 bbox ±80, 타일 열 ±135/±90/±45/0`
+    )
   }
 
   /**
