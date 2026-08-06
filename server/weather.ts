@@ -274,6 +274,7 @@ async function fetchMtKeyframe(
     projection: 'mercator',
     blend: 'data',
     source: ATTRIBUTION,
+    feed: 'maptiler',
     decode,
     z: WEATHER_ZOOM,
     time,
@@ -426,11 +427,16 @@ async function fetchMaptilerLayer(
    */
   const have = latest.get(layer)
   const newest = Date.parse(wanted[wanted.length - 1]?.timestamp ?? '')
-  if (have?.length && Number.isFinite(newest) && seriesTime(have) === newest) {
+  // Same moments AND the same pipeline. A cloud series the GIBS fallback filled
+  // in lands on the very timestamps MapTiler would have used -- both are GFS
+  // hourly -- so matching on time alone would keep a recovered MapTiler layer
+  // locked out for as long as the hour held.
+  const mine = have?.length ? have.every((f) => f.feed === 'maptiler') : false
+  if (mine && Number.isFinite(newest) && seriesTime(have!) === newest) {
     opsLog(
       `[weather] ${layer}: still ${clock(newest)} local — nothing new published, no tiles fetched`
     )
-    return have
+    return have ?? null
   }
 
   /*
@@ -650,6 +656,7 @@ async function fetchGibsGlobalCloud(
   const H = Math.round(W / 3) // 360 degrees by 120
   const frame = (url: string): WeatherFrame => ({
     layer: 'cloud',
+    feed: 'gibs',
     projection: 'equirect',
     blend: 'cloud',
     z: 0,
@@ -723,9 +730,10 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
    * the one the cloud is already built on, the whole trip can be skipped.
    */
   const had = latest.get('cloud')
-  if (timeline?.length && had?.length && seriesTime(had) === timeline[timeline.length - 1]) {
+  const mine = had?.length ? had.every((f) => f.feed === 'gibs') : false
+  if (timeline?.length && mine && seriesTime(had!) === timeline[timeline.length - 1]) {
     opsLog('[weather] cloud: rain is on the same instants as last poll — nothing fetched')
-    return had
+    return had ?? null
   }
   /*
    * Each disc is requested over ITS OWN patch of the globe, not the whole one.
@@ -937,6 +945,7 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
   const nowFrame: WeatherFrame = {
     layer: 'cloud',
     source: ATTRIBUTION,
+    feed: 'gibs',
     projection: 'equirect',
     blend: 'cloud',
     z: 0,

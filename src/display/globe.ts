@@ -92,6 +92,33 @@ function rainGamma(d: WeatherDecode): number {
   return 0.35
 }
 
+/**
+ * The three rates that separate "a few drops", "raining" and "pouring", in the
+ * variable's OWN unit.
+ *
+ * This lives here, beside rainAnchors and rainGamma, because the alternative
+ * did not survive its first review. The overhead sentence used to be
+ * thresholded on drawn strength, which meant somebody had to invert the ramp
+ * by hand and keep the answer in another file: the ramp is 0.05..8 mm/h under
+ * a gamma of 0.35, so the round-looking constants that were chosen actually
+ * meant 0.05, 0.08 and 1.15 mm/h, and the plate announced rain on a dry day.
+ * Comparing the value against rates in its own unit needs no inversion and
+ * cannot drift when the colours are retuned.
+ *
+ * An unrecognised unit returns null and the exhibit says nothing, which is the
+ * right answer: a number whose unit is unknown cannot be called rain.
+ */
+function rainLevelCuts(d: WeatherDecode): [number, number, number] | null {
+  const unit = (d.unit ?? '').toLowerCase()
+  // 20 dBZ is the light rain every radar map starts colouring at, 35 is a
+  // steady shower, 45 is a thunderstorm core.
+  if (unit.includes('dbz')) return [20, 35, 45]
+  // An hour's accumulation. 0.1mm is a few drops, 1mm is rain you notice, 4mm
+  // is the wettest tenth of a percent of the planet in the measured field.
+  if (unit.includes('mm') || unit.includes('kg')) return [0.1, 1, 4]
+  return null
+}
+
 function rainAnchors(d: WeatherDecode): THREE.Vector2 {
   const unit = (d.unit ?? '').toLowerCase()
   // 5 dBZ, not 12. Twelve is roughly 0.2mm an hour, and starting the fade
@@ -452,7 +479,8 @@ export class Globe {
    */
   private wxWhole: Record<'cloud' | 'rain', boolean> = { cloud: false, rain: false }
   /**
-   * Set to be told how hard it is raining over the exhibit, 0..1 as drawn.
+   * Set to be told how hard it is raining over the exhibit: 0 none, 1 a few
+   * drops, 2 raining, 3 pouring. Null when there is nothing honest to say.
    *
    * Rain only. The cloud mosaic is stretched against each sensor's own
    * distribution so five satellites look like one picture, which puts half of
@@ -460,6 +488,8 @@ export class Globe {
    * a measurement, and no basis for telling a child the sky is clear.
    */
   onLocalSky: ((rain: number | null) => void) | null = null
+  /** The last level read, so turning the chip back on can re-state it. */
+  private localRain: number | null = null
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
@@ -1714,19 +1744,32 @@ export class Globe {
    * A box about a degree across rather than one pixel: a single dropped sample
    * at a coastline should not decide what the whole city is told.
    */
-  private sampleSky(canvas: HTMLCanvasElement, frame: WeatherFrame): number | null {
+  private sampleRainLevel(canvas: HTMLCanvasElement, frame: WeatherFrame): number | null {
+    /*
+     * Three ways to have nothing to say, all of them said by returning null.
+     *
+     * A painted rain map carries only how strongly somebody drew it, and the
+     * most that can be recovered from a painting is not a rate. A refitted
+     * ramp means the declared unit did not match the data, so the numbers are
+     * in a unit nobody knows. And an unrecognised unit is the same problem
+     * stated up front. Silence is the only honest output in all three; the
+     * picture is still on screen, it just goes uncommented.
+     */
+    if (frame.blend !== 'data' || !frame.decode || this.rainFit) return null
+    const cuts = rainLevelCuts(frame.decode)
+    if (!cuts) return null
     const W = canvas.width
     const H = canvas.height
     if (!W || !H) return null
     const lat = OBSERVER_LAT
     const lon = OBSERVER_LON
-    let v: number
+    let row: number
     if (frame.projection === 'mercator') {
       if (Math.abs(lat) > 85) return null
       const r = (lat * Math.PI) / 180
-      v = 0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)
+      row = 0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)
     } else {
-      v = (90 - lat) / 180
+      row = (90 - lat) / 180
     }
     const u = (((lon + 180) / 360) % 1 + 1) % 1
     /*
@@ -1748,7 +1791,7 @@ export class Globe {
         : 180 / H
     const ry = Math.max(1, Math.round(0.5 / perRow))
     const x0 = Math.max(0, Math.min(W - 1, Math.round(u * W) - rx))
-    const y0 = Math.max(0, Math.min(H - 1, Math.round(v * H) - ry))
+    const y0 = Math.max(0, Math.min(H - 1, Math.round(row * H) - ry))
     const w = Math.min(W - x0, rx * 2 + 1)
     const h = Math.min(H - y0, ry * 2 + 1)
     let img: ImageData
@@ -1758,49 +1801,22 @@ export class Globe {
       return null // a tainted canvas: say nothing rather than guess
     }
     const px = img.data
+    const d = frame.decode
+    const order = d.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
+    const wt: Record<string, number> = { r: 0, g: 0, b: 0 }
+    for (let i = 0; i < order.length; i++) wt[order[i]] = 256 ** (order.length - 1 - i)
+    const packed = 256 ** order.length - 1
     let sum = 0
     let n = 0
-    if (frame.blend === 'data' && frame.decode) {
-      const d = frame.decode
-      const order = d.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
-      const wt: Record<string, number> = { r: 0, g: 0, b: 0 }
-      for (let i = 0; i < order.length; i++) wt[order[i]] = 256 ** (order.length - 1 - i)
-      const packed = 256 ** order.length - 1
-      const scale = this.bgUniforms.uRainScale.value as THREE.Vector2
-      const gamma = this.bgUniforms.uRainGamma.value as number
-      for (let p = 0; p < px.length; p += 4) {
-        if (px[p + 3] < 8) continue // alpha 0 is "no data", not "no rain"
-        const raw = (px[p] * wt.r + px[p + 1] * wt.g + px[p + 2] * wt.b) / packed
-        const val = d.min + raw * (d.max - d.min)
-        // Exactly the shader's two lines: normalise between the ramp anchors,
-        // then the gamma that turns drizzle into a colour instead of a
-        // rounding error. Working in the ramp rather than in millimetres also
-        // means this stays right when the ramp is refitted to the data.
-        const lin = Math.min(1, Math.max(0, (val - scale.x) / Math.max(scale.y - scale.x, 1e-4)))
-        sum += Math.pow(lin, gamma)
-        n++
-      }
-    } else {
-      /*
-       * A painted rain layer: the strength is in the ALPHA, not the colour.
-       *
-       * Only the rain reaches this function, and a rain source that is not
-       * data tiles is somebody's picture — their palette is nearly one colour
-       * from a drizzle to a downpour, and what climbs with intensity is the
-       * opacity. So this mirrors the shader's painted-rain branch exactly. It
-       * is a proxy rather than a measurement, and the sentence it feeds is
-       * hedged accordingly by the thresholds being drawn strength.
-       */
-      const smooth = (e0: number, e1: number, x: number): number => {
-        const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
-        return t * t * (3 - 2 * t)
-      }
-      for (let p = 0; p < px.length; p += 4) {
-        sum += smooth(0.04, 0.4, px[p + 3] / 255)
-        n++
-      }
+    for (let p = 0; p < px.length; p += 4) {
+      if (px[p + 3] < 8) continue // alpha 0 is "no data", not "no rain"
+      const raw = (px[p] * wt.r + px[p + 1] * wt.g + px[p + 2] * wt.b) / packed
+      sum += d.min + raw * (d.max - d.min)
+      n++
     }
-    return n ? sum / n : null
+    if (!n) return null
+    const v = sum / n
+    return v >= cuts[2] ? 3 : v >= cuts[1] ? 2 : v >= cuts[0] ? 1 : 0
   }
 
   /**
@@ -1815,6 +1831,16 @@ export class Globe {
     this.wxVisible[layer] = on
     const has = layer === 'cloud' ? 'uHasCloud' : 'uHasRain'
     this.bgUniforms[has].value = on && this.wx[layer].textures.length ? 1 : 0
+    // The overhead sentence describes the rain on the map, so it goes away with
+    // it. Left alone, turning the chip off produced a plate reading 비가
+    // 내리고 있어요 over an earth with no rain drawn anywhere on it.
+    if (layer === 'rain') this.emitLocalSky(this.localRain)
+  }
+
+  /** Report the reading, or nothing at all while the rain is not being drawn. */
+  private emitLocalSky(level: number | null): void {
+    this.localRain = level
+    this.onLocalSky?.(this.wxVisible.rain ? level : null)
   }
 
   /**
@@ -3097,6 +3123,11 @@ export class Globe {
       for (const t of slot.byTime?.values() ?? []) t.dispose()
       slot.byTime?.clear()
       slot.textures = []
+      this.wxWhole[layer as 'cloud' | 'rain'] = false
+      // The reading belonged to the series that was just thrown away. Keeping
+      // it would let a return to the weather tab re-state an hour-old sentence
+      // before the new series has been decoded.
+      if (layer === 'rain') this.emitLocalSky(null)
       this.bgUniforms[layer === 'cloud' ? 'uHasCloud' : 'uHasRain'].value = 0
       this.bgUniforms[layer === 'cloud' ? 'uCloud' : 'uRain'].value = null
       this.bgUniforms[layer === 'cloud' ? 'uCloudB' : 'uRainB'].value = null
@@ -3220,7 +3251,7 @@ export class Globe {
       if (layer === 'rain') {
         const last = usable[usable.length - 1]
         const lastCanvas = slot.byTime?.get(last.time)?.image as HTMLCanvasElement | undefined
-        if (lastCanvas) this.onLocalSky?.(this.sampleSky(lastCanvas, last))
+        if (lastCanvas) this.emitLocalSky(this.sampleRainLevel(lastCanvas, last))
       }
       // Measure the finished picture a few seconds after the last series
       // lands, once per poll.

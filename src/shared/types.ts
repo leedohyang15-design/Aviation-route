@@ -69,6 +69,17 @@ export interface WeatherFrame {
    * frame rather than in the state so it can never disagree with the picture
    * actually on screen. */
   source?: string
+  /**
+   * Which pipeline produced this series.
+   *
+   * Not for the badge — `source` is the credit line and both pipelines carry
+   * the same one. This is so a poll can tell "I already have exactly these
+   * moments, from the same place" from "I already have these moments, but the
+   * fallback made them". Without it, a cloud series that GIBS had filled in
+   * kept a recovered MapTiler layer permanently locked out, because the two
+   * are both GFS-hourly and so land on identical timestamps.
+   */
+  feed?: 'maptiler' | 'gibs'
   layer: WeatherLayer
   /**
    * How the imagery is laid out. Tile services hand out Web Mercator, which the

@@ -18,41 +18,28 @@
  * pointed at this hour", not "no cloud". Saying 구름 한 점 없어요 on the back
  * of it would be inventing a fact.
  *
- * Rain has no such problem. It arrives as model values in a declared unit,
- * decoded from the pixel and put through a ramp calibrated to that unit, so it
- * means the same thing everywhere on the globe. It is the one thing here the
- * exhibit can honestly assert about a single place.
+ * Rain has no such problem. It arrives as model values in a declared unit, so
+ * it can be compared against real rates and means the same thing everywhere.
  *
- * The number is the layer's strength as the shader DRAWS it, 0..1, sampled
- * from the same mosaic over the observer — so the words and the colours cannot
- * disagree, and it stays right when the ramp is refitted to a different unit.
+ * This file holds no thresholds. Deciding which band a reading falls into is
+ * the renderer's job (`rainLevelCuts` in globe.ts), because that decision
+ * depends on the variable's unit and on the ramp beside it — the first attempt
+ * kept the thresholds here in drawn-strength terms, which meant inverting the
+ * colour ramp by hand and keeping the answer in a different file from the
+ * ramp. It was wrong within a day. What arrives here is a band, and all this
+ * decides is the words.
  */
 
-/*
- * Thresholds in drawn strength, not millimetres — see the note above.
+/**
+ * 0 none · 1 a few drops · 2 raining · 3 pouring · null nothing to say.
  *
- * They have to be worked out through the ramp rather than chosen, because the
- * ramp is not linear. It runs 0.05..8 mm/h through a gamma of 0.35, so drawn
- * strength s corresponds to 0.05 + s^(1/0.35) * 7.95 mm/h. The first attempt
- * picked round-looking numbers directly and they came out as:
- *
- *     0.02 -> 0.050 mm/h   (the ramp's own floor: any rain at all)
- *     0.14 -> 0.079 mm/h   (drizzle below what anyone would call rain)
- *     0.50 -> 1.147 mm/h   (ordinary steady rain, announced as 세차게)
- *
- * — so on a nearly dry day the plate would have said it was raining, and
- * ordinary rain would have been called heavy. Inverting the ramp for the rates
- * actually meant gives the values below. For reference the measured world
- * distribution is p90 0.20mm, p99 1.37mm, p99.9 3.73mm, so "세차게" lands
- * around the wettest tenth of a percent of the planet, which is right.
- *
- * These assume the millimetre ramp in globe.ts. Change rainAnchors or
- * rainGamma and these have to be re-derived.
+ * Both 0 and null produce no sentence, for different reasons and to the same
+ * end. Null is "the data cannot support a claim" — a painted rain map, a unit
+ * that did not match, no rain layer drawn. Zero is "it is not raining", which
+ * IS known and simply is not worth a line on a plate: the exhibit is about the
+ * weather that is happening, and a caption announcing an absence over an earth
+ * with nothing drawn on it reads as a fault rather than as a fact.
  */
-const RAIN_HEAVY = 0.783 // 4 mm/h
-const RAIN_ON = 0.475 // 1 mm/h
-const RAIN_TRACE = 0.17 // 0.1 mm/h
-
 export interface SkyLine {
   /** The sentence itself. */
   text: string
@@ -60,13 +47,9 @@ export interface SkyLine {
   icon: string
 }
 
-export function skyOverhead(rain: number | null): SkyLine | null {
-  // Nothing decoded yet, or no data over us: say nothing. Silence is the only
-  // honest output here, and an exhibit that occasionally omits a line reads far
-  // better than one that occasionally lies.
-  if (rain == null) return null
-  if (rain >= RAIN_HEAVY) return { text: '지금 우리 머리 위엔 비가 세차게 내려요', icon: '🌧' }
-  if (rain >= RAIN_ON) return { text: '지금 우리 머리 위엔 비가 내리고 있어요', icon: '🌧' }
-  if (rain >= RAIN_TRACE) return { text: '지금 우리 머리 위엔 빗방울이 조금 떨어져요', icon: '🌦' }
-  return { text: '지금 우리 머리 위엔 비가 오지 않아요', icon: '🌤' }
+export function skyOverhead(level: number | null): SkyLine | null {
+  if (level == null || level <= 0) return null
+  if (level >= 3) return { text: '지금 우리 머리 위엔 비가 세차게 내려요', icon: '🌧' }
+  if (level >= 2) return { text: '지금 우리 머리 위엔 비가 내리고 있어요', icon: '🌧' }
+  return { text: '지금 우리 머리 위엔 빗방울이 조금 떨어져요', icon: '🌦' }
 }

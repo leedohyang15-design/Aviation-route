@@ -34,7 +34,7 @@ interface Props {
   /** The moment the weather picture on screen is of. The renderer owns the
    * animation, so it is the only thing that knows which step is being drawn. */
   onWeatherTime?: (t: number | null) => void
-  /** How hard it is raining over the exhibit, 0..1 as drawn. */
+  /** Which band the rain over the exhibit falls into; null for nothing to say. */
   onLocalSky?: (rain: number | null) => void
   /** Filled with a function that re-arms the attract countdown, so taps on the
    * overlay UI (search, chips, tabs) count as operator activity too. */

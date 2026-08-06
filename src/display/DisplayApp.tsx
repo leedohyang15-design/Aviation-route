@@ -46,7 +46,7 @@ export function DisplayApp(): JSX.Element {
    * the fallback for the moment before the first tick lands.
    */
   const [shownAt, setShownAt] = useState<number | null>(null)
-  /* How hard it is raining over the exhibit, read off the drawn picture. */
+  /* Which band the rain over the exhibit falls into, or null for nothing to say. */
   const [rainHere, setRainHere] = useState<number | null>(null)
   const mode = state.mode
   const isSat = mode === 'satellite'
