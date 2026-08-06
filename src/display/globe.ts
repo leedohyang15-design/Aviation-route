@@ -404,6 +404,17 @@ export class Globe {
   private windAge: Int32Array | null = null
   private windLife: Int32Array | null = null
   private windTrail: Float32Array | null = null
+  /**
+   * Where in each particle's trail the newest point sits.
+   *
+   * The trail used to be shifted down by one every frame, which is fine for a
+   * sixteen-point tail and quietly quadratic once the tail is long enough to
+   * read as a line. One shared cursor works because every particle gains its
+   * point on the same frame; slot `(windHead + 1 + j) % T` is the j-th oldest.
+   */
+  private windHead = 0
+  /** Scratch: one particle's trail projected to screen, reused every particle. */
+  private windPx: Float32Array | null = null
   private windLines: THREE.Mesh | null = null
   private windLast = 0
   private windWanted = false
@@ -1576,6 +1587,7 @@ export class Globe {
     // Each particle keeps its recent positions so it can be drawn as a streak
     // rather than a dot; a dot in a flow field reads as noise.
     this.windTrail = new Float32Array(N * T * 2)
+    this.windPx = new Float32Array(T * 2)
     for (let i = 0; i < N; i++) this.respawnWind(i, true)
     /*
      * Quads, not lines.
@@ -1674,6 +1686,8 @@ export class Globe {
     const N = WEATHER_WIND_PARTICLES
     const T = WEATHER_WIND_TAIL
     const trail = this.windTrail
+    this.windHead = (this.windHead + 1) % T
+    const head = this.windHead
     for (let i = 0; i < N; i++) {
       const lon = this.windLon[i]
       const lat = this.windLat[i]
@@ -1690,13 +1704,8 @@ export class Globe {
       if (nlon < -180) nlon += 360
       this.windLon[i] = nlon
       this.windLat[i] = nlat
-      // Shift the streak and put the new head on the end.
-      for (let s = 0; s < T - 1; s++) {
-        trail[(i * T + s) * 2] = trail[(i * T + s + 1) * 2]
-        trail[(i * T + s) * 2 + 1] = trail[(i * T + s + 1) * 2 + 1]
-      }
-      trail[(i * T + T - 1) * 2] = nlon
-      trail[(i * T + T - 1) * 2 + 1] = nlat
+      trail[(i * T + head) * 2] = nlon
+      trail[(i * T + head) * 2 + 1] = nlat
     }
 
     const pos = g.geometry.getAttribute('position') as THREE.BufferAttribute
@@ -1715,18 +1724,27 @@ export class Globe {
     const gl = this.renderer.getContext()
     const PW = gl.drawingBufferWidth || 1664
     const PH = gl.drawingBufferHeight || 838
+    const px = this.windPx
+    if (!px) return
     let n = 0
     for (let i = 0; i < N; i++) {
       // Fade in and out over the particle's life so nothing pops.
       const age = this.windAge[i] / Math.max(1, this.windLife[i])
       const life = Math.min(1, Math.min(age, 1 - age) * 6)
+      // Project the whole trail once, oldest first. Doing it inside the segment
+      // loop projected every interior point twice, which at a forty-point tail
+      // is most of the frame's arithmetic spent computing the same numbers.
+      for (let j = 0; j < T; j++) {
+        const s = (head + 1 + j) % T
+        const p = projectNorm(trail[(i * T + s) * 2], trail[(i * T + s) * 2 + 1], this.lonOffset)
+        px[j * 2] = p.u
+        px[j * 2 + 1] = 1 - p.v
+      }
       for (let sgm = 0; sgm < T - 1; sgm++) {
-        const p0 = projectNorm(trail[(i * T + sgm) * 2], trail[(i * T + sgm) * 2 + 1], this.lonOffset)
-        const p1 = projectNorm(trail[(i * T + sgm + 1) * 2], trail[(i * T + sgm + 1) * 2 + 1], this.lonOffset)
-        const x0 = p0.u
-        const y0 = 1 - p0.v
-        const x1 = p1.u
-        const y1 = 1 - p1.v
+        const x0 = px[sgm * 2]
+        const y0 = px[sgm * 2 + 1]
+        const x1 = px[sgm * 2 + 2]
+        const y1 = px[sgm * 2 + 3]
         // A streak that straddles the seam would be drawn right across the
         // world, so it is dropped for the one frame it takes to cross.
         const cut = Math.abs(x1 - x0) > 0.5
@@ -1735,12 +1753,14 @@ export class Globe {
         const len = Math.hypot(dx, dy) || 1
         dx /= len
         dy /= len
-        // Older parts of the streak are thinner as well as fainter — that
-        // taper is what makes a streak read as having a direction.
+        // A pen stroke, not a comet: the width barely changes along the streak
+        // and the direction is carried by the alpha instead. Tapering the width
+        // hard is what turned the old short streaks into teardrops, and a field
+        // of teardrops is exactly what reads as travelling dots.
         const t0 = (sgm + 1) / (T - 1)
         const t1 = (sgm + 2) / (T - 1)
-        const w0 = ((WEATHER_WIND_WIDTH * (0.35 + 0.65 * t0)) / 2) * (cut ? 0 : 1)
-        const w1 = ((WEATHER_WIND_WIDTH * (0.35 + 0.65 * t1)) / 2) * (cut ? 0 : 1)
+        const w0 = ((WEATHER_WIND_WIDTH * (0.8 + 0.2 * t0)) / 2) * (cut ? 0 : 1)
+        const w1 = ((WEATHER_WIND_WIDTH * (0.8 + 0.2 * t1)) / 2) * (cut ? 0 : 1)
         const nx0 = (-dy * w0) / PW
         const ny0 = (dx * w0) / PH
         const nx1 = (-dy * w1) / PW
@@ -1750,8 +1770,8 @@ export class Globe {
         pa[o + 3] = x0 - nx0; pa[o + 4] = y0 - ny0; pa[o + 5] = 0.6
         pa[o + 6] = x1 + nx1; pa[o + 7] = y1 + ny1; pa[o + 8] = 0.6
         pa[o + 9] = x1 - nx1; pa[o + 10] = y1 - ny1; pa[o + 11] = 0.6
-        const a0 = cut ? 0 : t0 * t0 * life * 0.7
-        const a1 = cut ? 0 : t1 * t1 * life * 0.7
+        const a0 = cut ? 0 : t0 * t0 * life * 0.85
+        const a1 = cut ? 0 : t1 * t1 * life * 0.85
         aa[n * 4] = a0
         aa[n * 4 + 1] = a0
         aa[n * 4 + 2] = a1

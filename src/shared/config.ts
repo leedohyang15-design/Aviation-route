@@ -213,19 +213,26 @@ export const WEATHER_WIND_FRAMES = Number(readEnv('WEATHER_WIND_FRAMES') ?? 1)
  * speed so long as fast air visibly outruns slow air.
  */
 /*
- * Fewer, longer streaks.
+ * Long thin ribbons, not travelling dots.
  *
- * Short marks in quantity read as noise however they are drawn — the eye needs
- * a line long enough to follow before it sees a flow rather than a speckle. So
- * the count comes down and the tail goes up: roughly the same amount of ink,
- * far more of it in continuous curves.
+ * These four numbers are not free choices — they have to be worked out in
+ * PIXELS or the streak comes out as a speck. The frame is 1664px for 360°, so
+ * one degree of longitude is 4.6px, and 20 m/s (an ordinary wind) advances
+ * `SPEED / 111320` degrees a second. The tail is TAIL frames long, which at
+ * 60fps is TAIL/60 seconds of that travel.
+ *
+ * At the first attempt — SPEED 14000, TAIL 16 — that arithmetic came to a
+ * streak THREE PIXELS long, which is a dot however carefully it is tapered.
+ * The numbers below put an ordinary wind at a ~25px hair drifting at ~37px a
+ * second and a jet stream at ~75px, which is what the reference picture shows:
+ * many fine curved strokes, not a few fat ones.
  */
-export const WEATHER_WIND_PARTICLES = Number(readEnv('WEATHER_WIND_PARTICLES') ?? 850)
-export const WEATHER_WIND_TAIL = Number(readEnv('WEATHER_WIND_TAIL') ?? 16)
-export const WEATHER_WIND_LIFE = Number(readEnv('WEATHER_WIND_LIFE') ?? 150)
-export const WEATHER_WIND_SPEED = Number(readEnv('WEATHER_WIND_SPEED') ?? 14000)
-/** Streak width in pixels at the head, tapering to about a third at the tail. */
-export const WEATHER_WIND_WIDTH = Number(readEnv('WEATHER_WIND_WIDTH') ?? 3.0)
+export const WEATHER_WIND_PARTICLES = Number(readEnv('WEATHER_WIND_PARTICLES') ?? 1400)
+export const WEATHER_WIND_TAIL = Number(readEnv('WEATHER_WIND_TAIL') ?? 40)
+export const WEATHER_WIND_LIFE = Number(readEnv('WEATHER_WIND_LIFE') ?? 300)
+export const WEATHER_WIND_SPEED = Number(readEnv('WEATHER_WIND_SPEED') ?? 45000)
+/** Streak width in pixels — near-constant, like a pen stroke; the fade is alpha. */
+export const WEATHER_WIND_WIDTH = Number(readEnv('WEATHER_WIND_WIDTH') ?? 1.6)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 /**
  * Wall clock per keyframe. Slower now that the wind carries the motion.
