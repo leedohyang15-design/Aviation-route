@@ -392,9 +392,21 @@ async function fetchMaptilerLayer(
     const m = Math.round((t - now) / 60_000)
     return Number.isFinite(m) ? (m >= 0 ? `+${m}분` : `${m}분`) : '?'
   }
+  /*
+   * Local clock times, not offsets in minutes.
+   *
+   * The caption now names the moment the weather is FROM, and "why does it say
+   * nine when it is ten" is a question about which keyframe was chosen — which
+   * an offset in minutes does not answer. This prints the step actually taken
+   * and the one after it, so a window that is an hour behind when a fresher
+   * step existed is visible rather than inferred.
+   */
+  const clock = (t: number): string =>
+    Number.isFinite(t) ? new Date(t).toTimeString().slice(0, 5) : '?'
   opsLog(
     `[weather] ${layer}: ${keys.length} keyframes span ${off(stamps[0])}…${off(stamps[keys.length - 1])}; ` +
-      `taking ${wanted.length} from ${off(stamps[start])} (step ${start})`
+      `taking ${wanted.length} ending ${clock(stamps[end])} local (${off(stamps[end])}), ` +
+      `next step ${clock(stamps[end + 1])} (${off(stamps[end + 1])}), now ${clock(now)}`
   )
 
   /*

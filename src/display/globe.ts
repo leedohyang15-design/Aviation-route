@@ -3281,16 +3281,35 @@ export class Globe {
      * step that is genuinely new.
      */
     const wanted = new Set(usable.map((f) => `${f.time}`))
-    void Promise.all(
-      usable.map((f) => {
+    /*
+     * One at a time, with a breath between each.
+     *
+     * These were all decoded at once, and a decode is not cheap: sixty-four
+     * tiles drawn into a two-thousand-pixel canvas, then read back. Four of
+     * those starting together monopolise the main thread for long enough to
+     * stall the animation — which is exactly the hitch the wind shows every
+     * time a poll lands, because the wind is the only thing on screen moving
+     * fast enough for a dropped frame to be visible.
+     *
+     * Yielding to the event loop between frames does not make the work
+     * smaller, but it lets the renderer draw in the gaps.
+     */
+    const buildAll = async (): Promise<(THREE.Texture | null)[]> => {
+      const out: (THREE.Texture | null)[] = []
+      for (const f of usable) {
         const have = slot.byTime?.get(f.time)
-        if (have) return Promise.resolve(have)
-        return this.buildWeatherTexture(f).then((t) => {
-          if (t) (slot.byTime ??= new Map()).set(f.time, t)
-          return t
-        })
-      })
-    ).then((built) => {
+        if (have) {
+          out.push(have)
+          continue
+        }
+        const t = await this.buildWeatherTexture(f)
+        if (t) (slot.byTime ??= new Map()).set(f.time, t)
+        out.push(t)
+        await new Promise((r) => setTimeout(r, 0))
+      }
+      return out
+    }
+    void buildAll().then((built) => {
       // A newer series started while this one was decoding: throw this away.
       if (token !== slot.token) return
       /*
