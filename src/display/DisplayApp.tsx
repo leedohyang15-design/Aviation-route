@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { Globe } from './globe'
@@ -35,6 +35,16 @@ export function DisplayApp(): JSX.Element {
   const globeRef = useRef<Globe | null>(null)
   const { send, aircraft, state, route, detail, satellites, satDetail, weather, weatherAt } =
     useHub('display')
+  /*
+   * The moment being DRAWN, which is not the newest moment received.
+   *
+   * The series is four hourly steps that ping-pong past at six seconds each,
+   * so naming the newest one left the plate reading "10시 기준" over a picture
+   * of seven o'clock for most of the loop. The renderer owns the animation, so
+   * it is the only thing that can say which step is on screen; `weatherAt` is
+   * the fallback for the moment before the first tick lands.
+   */
+  const [shownAt, setShownAt] = useState<number | null>(null)
   const mode = state.mode
   const isSat = mode === 'satellite'
   const isWeather = mode === 'weather'
@@ -65,8 +75,9 @@ export function DisplayApp(): JSX.Element {
     // how old it is — the one thing that stops a still image reading as a
     // decoration rather than as today's sky.
     if (isWeather) {
-      if (!weatherAt) return { ...NOTHING, title: '지구의 날씨', prefix: '영상을 불러오는 중이에요' }
-      const t = new Date(weatherAt)
+      const at = shownAt ?? weatherAt
+      if (!at) return { ...NOTHING, title: '지구의 날씨', prefix: '영상을 불러오는 중이에요' }
+      const t = new Date(at)
       const hh = t.getHours()
       const label = `${hh < 12 ? '오전' : '오후'} ${hh % 12 || 12}시${t.getMinutes() ? ` ${t.getMinutes()}분` : ''}`
       return { ...NOTHING, title: '지구의 날씨', prefix: `${label} 기준` }
@@ -114,7 +125,7 @@ export function DisplayApp(): JSX.Element {
       return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
     return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
-  }, [isSat, isWeather, weatherAt, state.selected, satDetail, sel, d])
+  }, [isSat, isWeather, shownAt, weatherAt, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -148,6 +159,7 @@ export function DisplayApp(): JSX.Element {
     // Only the dome window reports. Both windows decode the same pixels and
     // would reach the same numbers, so wiring both would double every line.
     g.onNote = (text) => send({ type: 'note', text })
+    g.onWeatherTime = setShownAt
   }, [send])
 
   // Each layer is hung on or taken off the earth on its own, so a chip toggles

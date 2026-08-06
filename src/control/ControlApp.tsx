@@ -294,6 +294,9 @@ export function ControlApp(): JSX.Element {
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
+  /* The moment being DRAWN, not the newest one received: the series ping-pongs
+   * through four hourly steps, so the newest is on screen a quarter of the time. */
+  const [shownAt, setShownAt] = useState<number | null>(null)
   /**
    * The newest anchor, as a plain value rather than state.
    *
@@ -515,6 +518,7 @@ export function ControlApp(): JSX.Element {
         onView={(view) => send({ type: 'setView', view })}
         onAttract={setAttract}
         onAnchor={anchorSink}
+        onWeatherTime={setShownAt}
         pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
@@ -530,11 +534,14 @@ export function ControlApp(): JSX.Element {
         <div className="count">
           {isWeather ? (
             <>
-              {weatherAt == null ? (
+              {(shownAt ?? weatherAt) == null ? (
                 '날씨 영상을 불러오는 중…'
               ) : (
                 <>
-                  <b>{new Date(weatherAt as number).toTimeString().slice(0, 5)}</b> 기준 지구의 하늘
+                  <b>
+                    {new Date((shownAt ?? weatherAt) as number).toTimeString().slice(0, 5)}
+                  </b>{' '}
+                  기준 지구의 하늘
                 </>
               )}
             </>

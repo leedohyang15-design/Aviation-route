@@ -31,6 +31,9 @@ interface Props {
   onAttract?: (active: boolean) => void
   /** Where the selected object is on screen, so the card can sit beside it. */
   onAnchor?: (p: SelectionAnchor | null) => void
+  /** The moment the weather picture on screen is of. The renderer owns the
+   * animation, so it is the only thing that knows which step is being drawn. */
+  onWeatherTime?: (t: number | null) => void
   /** Filled with a function that re-arms the attract countdown, so taps on the
    * overlay UI (search, chips, tabs) count as operator activity too. */
   pokeRef?: React.MutableRefObject<(() => void) | null>
@@ -54,6 +57,7 @@ export function MapView({
   onView,
   onAttract,
   onAnchor,
+  onWeatherTime,
   pokeRef,
   dayNightHour = null,
   originCity = null,
@@ -71,6 +75,8 @@ export function MapView({
   onAttractRef.current = onAttract
   const onAnchorRef = useRef(onAnchor)
   onAnchorRef.current = onAnchor
+  const onWeatherTimeRef = useRef(onWeatherTime)
+  onWeatherTimeRef.current = onWeatherTime
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -81,6 +87,7 @@ export function MapView({
     globe.onAttractChange = (a) => onAttractRef.current?.(a)
     globe.onSelectedAnchor = (p) => onAnchorRef.current?.(p)
     if (pokeRef) pokeRef.current = () => globe.pokeActivity()
+    globe.onWeatherTime = (t) => onWeatherTimeRef.current?.(t)
     globeRef.current = globe
     globe.start()
     // Refit/recenter whenever the map area changes size (also fixes the initial

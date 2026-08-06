@@ -417,6 +417,17 @@ export class Globe {
   private windLines: THREE.Mesh | null = null
   private windLast = 0
   private windWanted = false
+  /**
+   * Set to be told which moment the picture on screen is of.
+   *
+   * The caption used to name the newest step in the series, which is only the
+   * step actually being drawn for a quarter of the loop: four hourly steps
+   * ping-pong past at six seconds each, so for eighteen seconds out of every
+   * twenty-four the plate said ten o'clock over a picture of seven.
+   */
+  onWeatherTime: ((t: number | null) => void) | null = null
+  /** The moment last reported, so the callback fires on change and not per frame. */
+  private wxShown: number | null = null
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
@@ -3126,8 +3137,14 @@ export class Globe {
    * screen show the same moment without a byte of hub traffic.
    */
   private tickWeather(): void {
+    // Which moment the picture is of, taken from whichever layer is on. Both
+    // are on the same instants, so cloud wins only because it is usually the
+    // one showing.
+    let shown: number | null = null
     for (const layer of ['cloud', 'rain'] as WeatherLayer[]) {
       const tex = this.wx[layer].textures
+      const times = this.wxTimes[layer]
+      const pref = layer === 'cloud' || shown == null
       const a = layer === 'cloud' ? 'uCloud' : 'uRain'
       const b = layer === 'cloud' ? 'uCloudB' : 'uRainB'
       const m = layer === 'cloud' ? 'uCloudMix' : 'uRainMix'
@@ -3136,6 +3153,7 @@ export class Globe {
         this.bgUniforms[a].value = tex[0]
         this.bgUniforms[b].value = tex[0]
         this.bgUniforms[m].value = 0
+        if (pref && times.length) shown = times[0]
         continue
       }
       /*
@@ -3162,7 +3180,17 @@ export class Globe {
       const raw = t < 1 - FADE ? 0 : (t - (1 - FADE)) / FADE
       this.bgUniforms[a].value = tex[Math.max(0, Math.min(tex.length - 1, i))]
       this.bgUniforms[b].value = tex[Math.max(0, Math.min(tex.length - 1, next))]
-      this.bgUniforms[m].value = raw * raw * (3 - 2 * raw)
+      const mix = raw * raw * (3 - 2 * raw)
+      this.bgUniforms[m].value = mix
+      // Halfway through a cross-fade the picture stops being one moment and
+      // starts being the next; the plate changes with it rather than at the
+      // end, so the number and the picture agree at every instant.
+      const at = mix > 0.5 ? next : i
+      if (pref && times[at] != null) shown = times[at]
+    }
+    if (shown !== this.wxShown) {
+      this.wxShown = shown
+      this.onWeatherTime?.(shown)
     }
   }
 
