@@ -20,8 +20,6 @@ import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT } from '../src/shared/config'
 import { withDeadline } from './http'
 import { opsLog } from './log'
-import { writeFile } from 'node:fs/promises'
-import { dataPath } from './datadir'
 import {
   hasRoute,
   onRouteResolved,
@@ -100,11 +98,6 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   })
 
   const state: PresentationState = structuredClone(DEFAULT_PRESENTATION_STATE)
-  // The windows only send their finished weather textures back when asked, and
-  // this is the asking. The sensor pictures that go in have been checked and
-  // are clean, so whatever is left is happening in the assembly — and the
-  // assembly only exists inside the window.
-  state.debugWeatherDump = !!process.env.WEATHER_DEBUG_DUMP
   // Whether live data is even possible, so the windows can tell "still
   // connecting" apart from "no credentials configured".
   const hasCreds = hasOpenSkyCredentials()
@@ -503,19 +496,6 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
         state.hiddenOrbits = msg.orbits
         broadcast({ type: 'state', state })
         return
-      case 'debugImage': {
-        // Only when asked for, and the name is scrubbed: this writes a file
-        // beside the exe from something a window sent.
-        if (!state.debugWeatherDump) return
-        const safe = msg.name.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'weather'
-        const b64 = msg.dataUrl.split(',')[1] ?? ''
-        if (!b64 || b64.length > 40_000_000) return
-        const file = dataPath(`weather-composed-${safe}.png`)
-        void writeFile(file, Buffer.from(b64, 'base64'))
-          .then(() => opsLog(`[weather] debug: wrote ${file}`))
-          .catch((e: Error) => opsLog(`[weather] debug: could not write ${file}: ${e.message}`))
-        return
-      }
       case 'note':
         // One line, no newlines, length-capped: this is a window writing into
         // the operator's log, so it gets a leash.

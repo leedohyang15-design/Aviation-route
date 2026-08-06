@@ -386,9 +386,6 @@ export class Globe {
   private extraAvoid: { u: number; y: number }[] = []
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
-  /** Set to hand a finished weather texture back for inspection (debug only). */
-  onDebugImage: ((name: string, dataUrl: string) => void) | null = null
-  private debugDumped = new Set<string>()
   /** Set to put a line in the exe's log from the renderer. */
   onNote: ((text: string) => void) | null = null
   /** A ramp measured off the data, applied after applyDecode has set the one
@@ -420,10 +417,6 @@ export class Globe {
   private windLines: THREE.Mesh | null = null
   private windLast = 0
   private windWanted = false
-  /** Once per series: the strongest rain and where it is. */
-  private rainPeaksDone = false
-  /** When to read the drawing buffer back and measure it, epoch ms; 0 = never. */
-  private screenScanAt = 0
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
@@ -1099,40 +1092,6 @@ export class Globe {
    *   join about the interior             the file is fine and the line is ours
    */
   /**
-   * How hard the map is being squeezed, and what the GPU was told to do about it.
-   *
-   * The files wrap cleanly, so the line is in the drawing — and the two ways it
-   * can be are opposites. Minifying sixteen thousand pixels into sixteen
-   * hundred means every screen pixel covers ten texels, and with no mip chain a
-   * linear sample reads four of them and guesses; that is aliasing, and it is
-   * worst where the sampling pattern is discontinuous, which is the wrap. Turn
-   * the chain on and the reduced levels are built with their edges CLAMPED —
-   * the driver's generateMipmap does not know the texture repeats — so the two
-   * sides of the wrap disagree at every level but the largest, which draws a
-   * hairline in exactly the same place for the opposite reason.
-   *
-   * Which one is happening is not something to reason about from a photograph
-   * of a screen, so this states the numbers and the A/B settles it.
-   */
-  private reportSampling(tex: THREE.Texture, label: string): void {
-    const img = tex.image as HTMLImageElement | undefined
-    if (!this.onNote || !img?.width) return
-    const caps = this.renderer.capabilities
-    const gl = this.renderer.getContext()
-    const across = gl.drawingBufferWidth || 1
-    // At full world view the whole texture spans the frame; zoomed in, less of
-    // it does. iSpan is the fraction of the world on screen.
-    const texelsPerPixel = (img.width * Math.max(0.02, this.iSpan)) / across
-    this.onNote(
-      `[earth] ${label} sampling: ${img.width}px wide into ${across}px = ` +
-        `${texelsPerPixel.toFixed(1)} texels per pixel at this zoom; ` +
-        `mipmaps ${tex.generateMipmaps ? 'ON' : 'OFF'}, anisotropy ${tex.anisotropy}, ` +
-        `gpu max texture ${caps.maxTextureSize}px, max anisotropy ${caps.getMaxAnisotropy()}` +
-        `${img.width > caps.maxTextureSize ? ' - TOO BIG FOR THIS GPU' : ''}`
-    )
-  }
-
-  /**
    * Look for a vertical seam anywhere in the map, at full resolution.
    *
    * The wrap check only ever compared the first and last columns, so an
@@ -1179,80 +1138,6 @@ export class Globe {
    * measured guaranteed to be in shot. Nothing on screen changes; it is one
    * hidden frame.
    */
-  /**
-   * Where the heaviest rain is on screen, in coordinates.
-   *
-   * "The typhoon should be near Japan" is a question about a PLACE, and the
-   * last time it came up the answer was settled by naming the coordinates of
-   * the strongest cells rather than by staring at the globe. That worked
-   * because the source handed over real millimetres. This one hands over a
-   * painting, so the strength here is the paint's opacity — good enough to say
-   * WHERE the heaviest rain is, which is the whole question, even though it
-   * cannot say how many millimetres.
-   */
-  private reportRainPeaks(canvas: HTMLCanvasElement, frame: WeatherFrame): void {
-    if (!this.onNote) return
-    try {
-      const W = canvas.width
-      const H = canvas.height
-      const d = canvas.getContext('2d')!.getImageData(0, 0, W, H).data
-      const top: { a: number; x: number; y: number }[] = []
-      for (let y = 0; y < H; y += 2) {
-        for (let x = 0; x < W; x += 2) {
-          const a = d[(y * W + x) * 4 + 3]
-          if (a < 40) continue
-          /*
-           * Rank by the WEIGHT AROUND a cell, not the cell itself.
-           *
-           * The palette saturates, so the strongest cells all read the same
-           * number and "the top five" quietly became "the first five found" —
-           * scan order, not weather. A storm is not one saturated pixel, it is
-           * a broad area of them, so what separates it from a squall is how
-           * much paint surrounds it.
-           */
-          let weight = 0
-          for (let j = -4; j <= 4; j++) {
-            for (let i = -4; i <= 4; i++) {
-              const yy = y + j * 2
-              const xx = ((x + i * 2) % W + W) % W
-              if (yy < 0 || yy >= H) continue
-              weight += d[(yy * W + xx) * 4 + 3]
-            }
-          }
-          if (top.length < 5 || weight > top[top.length - 1].a) {
-            top.push({ a: weight, x, y })
-            top.sort((p, q) => q.a - p.a)
-            // Keep them apart, or all five land in one storm.
-            for (let i = 1; i < top.length; i++) {
-              for (let j = 0; j < i; j++) {
-                if (Math.abs(top[i].x - top[j].x) < W / 24 && Math.abs(top[i].y - top[j].y) < H / 24) {
-                  top.splice(i--, 1)
-                  break
-                }
-              }
-            }
-            top.length = Math.min(top.length, 5)
-          }
-        }
-      }
-      const where = (x: number, y: number): string => {
-        const lon = -180 + ((x + 0.5) / W) * 360
-        const n = Math.PI * (1 - (2 * (y + 0.5)) / H)
-        const lat =
-          frame.projection === 'mercator'
-            ? (Math.atan(Math.sinh(n)) * 180) / Math.PI
-            : 90 - ((y + 0.5) / H) * 180
-        return `${lat.toFixed(1)},${lon.toFixed(1)}`
-      }
-      this.onNote(
-        `[weather] rain peaks (area-weighted paint, not mm): ` +
-          `${top.map((t) => `${(t.a / (81 * 255) * 100) | 0}%@${where(t.x, t.y)}`).join(' ') || 'none above 16%'}`
-      )
-    } catch {
-      /* a tainted canvas is not worth a crash for a diagnostic */
-    }
-  }
-
   /**
    * Read what the rain field actually contains, and fit the ramp to it.
    *
@@ -1381,21 +1266,15 @@ export class Globe {
 
 
 
-  private scanEdges(
-    canvas: HTMLCanvasElement,
-    label: string,
-    quiet = false,
-    /*
-     * Whether a column can honestly be called a longitude.
-     *
-     * For a texture it can: the mosaic is the whole world, edge to edge. For
-     * the drawing buffer it cannot — the view is rotated by uLonOffset and can
-     * be zoomed, so naming a screen column "162.7 degrees" invents a precision
-     * the measurement does not have. Screen columns are reported as a position
-     * across the frame instead.
-     */
-    columnsAreLongitudes = true
-  ): number {
+  /**
+   * How straight the straightest horizontal edge in a cloud picture is.
+   *
+   * This is a guard, not a report: an archive step that arrives with a machine
+   * -drawn band across it is refused and its neighbour held in its place. The
+   * caller compares the result against a threshold and nothing else looks at
+   * it.
+   */
+  private scanEdges(canvas: HTMLCanvasElement): number {
     const W = canvas.width
     const H = canvas.height
     if (W < 64 || H < 64) return 0
@@ -1452,50 +1331,10 @@ export class Globe {
     }
     const rows = new Float64Array(H)
     for (let y = 1; y < H; y++) rows[y] = longestRun(W, (x) => v(x, y) - v(x, y - 1))
-    const cols = new Float64Array(W)
-    for (let x = 1; x < W; x++) cols[x] = longestRun(H, (y) => v(x, y) - v(x - 1, y))
-    const med = (a: Float64Array): number => {
-      const b = Array.from(a).sort((p, q) => p - q)
-      return b.length ? b[b.length >> 1] : 0
-    }
-    const rowMed = med(rows)
-    const colMed = med(cols)
-    const pick = (
-      a: Float64Array,
-      medv: number,
-      toDeg: (i: number) => number
-    ): string[] => {
-      // At least a thirtieth of the line unbroken, and well clear of what this
-      // picture does normally. The floor is what makes it work on a busy map;
-      // the multiple is what makes it work on a mostly empty one.
-      const cut = Math.max(medv * 4, 0.03)
-      const hits: { i: number; z: number }[] = []
-      for (let i = 1; i < a.length; i++) if (a[i] > cut) hits.push({ i, z: a[i] })
-      hits.sort((p, q) => q.z - p.z)
-      return hits
-        .slice(0, 6)
-        .map((h) => `${toDeg(h.i).toFixed(1)}deg(${(h.z * 100).toFixed(0)}%)`)
-    }
-    const lat = pick(rows, rowMed, (y) => 90 - (y / H) * 180)
-    const lon = columnsAreLongitudes
-      ? pick(cols, colMed, (x) => -180 + (x / W) * 360)
-      : pick(cols, colMed, (x) => (100 * x) / W).map((t) => t.replace('deg', '% across'))
+    // Only rows: a band across the picture is what the archive produces, and
+    // scanning the columns as well was work done purely for a log line.
     let worst = 0
     for (let i = 1; i < H; i++) if (rows[i] > worst) worst = rows[i]
-    if (quiet) return worst
-    /*
-     * ASCII only, on purpose.
-     *
-     * The first reading of this line came back as mojibake — the log is read
-     * through a Windows console whose code page is not UTF-8, and a diagnostic
-     * nobody can read is not a diagnostic. Degrees, times and multipliers
-     * survive any code page; the prose does not need to be here.
-     */
-    this.onNote?.(
-      `[weather] edges ${label} ${W}x${H}: rows ${lat.join(' ') || 'none'} | ` +
-        `cols ${lon.join(' ') || 'none'} | ref: merc-z3-rows +-85.1/66.5/41.0/21.9/0, ` +
-        `patch-bbox +-80, tile-cols +-135/90/45/0`
-    )
     return worst
   }
 
@@ -1838,201 +1677,6 @@ export class Globe {
     if (this.windLines) this.windLines.visible = this.windWanted && !!this.windField
   }
 
-  private scanBackgroundSeam(): void {
-    if (!this.onNote || !this.bg) return
-    let rt: THREE.WebGLRenderTarget | null = null
-    const savedOffset = this.bgUniforms.uLonOffset.value
-    const savedVisible = this.scene.children.map((c) => c.visible)
-    try {
-      const gl = this.renderer.getContext()
-      const W = Math.min(2048, gl.drawingBufferWidth || 1024)
-      const H = Math.max(64, Math.round(W / 2))
-      rt = new THREE.WebGLRenderTarget(W, H)
-      for (const c of this.scene.children) c.visible = c === this.bg
-      // uv.x = vUv.x + 0.5, so it crosses a whole number at the middle column.
-      this.bgUniforms.uLonOffset.value = -180
-      this.renderer.setRenderTarget(rt)
-      this.renderer.render(this.scene, this.camera)
-      const buf = new Uint8Array(W * H * 4)
-      this.renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf)
-      this.renderer.setRenderTarget(null)
-
-      const lum = (x: number, y: number): number => {
-        const o = (y * W + x) * 4
-        return (buf[o] * 0.299 + buf[o + 1] * 0.587 + buf[o + 2] * 0.114) / 255
-      }
-      const HARD = 0.012 // three grey levels: a hairline is faint by definition
-      const hits = new Float64Array(W)
-      const bias = new Float64Array(W)
-      for (let x = 1; x < W; x++) {
-        let n = 0
-        let sum = 0
-        for (let y = 0; y < H; y++) {
-          const d = lum(x, y) - lum(x - 1, y)
-          if (Math.abs(d) > HARD) n++
-          sum += d
-        }
-        hits[x] = n / H
-        bias[x] = sum / H
-      }
-      const sorted = Array.from(hits).sort((a, b) => a - b)
-      const p99 = sorted[Math.floor(sorted.length * 0.99)]
-      const mid = W >> 1
-      // What the seam column itself does, and the strongest column anywhere.
-      let best = { x: 1, v: hits[1] }
-      for (let x = 1; x < W; x++) if (hits[x] > best.v) best = { x, v: hits[x] }
-      const atSeam = Math.max(hits[mid], hits[mid + 1] ?? 0, hits[mid - 1] ?? 0)
-      const seamBias = Math.max(Math.abs(bias[mid]), Math.abs(bias[mid + 1] ?? 0))
-      const tex = this.bgUniforms.uMap.value as THREE.Texture | null
-      this.onNote(
-        `[earth] seam test ${W}x${H} map only, mipmaps ${tex?.generateMipmaps ? 'ON' : 'OFF'}, ` +
-          `aniso ${tex?.anisotropy ?? 1}: at wrap ${(atSeam * 100).toFixed(0)}% of rows ` +
-          `(${(seamBias * 255).toFixed(2)} levels), strongest column ${((100 * best.x) / W).toFixed(1)}% ` +
-          `at ${(best.v * 100).toFixed(0)}%, typical ${(p99 * 100).toFixed(0)}%`
-      )
-    } catch {
-      /* a lost context is not worth a crash for a diagnostic */
-    } finally {
-      this.renderer.setRenderTarget(null)
-      this.bgUniforms.uLonOffset.value = savedOffset
-      this.scene.children.forEach((c, i2) => {
-        c.visible = savedVisible[i2] ?? true
-      })
-      rt?.dispose()
-    }
-  }
-
-  private scanForSeam(tex: THREE.Texture, label: string): void {
-    const img = tex.image as HTMLImageElement | undefined
-    if (!this.onNote || !img?.width) return
-    try {
-      const W = img.width
-      const ROWS = 384
-      const c = document.createElement('canvas')
-      c.width = W
-      c.height = ROWS
-      const ctx = c.getContext('2d')!
-      // Three bands away from the poles, where an equirect image is stretched
-      // hardest and every column looks alike.
-      const bands = [0.3, 0.5, 0.7]
-      const each = Math.floor(ROWS / bands.length)
-      bands.forEach((f, i) => {
-        ctx.drawImage(img, 0, Math.round(img.height * f), W, each, 0, i * each, W, each)
-      })
-      const d = ctx.getImageData(0, 0, W, ROWS).data
-      const lum = (x: number, y: number): number => {
-        const o = (y * W + x) * 4
-        return (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) / 255
-      }
-      /*
-       * Two statistics, because a seam can be either kind.
-       *
-       * Counting hard steps finds a line drawn ON the map — a bright or dark
-       * column, a rendering artefact baked in. It does NOT find the other kind,
-       * and the other kind is what a large composited map actually suffers
-       * from: two source tiles joined with their exposure a grey level or two
-       * apart. Per pixel that is far below any sensible threshold; over a
-       * uniform ocean it is a straight line a person sees immediately, and over
-       * land it disappears. So the second statistic is the MEAN SIGNED step
-       * across the column, where noise cancels and a systematic offset does
-       * not, measured against how much the mean wanders elsewhere.
-       */
-      const HARD = 0.06
-      const hits = new Float64Array(W)
-      const bias = new Float64Array(W)
-      for (let x = 1; x < W; x++) {
-        let n = 0
-        let sum = 0
-        for (let y = 0; y < ROWS; y++) {
-          const d2 = lum(x, y) - lum(x - 1, y)
-          if (Math.abs(d2) > HARD) n++
-          sum += d2
-        }
-        hits[x] = n / ROWS
-        bias[x] = sum / ROWS
-      }
-      const rank = (a: Float64Array, f: (v: number) => number): number[] =>
-        Array.from(a, f).sort((p, q) => p - q)
-      const hs = rank(hits, (v) => v)
-      const hMed = hs[hs.length >> 1]
-      const hP99 = hs[Math.floor(hs.length * 0.99)]
-      const bs = rank(bias, Math.abs)
-      // A robust spread: the 99th percentile of |mean step| is what ordinary
-      // map content produces, so anything well past it is not map content.
-      const bP99 = bs[Math.floor(bs.length * 0.99)]
-      const deg = (x: number): string => (-180 + (x / W) * 360).toFixed(2)
-      const hard: string[] = []
-      const soft: string[] = []
-      const hCut = Math.max(hP99 * 2, hMed * 8, 0.5)
-      const bCut = Math.max(bP99 * 4, 0.004) // 0.004 is one grey level in 255
-      for (let x = 1; x < W; x++) {
-        if (hard.length < 4 && hits[x] > hCut) hard.push(`${deg(x)}(${(hits[x] * 100).toFixed(0)}%)`)
-        if (soft.length < 4 && Math.abs(bias[x]) > bCut) {
-          soft.push(`${deg(x)}(${(bias[x] * 255).toFixed(1)} levels)`)
-        }
-      }
-      this.onNote(
-        `[earth] ${label} seam scan ${W}x${ROWS} native: ` +
-          `hard ${hard.join(' ') || 'none'} | ` +
-          `exposure ${soft.join(' ') || 'none'} ` +
-          `(typical hard ${(hMed * 100).toFixed(0)}%, 99th ${(hP99 * 100).toFixed(0)}%; ` +
-          `99th |mean step| ${(bP99 * 255).toFixed(2)} levels)`
-      )
-    } catch {
-      /* a tainted canvas is not worth a crash for a diagnostic */
-    }
-  }
-
-  private measureWrap(tex: THREE.Texture, label: string): void {
-    const img = tex.image as HTMLImageElement | undefined
-    if (!this.onNote || !img?.width) return
-    try {
-      const W = img.width
-      const H = Math.min(1024, img.height)
-      const c = document.createElement('canvas')
-      c.width = 12
-      c.height = H
-      const ctx = c.getContext('2d')!
-      // Left edge, right edge, and a middle pair — each at native resolution.
-      ctx.drawImage(img, 0, 0, 4, img.height, 0, 0, 4, H)
-      ctx.drawImage(img, W - 4, 0, 4, img.height, 4, 0, 4, H)
-      ctx.drawImage(img, W >> 1, 0, 4, img.height, 8, 0, 4, H)
-      const d = ctx.getImageData(0, 0, 12, H).data
-      const at = (x: number, y: number): number[] => {
-        const o = (y * 12 + x) * 4
-        return [d[o], d[o + 1], d[o + 2]]
-      }
-      const diff = (ax: number, bx: number): number => {
-        let sum = 0
-        for (let y = 0; y < H; y++) {
-          const p = at(ax, y)
-          const q = at(bx, y)
-          sum += (Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2])) / 3
-        }
-        return sum / H
-      }
-      const join = diff(7, 0) // last column against first — what wrapping joins
-      const edge = diff(6, 7) // the last two columns, as a local baseline
-      const mid = diff(8, 9) // an untouched interior pair
-      const pot = (n: number): boolean => (n & (n - 1)) === 0
-      this.onNote(
-        `[earth] ${label} ${W}x${img.height} ` +
-          `${img.width === img.height * 2 ? '2:1' : 'NOT 2:1'} ` +
-          `${pot(W) && pot(img.height) ? 'pow2' : 'not-pow2'}; ` +
-          `wrap join ${join.toFixed(1)} vs neighbours ${edge.toFixed(1)}/${mid.toFixed(1)} ` +
-          `-> ${
-            join > Math.max(edge, mid) * 3 + 2
-              ? 'SEAM IN THE FILE (its two ends are not the same meridian)'
-              : join < Math.min(edge, mid) * 0.3
-                ? 'DUPLICATED COLUMN (the meridian is in the file twice)'
-                : 'file wraps cleanly - the line is in the rendering'
-          }`
-      )
-    } catch {
-      /* a cross-origin image would taint the canvas; a diagnostic is not worth a crash */
-    }
-  }
-
   /** Try to swap in a real photographic earth if the asset is present. */
   /** Try each url in turn (first that loads wins); call onFail if none load. */
   private loadFirstTexture(
@@ -2068,11 +1712,6 @@ export class Globe {
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
         console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
-        this.measureWrap(tex, 'day')
-        this.reportSampling(tex, 'day')
-        this.scanForSeam(tex, 'day')
-        // Once the picture has settled, measure the picture.
-        this.screenScanAt = Date.now() + 5000
       },
       () => {
         console.warn(
@@ -2090,9 +1729,6 @@ export class Globe {
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
         console.log(`[earth] loaded night texture`)
-        this.measureWrap(tex, 'night')
-        this.reportSampling(tex, 'night')
-        this.scanForSeam(tex, 'night')
       },
       () => {
         /* no night texture — night side just dims globally */
@@ -2992,7 +2628,7 @@ export class Globe {
       if (frame.layer === 'cloud' && !this.edgeScanned.has(ekey)) {
         this.edgeScanned.add(ekey)
         if (this.edgeScanned.size > 64) this.edgeScanned.clear()
-        if (this.scanEdges(canvas, '', true) > 0.06) {
+        if (this.scanEdges(canvas) > 0.06) {
           this.onNote?.(
             `[weather] cloud: step ${frame.step ?? 0} at ` +
               `${new Date(frame.time).toISOString().slice(11, 16)}Z has a straight edge across ` +
@@ -3004,19 +2640,6 @@ export class Globe {
       if (this.needRainCalib && frame.layer === 'rain' && frame.blend === 'data' && frame.decode) {
         this.needRainCalib = false
         this.calibrateRain(canvas, frame.decode)
-      }
-      if (frame.layer === 'rain' && !this.rainPeaksDone) {
-        this.rainPeaksDone = true
-        this.reportRainPeaks(canvas, frame)
-      }
-      const key = `${frame.layer}-${frame.blend ?? 'plain'}`
-      if (this.onDebugImage && !this.debugDumped.has(key)) {
-        this.debugDumped.add(key)
-        try {
-          this.onDebugImage(key, canvas.toDataURL('image/png'))
-        } catch {
-          /* a tainted canvas would throw; the dump is not worth a crash */
-        }
       }
       return tex
     }
@@ -3311,10 +2934,7 @@ export class Globe {
       })
       return
     }
-    if (layer === 'rain') {
-      this.rainPeaksDone = false
-      this.needRainCalib = true
-    }
+    if (layer === 'rain') this.needRainCalib = true
     // Measure this series once, on whichever of its frames finishes first.
     if (!usable.length) {
       for (const t of slot.byTime?.values() ?? []) t.dispose()
@@ -3989,10 +3609,6 @@ export class Globe {
     // once and never again, so nothing ever moved off its starting point.
     if (this.windLines?.visible) this.stepWind()
     this.renderer.render(this.scene, this.camera)
-    if (this.screenScanAt && Date.now() >= this.screenScanAt) {
-      this.screenScanAt = 0
-      this.scanBackgroundSeam()
-    }
     this.raf = requestAnimationFrame(this.frame)
   }
 

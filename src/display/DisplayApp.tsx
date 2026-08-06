@@ -142,20 +142,13 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => {
     if (isSat) globeRef.current?.setSatellites(satVisible)
   }, [isSat, satVisible])
-  // Hand the assembled weather textures back to the hub when it has asked for
-  // them, so they can be looked at as files. The display only — the control
-  // window builds the identical mosaic and two copies of a two-megabyte PNG is
-  // one copy too many.
   useEffect(() => {
     const g = globeRef.current
     if (!g) return
-    g.onDebugImage = state.debugWeatherDump
-      ? (name, dataUrl) => send({ type: 'debugImage', name, dataUrl })
-      : null
     // Only the dome window reports. Both windows decode the same pixels and
     // would reach the same numbers, so wiring both would double every line.
     g.onNote = (text) => send({ type: 'note', text })
-  }, [state.debugWeatherDump, send])
+  }, [send])
 
   // Each layer is hung on or taken off the earth on its own, so a chip toggles
   // instantly instead of waiting for the next poll.

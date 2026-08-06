@@ -273,14 +273,6 @@ export interface PresentationState {
   hiddenOrbits: OrbitClass[]
   /** Weather products to hide in weather mode (empty = show both). */
   hiddenWeather: WeatherLayer[]
-  /**
-   * Set when the hub is started with WEATHER_DEBUG_DUMP. The renderer sends
-   * back the finished weather textures so they can be looked at as files —
-   * the sensor pictures that go IN have been checked and are clean, so
-   * whatever is wrong is happening in the assembly, and the assembly only
-   * exists in the window.
-   */
-  debugWeatherDump?: boolean
 }
 
 export const DEFAULT_PRESENTATION_STATE: PresentationState = {
@@ -318,8 +310,7 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
   // and the chip mostly advertised an absence. It is a global model field now,
   // and a weather tab whose rain is off by default is a weather tab where a
   // visitor reports "비가 안 떠" and is right.
-  hiddenWeather: [],
-  debugWeatherDump: false
+  hiddenWeather: []
 }
 
 // ---------------------------------------------------------------------------
@@ -357,9 +348,6 @@ export type ClientMessage =
   | { type: 'setHiddenOrbits'; orbits: OrbitClass[] }
   | { type: 'setHiddenWeather'; layers: WeatherLayer[] }
   | { type: 'hello'; role: 'control' | 'display' }
-  /** The renderer handing a finished weather texture back for inspection. Only
-   * ever sent when the hub asked for it via `debugWeatherDump`. */
-  | { type: 'debugImage'; name: string; dataUrl: string }
   /** A line for the exe's log from the renderer. The pixel-level facts — what
    * a decoded field actually contains — are only knowable where the image is
    * decoded, and the exe has no console to print them to. */
