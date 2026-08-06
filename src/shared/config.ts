@@ -231,8 +231,27 @@ export const WEATHER_WIND_PARTICLES = Number(readEnv('WEATHER_WIND_PARTICLES') ?
 export const WEATHER_WIND_TAIL = Number(readEnv('WEATHER_WIND_TAIL') ?? 40)
 export const WEATHER_WIND_LIFE = Number(readEnv('WEATHER_WIND_LIFE') ?? 300)
 export const WEATHER_WIND_SPEED = Number(readEnv('WEATHER_WIND_SPEED') ?? 45000)
-/** Streak width in pixels — near-constant, like a pen stroke; the fade is alpha. */
-export const WEATHER_WIND_WIDTH = Number(readEnv('WEATHER_WIND_WIDTH') ?? 1.6)
+/**
+ * How the speed becomes a distance: `REF * (speed/REF)^GAMMA`.
+ *
+ * Straight proportion does not work here. Surface wind is mostly 2-8 m/s and a
+ * jet stream is sixty, so proportion hands the whole visual range to the jets
+ * and leaves the ground motionless — a 3 m/s breeze came out as a four-pixel
+ * mark. The fractional power keeps the ordering (fast air still visibly
+ * outruns slow air) while lifting the bottom of the range into view: at these
+ * numbers 3 m/s draws ~10px, 8 m/s ~16px, 50 m/s ~35px.
+ */
+export const WEATHER_WIND_REF = Number(readEnv('WEATHER_WIND_REF') ?? 18)
+export const WEATHER_WIND_GAMMA = Number(readEnv('WEATHER_WIND_GAMMA') ?? 0.45)
+/**
+ * Stroke width in pixels, including the dark rim.
+ *
+ * The rim is not decoration. A white hairline is legible over ocean and
+ * invisible over bright desert or cloud, and the exhibit shows all three at
+ * once; a dark edge under the bright core keeps the stroke readable on any
+ * background and antialiases an edge that was previously a hard quad boundary.
+ */
+export const WEATHER_WIND_WIDTH = Number(readEnv('WEATHER_WIND_WIDTH') ?? 2.6)
 /** Seconds of wall clock per keyframe in the loop, and the cross-fade share. */
 /**
  * Wall clock per keyframe. Slower now that the wind carries the motion.

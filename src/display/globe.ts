@@ -33,6 +33,8 @@ import {
   WEATHER_WIND_PARTICLES,
   WEATHER_WIND_TAIL,
   WEATHER_WIND_LIFE,
+  WEATHER_WIND_GAMMA,
+  WEATHER_WIND_REF,
   WEATHER_WIND_SPEED,
   WEATHER_WIND_WIDTH,
   WEATHER_CLOUD_OPACITY,
@@ -1602,6 +1604,12 @@ export class Globe {
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segs * 4 * 3), 3))
     geo.setAttribute('alpha', new THREE.BufferAttribute(new Float32Array(segs * 4), 1))
+    // Which edge of the stroke each corner is, so the fragment shader can put a
+    // dark rim under the bright core. It never changes, so it is uploaded once
+    // and costs nothing per frame.
+    const side = new Float32Array(segs * 4)
+    for (let i = 0; i < segs; i++) side.set([1, -1, 1, -1], i * 4)
+    geo.setAttribute('side', new THREE.BufferAttribute(side, 1))
     const idx = new Uint32Array(segs * 6)
     for (let i = 0; i < segs; i++) {
       const v = i * 4
@@ -1614,12 +1622,27 @@ export class Globe {
       depthWrite: false,
       uniforms: { uColor: { value: new THREE.Color(0.82, 0.92, 1.0) }, uOpacity: { value: 1 } },
       vertexShader: `
-        attribute float alpha; varying float vA;
-        void main() { vA = alpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+        attribute float alpha; attribute float side;
+        varying float vA; varying float vS;
+        void main() {
+          vA = alpha; vS = side;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
       `,
       fragmentShader: `
-        precision mediump float; uniform vec3 uColor; uniform float uOpacity; varying float vA;
-        void main() { gl_FragColor = vec4(uColor, vA * uOpacity); }
+        precision mediump float;
+        uniform vec3 uColor; uniform float uOpacity;
+        varying float vA; varying float vS;
+        void main() {
+          // Bright core, dark rim, soft outer edge. The rim is what keeps the
+          // stroke readable over bright desert and cloud as well as over dark
+          // ocean; the soft edge is what stops a hard quad boundary shimmering.
+          float d = abs(vS);
+          float core = 1.0 - smoothstep(0.10, 0.68, d);
+          float body = 1.0 - smoothstep(0.72, 1.0, d);
+          vec3 col = mix(vec3(0.03, 0.06, 0.12), uColor, core);
+          gl_FragColor = vec4(col, vA * uOpacity * body * mix(0.55, 1.0, core));
+        }
       `
     })
     this.windLines = new THREE.Mesh(geo, mat)
@@ -1692,8 +1715,23 @@ export class Globe {
       const lon = this.windLon[i]
       const lat = this.windLat[i]
       const [u, v] = this.windAt(lon, lat)
+      /*
+       * Compress the speed before it becomes a distance.
+       *
+       * Wind ten metres off the ground is mostly 2-8 m/s while a jet stream is
+       * sixty, so advecting in proportion spends the entire visual range on the
+       * jets: a 3 m/s breeze drew a four-pixel mark and read as nothing at all.
+       * Raising the speed to a fractional power about a reference wind keeps
+       * fast air visibly faster than slow air — which is the whole point of the
+       * layer — while giving the surface a stroke long enough to see.
+       */
+      const sp = Math.hypot(u, v)
+      const gain =
+        sp > 0.01
+          ? (WEATHER_WIND_REF * Math.pow(sp / WEATHER_WIND_REF, WEATHER_WIND_GAMMA)) / sp
+          : 0
       const cos = Math.max(0.15, Math.cos((lat * Math.PI) / 180))
-      const k = WEATHER_WIND_SPEED * dt
+      const k = WEATHER_WIND_SPEED * dt * gain
       let nlon = lon + ((u / 111320) * k) / cos
       let nlat = lat + (v / 110540) * k
       if (nlat > 85 || nlat < -85 || ++this.windAge[i] > this.windLife[i]) {
@@ -3381,7 +3419,10 @@ export class Globe {
         this.bgUniforms.uRainGamma.value = this.rainFit.gamma
       }
       this.wxTimes[layer] = usable.map((f) => f.time)
-      const hm = (t: number): string => new Date(t).toISOString().slice(11, 16)
+      // Local clock, like the caption. This line used to print UTC, which made
+      // a perfectly fresh window — 22:00 to 01:00 UTC, i.e. this morning in
+      // Korea — look like it had come from last night.
+      const hm = (t: number): string => new Date(t).toTimeString().slice(0, 5)
       const c = this.wxTimes.cloud
       const r = this.wxTimes.rain
       // Only once a series is all here. The hub sends frames one at a time, so
@@ -3394,7 +3435,7 @@ export class Globe {
       if (whole && c.length && r.length) {
         const same = c.length === r.length && c.every((t, i) => Math.abs(t - r[i]) <= 600_000)
         this.onNote?.(
-          `[weather] clocks: cloud [${c.map(hm).join(' ')}] rain [${r.map(hm).join(' ')}] ` +
+          `[weather] clocks (local): cloud [${c.map(hm).join(' ')}] rain [${r.map(hm).join(' ')}] ` +
             `-> ${same ? 'IN SYNC' : 'NOT IN SYNC'}`
         )
       }
