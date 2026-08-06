@@ -1729,8 +1729,24 @@ export class Globe {
       v = (90 - lat) / 180
     }
     const u = (((lon + 180) / 360) % 1 + 1) % 1
-    const rx = Math.max(1, Math.round(W / 360))
-    const ry = Math.max(1, Math.round(H / 180))
+    /*
+     * Half a degree either way, worked out per projection.
+     *
+     * Longitude is linear in both, so the column radius is the same. Latitude
+     * is not: a Mercator mosaic is SQUARE, covering 360 degrees of longitude
+     * and about 170 of latitude over the same number of pixels, and a degree
+     * of latitude near the observer is worth (360 / H) * cos(lat) rather than
+     * 180 / H. Reading it as equirectangular made the box more than twice as
+     * tall as intended -- roughly 190km by 340km once the row scale was wrong
+     * -- and the mean over an area that size dilutes a shower over the city
+     * into the dry ground around it.
+     */
+    const rx = Math.max(1, Math.round(W / 720))
+    const perRow =
+      frame.projection === 'mercator'
+        ? (360 / H) * Math.max(0.05, Math.cos((lat * Math.PI) / 180))
+        : 180 / H
+    const ry = Math.max(1, Math.round(0.5 / perRow))
     const x0 = Math.max(0, Math.min(W - 1, Math.round(u * W) - rx))
     const y0 = Math.max(0, Math.min(H - 1, Math.round(v * H) - ry))
     const w = Math.min(W - x0, rx * 2 + 1)

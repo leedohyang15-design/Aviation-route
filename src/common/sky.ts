@@ -28,10 +28,30 @@
  * disagree, and it stays right when the ramp is refitted to a different unit.
  */
 
-/** Thresholds in drawn strength, not millimetres — see the note above. */
-const RAIN_HEAVY = 0.5
-const RAIN_ON = 0.14
-const RAIN_TRACE = 0.02
+/*
+ * Thresholds in drawn strength, not millimetres — see the note above.
+ *
+ * They have to be worked out through the ramp rather than chosen, because the
+ * ramp is not linear. It runs 0.05..8 mm/h through a gamma of 0.35, so drawn
+ * strength s corresponds to 0.05 + s^(1/0.35) * 7.95 mm/h. The first attempt
+ * picked round-looking numbers directly and they came out as:
+ *
+ *     0.02 -> 0.050 mm/h   (the ramp's own floor: any rain at all)
+ *     0.14 -> 0.079 mm/h   (drizzle below what anyone would call rain)
+ *     0.50 -> 1.147 mm/h   (ordinary steady rain, announced as 세차게)
+ *
+ * — so on a nearly dry day the plate would have said it was raining, and
+ * ordinary rain would have been called heavy. Inverting the ramp for the rates
+ * actually meant gives the values below. For reference the measured world
+ * distribution is p90 0.20mm, p99 1.37mm, p99.9 3.73mm, so "세차게" lands
+ * around the wettest tenth of a percent of the planet, which is right.
+ *
+ * These assume the millimetre ramp in globe.ts. Change rainAnchors or
+ * rainGamma and these have to be re-derived.
+ */
+const RAIN_HEAVY = 0.783 // 4 mm/h
+const RAIN_ON = 0.475 // 1 mm/h
+const RAIN_TRACE = 0.17 // 0.1 mm/h
 
 export interface SkyLine {
   /** The sentence itself. */

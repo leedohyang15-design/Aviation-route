@@ -362,6 +362,27 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   }
 
   /**
+   * Everything the weather has, unless it is too old to be worth showing.
+   *
+   * Both places that hand weather to a window go through here -- the tab
+   * opening, and a window connecting or reloading mid-session. They were
+   * separate, and only one of them checked the age, so a reload in weather
+   * mode could still put the morning's sky on the dome after the tab itself
+   * had learned not to.
+   */
+  function currentWeatherFrames(): WeatherFrame[] {
+    const frames = weatherFrames()
+    if (!frames.length) return []
+    const age = Date.now() - frames.reduce((m, f) => Math.max(m, f.time), 0)
+    if (age <= WEATHER_CACHE_MAX_AGE_MS) return frames
+    opsLog(
+      `[weather] cached picture is ${Math.round(age / 60_000)}분 old — not shown; ` +
+        `waiting for the poll`
+    )
+    return []
+  }
+
+  /**
    * Hand the current picture to the windows when the tab opens.
    *
    * Not on this tick: each frame is several base64'd satellite images and
@@ -377,17 +398,8 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
    * that gap only exists in the first moments after boot.
    */
   function replayWeather(): void {
-    const frames = weatherFrames()
+    const frames = currentWeatherFrames()
     if (!frames.length) return
-    const newest = frames.reduce((m, f) => Math.max(m, f.time), 0)
-    const age = Date.now() - newest
-    if (age > WEATHER_CACHE_MAX_AGE_MS) {
-      opsLog(
-        `[weather] cached picture is ${Math.round(age / 60_000)}분 old — not shown; ` +
-          `waiting for the poll`
-      )
-      return
-    }
     setImmediate(() => {
       if (state.mode !== 'weather') return
       for (const f of frames) broadcast({ type: 'weather', frame: f })
@@ -416,7 +428,7 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     if (state.mode === 'weather') {
       // Whatever is already assembled, so a window that connects (or reloads)
       // mid-session doesn't sit on a bare earth until the next poll.
-      for (const frame of weatherFrames()) send(ws, { type: 'weather', frame })
+      for (const frame of currentWeatherFrames()) send(ws, { type: 'weather', frame })
     } else if (state.mode === 'satellite') {
       const sats = satSnapshot()
       send(ws, { type: 'satellites', data: sats, serverTime: Date.now() })
