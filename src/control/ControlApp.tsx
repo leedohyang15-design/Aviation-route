@@ -239,9 +239,19 @@ export function ControlApp(): JSX.Element {
   }
   // Orbit-class filter, mirroring how the aircraft category chips work.
   const hiddenOrbits = state.hiddenOrbits ?? []
+  /*
+   * Keyed on the CONTENT of the filter, not its identity.
+   *
+   * `state` is parsed from JSON, so this array is a new object on every
+   * broadcast — and the hub broadcasts the whole state on a view change, which
+   * a drag emits ten times a second. The memo was therefore re-filtering the
+   * whole catalogue ten times a second and handing MapView a new array each
+   * time, with nothing having changed on any of those passes.
+   */
+  const orbitsKey = hiddenOrbits.join(',')
   const satVisible = useMemo(
-    () => satellites.filter((s) => !hiddenOrbits.includes(s.orbit)),
-    [satellites, hiddenOrbits]
+    () => satellites.filter((s) => !orbitsKey.split(',').includes(s.orbit)),
+    [satellites, orbitsKey]
   )
   const perOrbit = useMemo(() => {
     const c: Record<OrbitClass, number> = { leo: 0, starlink: 0, meo: 0, geo: 0 }
@@ -277,9 +287,11 @@ export function ControlApp(): JSX.Element {
     }
     send({ type: 'select', icao24: a.icao24 })
   }
+  const filterKey = JSON.stringify(state.filter ?? null)
   const visible = useMemo(
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filterKey IS state.filter, by value
     () => applyFilter(aircraft, state.filter, state.selected),
-    [aircraft, state.filter, state.selected]
+    [aircraft, filterKey, state.selected]
   )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
@@ -291,7 +303,8 @@ export function ControlApp(): JSX.Element {
       counts[categoryKey(a.callsign, null, a.hasRoute)]++
     }
     return counts
-  }, [aircraft, state.filter, state.selected])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filterKey IS state.filter, by value
+  }, [aircraft, filterKey, state.selected])
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)

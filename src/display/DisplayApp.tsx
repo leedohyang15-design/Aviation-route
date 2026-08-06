@@ -51,14 +51,31 @@ export function DisplayApp(): JSX.Element {
   const mode = state.mode
   const isSat = mode === 'satellite'
   const isWeather = mode === 'weather'
+  const hiddenWx = (state.hiddenWeather ?? []).join(',')
+  const showCloud = isWeather && !hiddenWx.includes('cloud')
+  const showRain = isWeather && !hiddenWx.includes('rain')
+  const showWind = isWeather && !hiddenWx.includes('wind')
+  /*
+   * Keyed on the CONTENT of the filters, not on their identity.
+   *
+   * Same trap as the weather chips above: `state` is parsed from JSON, so
+   * `hiddenOrbits` and `filter` are new objects on every broadcast, and a drag
+   * broadcasts ten a second. These memos were therefore recomputing over the
+   * whole catalogue — thousands of satellites, thousands of aircraft — and
+   * handing the renderer a new array each time, which re-uploads the instance
+   * buffers. Nothing had actually changed on any of those passes.
+   */
+  const orbitsKey = (state.hiddenOrbits ?? []).join(',')
+  const filterKey = JSON.stringify(state.filter ?? null)
   const satVisible = useMemo(
-    () => satellites.filter((x) => !(state.hiddenOrbits ?? []).includes(x.orbit)),
-    [satellites, state.hiddenOrbits]
+    () => satellites.filter((x) => !orbitsKey.split(',').includes(x.orbit)),
+    [satellites, orbitsKey]
   )
 
   const visible = useMemo(
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filterKey IS state.filter, by value
     () => applyFilter(aircraft, state.filter, state.selected),
-    [aircraft, state.filter, state.selected]
+    [aircraft, filterKey, state.selected]
   )
   const sel = state.selected ? visible.find((a) => a.icao24 === state.selected) : null
   const d = detail && detail.icao24 === state.selected ? detail : null
@@ -198,16 +215,25 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => {
     globeRef.current?.setWeatherSeries(isWeather ? weather.rain : null, 'rain')
   }, [isWeather, weather.rain])
+  /*
+   * Booleans as dependencies, never the array itself.
+   *
+   * `state` arrives as JSON, so every field of it is a NEW object on every
+   * broadcast — and the hub broadcasts the whole state on a view change, which
+   * a drag emits ten times a second. Depending on `state.hiddenWeather` fired
+   * the wind effect on all of them, and that effect rebuilds a sixty-four tile
+   * mosaic and decodes it into a field. Turning the globe in weather mode was
+   * doing that continuously; pressing any chip did it once, which is the lag
+   * that was actually noticed.
+   */
   useEffect(() => {
-    const hidden = state.hiddenWeather ?? []
-    globeRef.current?.setWeatherVisible('cloud', isWeather && !hidden.includes('cloud'))
-    globeRef.current?.setWeatherVisible('rain', isWeather && !hidden.includes('rain'))
-  }, [isWeather, state.hiddenWeather])
+    globeRef.current?.setWeatherVisible('cloud', showCloud)
+    globeRef.current?.setWeatherVisible('rain', showRain)
+  }, [showCloud, showRain])
   useEffect(() => {
-    const on = !(state.hiddenWeather ?? []).includes('wind')
-    globeRef.current?.setWeatherSeries(isWeather && on ? weather.wind : null, 'wind')
-    globeRef.current?.setWindVisible(isWeather && on)
-  }, [isWeather, weather.wind, state.hiddenWeather])
+    globeRef.current?.setWeatherSeries(showWind ? weather.wind : null, 'wind')
+    globeRef.current?.setWindVisible(showWind)
+  }, [showWind, weather.wind])
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])

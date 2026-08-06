@@ -445,6 +445,8 @@ export class Globe {
   private windPx: Float32Array | null = null
   private windLines: THREE.Mesh | null = null
   private windLast = 0
+  /** The instant the current field was decoded from, so it is decoded once. */
+  private windFieldAt = 0
   private windWanted = false
   /**
    * Set to be told which moment the picture on screen is of.
@@ -3109,10 +3111,25 @@ export class Globe {
     if (layer === 'wind') {
       const head = usable[usable.length - 1]
       if (!head) return
+      /*
+       * The same instant we already decoded: nothing to do.
+       *
+       * Building this is not cheap — sixty-four tiles into a two-thousand
+       * pixel canvas, read back, then resampled into a lon/lat grid — and it
+       * was being asked for on every state broadcast, which a drag emits ten
+       * times a second. The callers have been fixed, but the guard belongs
+       * here too: this is the one place that knows the work is redundant, and
+       * a dependency array in a component three files away is a poor place to
+       * keep a promise about frame time.
+       */
+      if (this.windField && this.windFieldAt === head.time) return
       void this.buildWeatherTexture(head).then((tex) => {
         if (token !== slot.token) return
         const img = tex?.image as HTMLCanvasElement | undefined
-        if (img) this.decodeWindField(img, head)
+        if (img) {
+          this.decodeWindField(img, head)
+          this.windFieldAt = head.time
+        }
         tex?.dispose()
       })
       return
