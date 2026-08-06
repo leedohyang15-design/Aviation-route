@@ -1089,14 +1089,18 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   if (running) return
   running = true
   if (!latest.size) loadCache()
-  // Whatever we already have goes out, so switching to the tab never shows an
-  // empty earth while a poll is in flight — but NOT on this tick. Each frame is
-  // several base64'd satellite images, and stringifying them is the hub's only
-  // thread; doing it inline made the mode change itself arrive late.
-  const replay = weatherFrames()
-  setImmediate(() => {
-    for (const f of replay) if (!stopped) onFrame(f)
-  })
+  /*
+   * No replay here any more.
+   *
+   * This used to push everything it had at whoever was listening, which was
+   * right while the poll only ran with the tab open. It now runs from startup
+   * and stays running, so this function is called once, long before any window
+   * cares — and the second call, the one that actually accompanies a visitor
+   * pressing 날씨, returns at the `running` guard above without sending a
+   * thing. Handing the current picture to the windows is the hub's job, where
+   * it can also decide whether the picture is recent enough to be worth
+   * showing at all.
+   */
   // Say which source is live, every time. "Is MapTiler actually on?" is not a
   // question anybody should have to answer by looking at the picture.
   opsLog(

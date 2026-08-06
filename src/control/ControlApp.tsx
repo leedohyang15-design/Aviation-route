@@ -298,11 +298,8 @@ export function ControlApp(): JSX.Element {
   /* The moment being DRAWN, not the newest one received: the series ping-pongs
    * through four hourly steps, so the newest is on screen a quarter of the time. */
   const [shownAt, setShownAt] = useState<number | null>(null)
-  const [sky, setSky] = useState<{ rain: number | null; cloud: number | null }>({
-    rain: null,
-    cloud: null
-  })
-  const here = skyOverhead(sky.rain, sky.cloud)
+  const [rainHere, setRainHere] = useState<number | null>(null)
+  const here = skyOverhead(rainHere)
   /**
    * The newest anchor, as a plain value rather than state.
    *
@@ -525,7 +522,7 @@ export function ControlApp(): JSX.Element {
         onAttract={setAttract}
         onAnchor={anchorSink}
         onWeatherTime={setShownAt}
-        onLocalSky={setSky}
+        onLocalSky={setRainHere}
         pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}

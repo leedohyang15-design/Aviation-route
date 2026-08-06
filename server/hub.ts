@@ -17,7 +17,7 @@ import type {
 import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
 import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
-import { HUB_PORT } from '../src/shared/config'
+import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { withDeadline } from './http'
 import { opsLog } from './log'
 import {
@@ -318,18 +318,19 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     // spending credits on aircraft nobody was looking at.
     switch (next) {
       case 'satellite':
-        stopWeather()
         feed.setPaused(true, '위성 모드')
         startSatellites(onSatellites)
         break
       case 'weather':
         stopSatellites()
         feed.setPaused(true, '날씨 모드')
+        // Already running (see the warm start below); this is here so a manual
+        // stop could never leave the tab dead, and it costs nothing.
         startWeather(onWeather)
+        replayWeather()
         break
       default:
         stopSatellites()
-        stopWeather()
         feed.setPaused(false)
     }
   }
@@ -358,6 +359,39 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   const onWeather = (frame: WeatherFrame) => {
     if (state.mode !== 'weather') return
     broadcast({ type: 'weather', frame })
+  }
+
+  /**
+   * Hand the current picture to the windows when the tab opens.
+   *
+   * Not on this tick: each frame is several base64'd satellite images and
+   * stringifying them is the hub's only thread, so doing it inline made the
+   * tab a child had just pressed stay unlit for seconds and they pressed it
+   * again.
+   *
+   * A cache older than WEATHER_CACHE_MAX_AGE_MS is NOT replayed. Opening the
+   * exhibit in the afternoon used to put the morning's sky on the dome with
+   * the morning's hour beside it — correctly labelled and completely wrong as
+   * an answer to "what is it doing outside". A few seconds of "불러오는 중"
+   * while the poll lands is the better trade, and with the warm start below
+   * that gap only exists in the first moments after boot.
+   */
+  function replayWeather(): void {
+    const frames = weatherFrames()
+    if (!frames.length) return
+    const newest = frames.reduce((m, f) => Math.max(m, f.time), 0)
+    const age = Date.now() - newest
+    if (age > WEATHER_CACHE_MAX_AGE_MS) {
+      opsLog(
+        `[weather] cached picture is ${Math.round(age / 60_000)}분 old — not shown; ` +
+          `waiting for the poll`
+      )
+      return
+    }
+    setImmediate(() => {
+      if (state.mode !== 'weather') return
+      for (const f of frames) broadcast({ type: 'weather', frame: f })
+    })
   }
 
   feed.start(
@@ -507,6 +541,23 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
         return
     }
   }
+
+  /*
+   * The weather poll runs from startup and keeps running, whatever tab is up.
+   *
+   * It used to start when somebody pressed 날씨 and stop when they left, which
+   * meant the first thing a visitor saw was always the disk cache — whatever
+   * the sky looked like the last time the exhibit was open — while a fetch of
+   * several hundred tiles got under way behind it. Open the app at three in
+   * the afternoon and the dome showed nine in the morning.
+   *
+   * Keeping it warm is now nearly free: a poll whose keyframes have not
+   * changed costs one index request and downloads nothing, and the model
+   * publishes hourly, so the real fetch happens about once an hour whether or
+   * not anyone is looking. What that buys is a tab that is already current the
+   * instant it is pressed.
+   */
+  startWeather(onWeather)
 
   console.log(`[hub] listening on ws://127.0.0.1:${port} (feed: ${feed.source})`)
 

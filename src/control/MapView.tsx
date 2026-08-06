@@ -34,8 +34,8 @@ interface Props {
   /** The moment the weather picture on screen is of. The renderer owns the
    * animation, so it is the only thing that knows which step is being drawn. */
   onWeatherTime?: (t: number | null) => void
-  /** What the layers say is over the exhibit, 0..1 as drawn. */
-  onLocalSky?: (s: { rain: number | null; cloud: number | null }) => void
+  /** How hard it is raining over the exhibit, 0..1 as drawn. */
+  onLocalSky?: (rain: number | null) => void
   /** Filled with a function that re-arms the attract countdown, so taps on the
    * overlay UI (search, chips, tabs) count as operator activity too. */
   pokeRef?: React.MutableRefObject<(() => void) | null>
@@ -93,7 +93,7 @@ export function MapView({
     globe.onSelectedAnchor = (p) => onAnchorRef.current?.(p)
     if (pokeRef) pokeRef.current = () => globe.pokeActivity()
     globe.onWeatherTime = (t) => onWeatherTimeRef.current?.(t)
-    globe.onLocalSky = (s) => onLocalSkyRef.current?.(s)
+    globe.onLocalSky = (r) => onLocalSkyRef.current?.(r)
     globeRef.current = globe
     globe.start()
     // Refit/recenter whenever the map area changes size (also fixes the initial

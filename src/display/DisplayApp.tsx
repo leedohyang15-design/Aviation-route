@@ -46,11 +46,8 @@ export function DisplayApp(): JSX.Element {
    * the fallback for the moment before the first tick lands.
    */
   const [shownAt, setShownAt] = useState<number | null>(null)
-  /* What the sky is doing over the exhibit, read off the drawn picture. */
-  const [sky, setSky] = useState<{ rain: number | null; cloud: number | null }>({
-    rain: null,
-    cloud: null
-  })
+  /* How hard it is raining over the exhibit, read off the drawn picture. */
+  const [rainHere, setRainHere] = useState<number | null>(null)
   const mode = state.mode
   const isSat = mode === 'satellite'
   const isWeather = mode === 'weather'
@@ -94,7 +91,7 @@ export function DisplayApp(): JSX.Element {
        * in, so that goes in the slot the dome makes readable from across a
        * room; the hour drops to the small line beneath it.
        */
-      const here = skyOverhead(sky.rain, sky.cloud)
+      const here = skyOverhead(rainHere)
       // Text only, no icon. The plate is drawn as canvas text rather than as
       // HTML, so an emoji here depends on a font fallback nobody has verified
       // on the exhibit machine, and a tofu box on the dome is worse than a
@@ -149,7 +146,7 @@ export function DisplayApp(): JSX.Element {
       return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
     return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
-  }, [isSat, isWeather, shownAt, weatherAt, sky, state.selected, satDetail, sel, d])
+  }, [isSat, isWeather, shownAt, weatherAt, rainHere, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -184,7 +181,7 @@ export function DisplayApp(): JSX.Element {
     // would reach the same numbers, so wiring both would double every line.
     g.onNote = (text) => send({ type: 'note', text })
     g.onWeatherTime = setShownAt
-    g.onLocalSky = setSky
+    g.onLocalSky = setRainHere
   }, [send])
 
   /*

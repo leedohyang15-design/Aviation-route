@@ -6,42 +6,47 @@
  * place that counts. The globe is impressive; "지금 우리 머리 위엔 비가 와요" is
  * what makes it about them.
  *
- * Both numbers are the layer's strength as the shader DRAWS it, 0..1, sampled
- * from the same mosaic over the observer. Reading them off the picture rather
- * than off millimetres is what stops the words and the colours disagreeing:
- * if Korea is under blue on screen, this says it is raining, and it goes on
- * being true when the ramp is refitted to a different unit.
+ * RAIN ONLY, and that is a correctness decision rather than a design one.
+ *
+ * The cloud picture is five geostationary sensors merged, and to make them
+ * agree each one is stretched against ITS OWN distribution — the median of
+ * what that satellite can see becomes 0 and its 98th percentile becomes 1
+ * (`mergePatches` in globe.ts). Half of every sensor's view is therefore zero
+ * by construction. That is exactly right for drawing a picture where five
+ * cameras look like one, and completely wrong as a measurement: a zero means
+ * "less cloud than the average of everything this satellite happens to be
+ * pointed at this hour", not "no cloud". Saying 구름 한 점 없어요 on the back
+ * of it would be inventing a fact.
+ *
+ * Rain has no such problem. It arrives as model values in a declared unit,
+ * decoded from the pixel and put through a ramp calibrated to that unit, so it
+ * means the same thing everywhere on the globe. It is the one thing here the
+ * exhibit can honestly assert about a single place.
+ *
+ * The number is the layer's strength as the shader DRAWS it, 0..1, sampled
+ * from the same mosaic over the observer — so the words and the colours cannot
+ * disagree, and it stays right when the ramp is refitted to a different unit.
  */
 
 /** Thresholds in drawn strength, not millimetres — see the note above. */
 const RAIN_HEAVY = 0.5
 const RAIN_ON = 0.14
 const RAIN_TRACE = 0.02
-const CLOUD_FULL = 0.6
-const CLOUD_SOME = 0.25
 
 export interface SkyLine {
   /** The sentence itself. */
   text: string
-  /** One character that carries it across a room, for the dome plate. */
+  /** One character that carries it across a room, for the control screen. */
   icon: string
 }
 
-export function skyOverhead(rain: number | null, cloud: number | null): SkyLine | null {
-  // Rain outranks cloud: it is raining under a cloud, and "구름이 많아요" while
-  // water is falling on the roof reads as the exhibit not knowing.
-  if (rain != null) {
-    if (rain >= RAIN_HEAVY) return { text: '지금 우리 머리 위엔 비가 세차게 내려요', icon: '🌧' }
-    if (rain >= RAIN_ON) return { text: '지금 우리 머리 위엔 비가 내리고 있어요', icon: '🌧' }
-    if (rain >= RAIN_TRACE) return { text: '지금 우리 머리 위엔 빗방울이 조금 떨어져요', icon: '🌦' }
-  }
-  if (cloud != null) {
-    if (cloud >= CLOUD_FULL) return { text: '지금 우리 머리 위엔 구름이 잔뜩 끼었어요', icon: '☁' }
-    if (cloud >= CLOUD_SOME) return { text: '지금 우리 머리 위엔 구름이 조금 있어요', icon: '⛅' }
-    // Only claim a clear sky when the cloud layer actually answered. A null
-    // cloud with no rain means nothing arrived, which is not the same as fine
-    // weather and must not be reported as it.
-    return { text: '지금 우리 머리 위엔 구름 한 점 없어요', icon: '☀' }
-  }
-  return null
+export function skyOverhead(rain: number | null): SkyLine | null {
+  // Nothing decoded yet, or no data over us: say nothing. Silence is the only
+  // honest output here, and an exhibit that occasionally omits a line reads far
+  // better than one that occasionally lies.
+  if (rain == null) return null
+  if (rain >= RAIN_HEAVY) return { text: '지금 우리 머리 위엔 비가 세차게 내려요', icon: '🌧' }
+  if (rain >= RAIN_ON) return { text: '지금 우리 머리 위엔 비가 내리고 있어요', icon: '🌧' }
+  if (rain >= RAIN_TRACE) return { text: '지금 우리 머리 위엔 빗방울이 조금 떨어져요', icon: '🌦' }
+  return { text: '지금 우리 머리 위엔 비가 오지 않아요', icon: '🌤' }
 }

@@ -287,6 +287,18 @@ export const WEATHER_INDEX_URL =
  * same picture.
  */
 export const WEATHER_POLL_MS = Number(readEnv('WEATHER_POLL_MS') ?? 5 * 60_000)
+/**
+ * How old the disk cache may be and still be worth putting on screen.
+ *
+ * The cache exists so an offline start is not a blank earth, and that is worth
+ * having. What it must not do is present three-hour-old weather as the sky:
+ * open the exhibit at three in the afternoon and the plate said nine in the
+ * morning, which is not a stale picture so much as a wrong one. The model
+ * publishes hourly, so a live series is at most an hour old plus the
+ * publication lag; ninety minutes is clear of that and far short of the gap
+ * that made this obvious.
+ */
+export const WEATHER_CACHE_MAX_AGE_MS = Number(readEnv('WEATHER_CACHE_MAX_AGE_MS') ?? 90 * 60_000)
 
 /**
  * Tile pyramid level. z=3 is an 8x8 grid — 64 tiles, 2048x2048 once assembled,

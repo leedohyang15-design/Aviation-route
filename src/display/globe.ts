@@ -451,10 +451,15 @@ export class Globe {
    * at startup. While it is assembling the newest step is held still.
    */
   private wxWhole: Record<'cloud' | 'rain', boolean> = { cloud: false, rain: false }
-  /** What the sky is doing over the exhibit, per layer, 0..1 as drawn. */
-  private localSky: { rain: number | null; cloud: number | null } = { rain: null, cloud: null }
-  /** Set to be told what is overhead, so the plate can say it in words. */
-  onLocalSky: ((s: { rain: number | null; cloud: number | null }) => void) | null = null
+  /**
+   * Set to be told how hard it is raining over the exhibit, 0..1 as drawn.
+   *
+   * Rain only. The cloud mosaic is stretched against each sensor's own
+   * distribution so five satellites look like one picture, which puts half of
+   * every sensor's view at zero by construction — fine for drawing, useless as
+   * a measurement, and no basis for telling a child the sky is clear.
+   */
+  onLocalSky: ((rain: number | null) => void) | null = null
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
@@ -1761,23 +1766,21 @@ export class Globe {
       }
     } else {
       /*
-       * Cloudiness is the RED channel. Alpha is which sensor saw this pixel.
+       * A painted rain layer: the strength is in the ALPHA, not the colour.
        *
-       * mergePatches writes the normalised cloud value into all three colour
-       * channels and the summed sensor weight into alpha, so alpha zero means
-       * "no satellite looks here" and not "no cloud". Multiplying the two
-       * together -- which is what the shader does, because it also wants the
-       * limb of each disc to fade out -- would report a gap in coverage as a
-       * clear sky, and "구름 한 점 없어요" over a place nobody photographed is
-       * the one kind of mistake this must not make in front of a child.
+       * Only the rain reaches this function, and a rain source that is not
+       * data tiles is somebody's picture — their palette is nearly one colour
+       * from a drizzle to a downpour, and what climbs with intensity is the
+       * opacity. So this mirrors the shader's painted-rain branch exactly. It
+       * is a proxy rather than a measurement, and the sentence it feeds is
+       * hedged accordingly by the thresholds being drawn strength.
        */
       const smooth = (e0: number, e1: number, x: number): number => {
         const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
         return t * t * (3 - 2 * t)
       }
       for (let p = 0; p < px.length; p += 4) {
-        if (px[p + 3] < 8) continue
-        sum += smooth(0.05, 0.78, px[p] / 255)
+        sum += smooth(0.04, 0.4, px[p + 3] / 255)
         n++
       }
     }
@@ -3198,11 +3201,10 @@ export class Globe {
        * the words and the picture can never disagree: if Korea is under blue
        * on screen the plate says it is raining.
        */
-      const last = usable[usable.length - 1]
-      const lastCanvas = slot.byTime?.get(last.time)?.image as HTMLCanvasElement | undefined
-      if (lastCanvas) {
-        this.localSky = { ...this.localSky, [layer]: this.sampleSky(lastCanvas, last) }
-        this.onLocalSky?.(this.localSky)
+      if (layer === 'rain') {
+        const last = usable[usable.length - 1]
+        const lastCanvas = slot.byTime?.get(last.time)?.image as HTMLCanvasElement | undefined
+        if (lastCanvas) this.onLocalSky?.(this.sampleSky(lastCanvas, last))
       }
       // Measure the finished picture a few seconds after the last series
       // lands, once per poll.
