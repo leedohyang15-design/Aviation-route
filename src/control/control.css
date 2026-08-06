@@ -569,6 +569,36 @@ body,
   color: var(--muted);
 }
 
+/* What the sky is doing HERE. The count line above it describes a picture of
+   the planet; this is the one place on that picture the visitor is standing in,
+   which for a child on a school trip is the only part that is about them. Its
+   own line, because it is a sentence rather than a figure. */
+.ctrl-info .here-sky {
+  display: block;
+  margin-top: 4px;
+  font-size: clamp(13px, 1.05vw, 17px);
+  font-weight: 700;
+  color: #9fe6ff;
+  letter-spacing: -0.01em;
+}
+
+/* Wind key. No colour bar, because the wind carries its scale in the length of
+   each stroke rather than in a colour — so the key is the sentence that says
+   so. Shown only while the layer is on, like the rain key. */
+.ctrl-info .wind-key {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(16, 24, 43, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #c8d6e8;
+  pointer-events: none;
+}
+
 /* Radar intensity key. Sits under the weather chips, and only while rain is
    actually on screen — a key for something invisible is just clutter. */
 .ctrl-info .rain-key {

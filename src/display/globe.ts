@@ -33,6 +33,8 @@ import {
   WEATHER_WIND_PARTICLES,
   WEATHER_WIND_TAIL,
   WEATHER_WIND_LIFE,
+  OBSERVER_LAT,
+  OBSERVER_LON,
   WEATHER_WIND_GAMMA,
   WEATHER_WIND_REF,
   WEATHER_WIND_SPEED,
@@ -439,6 +441,20 @@ export class Globe {
    * data had not changed in the meantime.
    */
   private wxVisible: Record<'cloud' | 'rain', boolean> = { cloud: true, rain: true }
+  /**
+   * Whether a layer's series is all here yet.
+   *
+   * The hub sends frames one at a time, so a series grows 1, 2, 3, 4 over a
+   * second or so. Animating each of those is animating a different loop each
+   * time -- two steps, then three, then four, each with its own phase -- and
+   * the caption chased it, which is what flashed "7 8 9 10" across the plate
+   * at startup. While it is assembling the newest step is held still.
+   */
+  private wxWhole: Record<'cloud' | 'rain', boolean> = { cloud: false, rain: false }
+  /** What the sky is doing over the exhibit, per layer, 0..1 as drawn. */
+  private localSky: { rain: number | null; cloud: number | null } = { rain: null, cloud: null }
+  /** Set to be told what is overhead, so the plate can say it in words. */
+  onLocalSky: ((s: { rain: number | null; cloud: number | null }) => void) | null = null
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
@@ -1680,6 +1696,92 @@ export class Globe {
     }
     pos.needsUpdate = true
     al.needsUpdate = true
+  }
+
+  /**
+   * How strong a layer is over the exhibit, 0..1, or null where there is no data.
+   *
+   * Read the way the fragment shader reads it, from the same mosaic canvas, so
+   * a sentence on the plate and the colour under Korea always agree. Anything
+   * else would eventually put "비가 내리고 있어요" over a clear sky, which on a
+   * museum floor is worse than saying nothing.
+   *
+   * A box about a degree across rather than one pixel: a single dropped sample
+   * at a coastline should not decide what the whole city is told.
+   */
+  private sampleSky(canvas: HTMLCanvasElement, frame: WeatherFrame): number | null {
+    const W = canvas.width
+    const H = canvas.height
+    if (!W || !H) return null
+    const lat = OBSERVER_LAT
+    const lon = OBSERVER_LON
+    let v: number
+    if (frame.projection === 'mercator') {
+      if (Math.abs(lat) > 85) return null
+      const r = (lat * Math.PI) / 180
+      v = 0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI)
+    } else {
+      v = (90 - lat) / 180
+    }
+    const u = (((lon + 180) / 360) % 1 + 1) % 1
+    const rx = Math.max(1, Math.round(W / 360))
+    const ry = Math.max(1, Math.round(H / 180))
+    const x0 = Math.max(0, Math.min(W - 1, Math.round(u * W) - rx))
+    const y0 = Math.max(0, Math.min(H - 1, Math.round(v * H) - ry))
+    const w = Math.min(W - x0, rx * 2 + 1)
+    const h = Math.min(H - y0, ry * 2 + 1)
+    let img: ImageData
+    try {
+      img = canvas.getContext('2d')!.getImageData(x0, y0, w, h)
+    } catch {
+      return null // a tainted canvas: say nothing rather than guess
+    }
+    const px = img.data
+    let sum = 0
+    let n = 0
+    if (frame.blend === 'data' && frame.decode) {
+      const d = frame.decode
+      const order = d.channels.toLowerCase().replace(/[^rgb]/g, '') || 'r'
+      const wt: Record<string, number> = { r: 0, g: 0, b: 0 }
+      for (let i = 0; i < order.length; i++) wt[order[i]] = 256 ** (order.length - 1 - i)
+      const packed = 256 ** order.length - 1
+      const scale = this.bgUniforms.uRainScale.value as THREE.Vector2
+      const gamma = this.bgUniforms.uRainGamma.value as number
+      for (let p = 0; p < px.length; p += 4) {
+        if (px[p + 3] < 8) continue // alpha 0 is "no data", not "no rain"
+        const raw = (px[p] * wt.r + px[p + 1] * wt.g + px[p + 2] * wt.b) / packed
+        const val = d.min + raw * (d.max - d.min)
+        // Exactly the shader's two lines: normalise between the ramp anchors,
+        // then the gamma that turns drizzle into a colour instead of a
+        // rounding error. Working in the ramp rather than in millimetres also
+        // means this stays right when the ramp is refitted to the data.
+        const lin = Math.min(1, Math.max(0, (val - scale.x) / Math.max(scale.y - scale.x, 1e-4)))
+        sum += Math.pow(lin, gamma)
+        n++
+      }
+    } else {
+      /*
+       * Cloudiness is the RED channel. Alpha is which sensor saw this pixel.
+       *
+       * mergePatches writes the normalised cloud value into all three colour
+       * channels and the summed sensor weight into alpha, so alpha zero means
+       * "no satellite looks here" and not "no cloud". Multiplying the two
+       * together -- which is what the shader does, because it also wants the
+       * limb of each disc to fade out -- would report a gap in coverage as a
+       * clear sky, and "구름 한 점 없어요" over a place nobody photographed is
+       * the one kind of mistake this must not make in front of a child.
+       */
+      const smooth = (e0: number, e1: number, x: number): number => {
+        const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
+        return t * t * (3 - 2 * t)
+      }
+      for (let p = 0; p < px.length; p += 4) {
+        if (px[p + 3] < 8) continue
+        sum += smooth(0.05, 0.78, px[p] / 255)
+        n++
+      }
+    }
+    return n ? sum / n : null
   }
 
   /**
@@ -3086,6 +3188,22 @@ export class Globe {
       // for a second or two — three false alarms per poll, and the true "IN
       // SYNC" at the end was the easiest line to miss.
       const whole = usable.length >= (head.steps ?? usable.length)
+      this.wxWhole[layer as 'cloud' | 'rain'] = whole
+      /*
+       * What is over the exhibit right now, read off the newest step.
+       *
+       * A world map answers "what is the weather doing" everywhere except the
+       * one place a visitor is standing in, and for a child that is the only
+       * place that counts. The value is taken as the SHADER would draw it, so
+       * the words and the picture can never disagree: if Korea is under blue
+       * on screen the plate says it is raining.
+       */
+      const last = usable[usable.length - 1]
+      const lastCanvas = slot.byTime?.get(last.time)?.image as HTMLCanvasElement | undefined
+      if (lastCanvas) {
+        this.localSky = { ...this.localSky, [layer]: this.sampleSky(lastCanvas, last) }
+        this.onLocalSky?.(this.localSky)
+      }
       // Measure the finished picture a few seconds after the last series
       // lands, once per poll.
       if (whole && c.length && r.length) {
@@ -3174,11 +3292,13 @@ export class Globe {
       const b = layer === 'cloud' ? 'uCloudB' : 'uRainB'
       const m = layer === 'cloud' ? 'uCloudMix' : 'uRainMix'
       if (!tex.length) continue
-      if (tex.length === 1) {
-        this.bgUniforms[a].value = tex[0]
-        this.bgUniforms[b].value = tex[0]
+      if (tex.length === 1 || !this.wxWhole[layer as 'cloud' | 'rain']) {
+        // Newest, held. A half-arrived series has no loop worth playing.
+        const j = tex.length - 1
+        this.bgUniforms[a].value = tex[j]
+        this.bgUniforms[b].value = tex[j]
         this.bgUniforms[m].value = 0
-        if (pref && times.length) shown = times[0]
+        if (pref && times[j] != null) shown = times[j]
         continue
       }
       /*

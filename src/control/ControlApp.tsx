@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
+import { skyOverhead } from '../common/sky'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
@@ -297,6 +298,11 @@ export function ControlApp(): JSX.Element {
   /* The moment being DRAWN, not the newest one received: the series ping-pongs
    * through four hourly steps, so the newest is on screen a quarter of the time. */
   const [shownAt, setShownAt] = useState<number | null>(null)
+  const [sky, setSky] = useState<{ rain: number | null; cloud: number | null }>({
+    rain: null,
+    cloud: null
+  })
+  const here = skyOverhead(sky.rain, sky.cloud)
   /**
    * The newest anchor, as a plain value rather than state.
    *
@@ -519,6 +525,7 @@ export function ControlApp(): JSX.Element {
         onAttract={setAttract}
         onAnchor={anchorSink}
         onWeatherTime={setShownAt}
+        onLocalSky={setSky}
         pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
@@ -542,6 +549,8 @@ export function ControlApp(): JSX.Element {
                     {new Date((shownAt ?? weatherAt) as number).toTimeString().slice(0, 5)}
                   </b>{' '}
                   기준 지구의 하늘
+                  {/* The one place the world map cannot answer for: here. */}
+                  {here && <span className="here-sky">{here.icon} {here.text}</span>}
                 </>
               )}
             </>
@@ -637,6 +646,12 @@ export function ControlApp(): JSX.Element {
                 <i />
                 <span>강한 비</span>
               </div>
+            )}
+            {/* Wind carries its scale in the LENGTH of each stroke, which is not
+                a convention anybody arrives knowing. One line beats a colour
+                bar here, because there is no colour to put on one. */}
+            {!hiddenWeather.includes('wind') && (
+              <div className="wind-key">선이 길수록 바람이 빨라요</div>
             )}
           </div>
         ) : isSat ? (
