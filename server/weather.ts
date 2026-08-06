@@ -410,6 +410,30 @@ async function fetchMaptilerLayer(
   )
 
   /*
+   * The same moment as last time means there is nothing to download.
+   *
+   * The model publishes on the hour and this polls every five minutes, so
+   * eleven polls in twelve ask for a window that is already on screen. Each of
+   * those fetched the entire series again — sixty-four tiles per step, per
+   * layer — and then threw it away at the identical-timestamp check in the
+   * caller. The check belongs here, in front of the bytes rather than behind
+   * them.
+   *
+   * The comparison is on the NEWEST moment alone, not the whole list, because
+   * a series that hit its byte budget is shorter than the window that was
+   * asked for; the window is anchored at its newest step, so if that has not
+   * moved neither has anything behind it.
+   */
+  const have = latest.get(layer)
+  const newest = Date.parse(wanted[wanted.length - 1]?.timestamp ?? '')
+  if (have?.length && Number.isFinite(newest) && seriesTime(have) === newest) {
+    opsLog(
+      `[weather] ${layer}: still ${clock(newest)} local — nothing new published, no tiles fetched`
+    )
+    return have
+  }
+
+  /*
    * Nearest to now first, and stop when the series has spent its byte budget.
    *
    * A two-channel variable packs its value across a high and a low byte, and
@@ -689,6 +713,20 @@ async function fetchGibsGlobalCloud(
  *   that happen to be on screen together.
  */
 async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[] | null> {
+  /*
+   * Following a timeline that has not moved: there is nothing to go and get.
+   *
+   * The per-step cache below already stops the archive pictures being fetched
+   * twice, but the LIVE disc set is pulled at the top of every poll and then
+   * discarded whenever a shared timeline is in force — five sensor images
+   * every five minutes, to be thrown away. When the rain's newest instant is
+   * the one the cloud is already built on, the whole trip can be skipped.
+   */
+  const had = latest.get('cloud')
+  if (timeline?.length && had?.length && seriesTime(had) === timeline[timeline.length - 1]) {
+    opsLog('[weather] cloud: rain is on the same instants as last poll — nothing fetched')
+    return had
+  }
   /*
    * Each disc is requested over ITS OWN patch of the globe, not the whole one.
    *

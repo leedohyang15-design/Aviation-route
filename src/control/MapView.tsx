@@ -113,17 +113,24 @@ export function MapView({
   useEffect(() => {
     if (mode === 'satellite' && satellites) globeRef.current?.setSatellites(satellites)
   }, [mode, satellites])
-  const showCloud = mode === 'weather' && !(hiddenWeather ?? []).includes('cloud')
-  const showRain = mode === 'weather' && !(hiddenWeather ?? []).includes('rain')
+  const isWeather = mode === 'weather'
+  const showCloud = isWeather && !(hiddenWeather ?? []).includes('cloud')
+  const showRain = isWeather && !(hiddenWeather ?? []).includes('rain')
+  // The series follows the MODE and the chip only flips a uniform, so toggling
+  // a layer costs a frame instead of four mosaic rebuilds.
   useEffect(
-    () => globeRef.current?.setWeatherSeries(showCloud ? weather?.cloud ?? null : null, 'cloud'),
-    [showCloud, weather?.cloud]
+    () => globeRef.current?.setWeatherSeries(isWeather ? weather?.cloud ?? null : null, 'cloud'),
+    [isWeather, weather?.cloud]
   )
   useEffect(
-    () => globeRef.current?.setWeatherSeries(showRain ? weather?.rain ?? null : null, 'rain'),
-    [showRain, weather?.rain]
+    () => globeRef.current?.setWeatherSeries(isWeather ? weather?.rain ?? null : null, 'rain'),
+    [isWeather, weather?.rain]
   )
-  const showWind = mode === 'weather' && !(hiddenWeather ?? []).includes('wind')
+  useEffect(() => {
+    globeRef.current?.setWeatherVisible('cloud', showCloud)
+    globeRef.current?.setWeatherVisible('rain', showRain)
+  }, [showCloud, showRain])
+  const showWind = isWeather && !(hiddenWeather ?? []).includes('wind')
   useEffect(() => {
     globeRef.current?.setWeatherSeries(showWind ? weather?.wind ?? null : null, 'wind')
     globeRef.current?.setWindVisible(showWind)

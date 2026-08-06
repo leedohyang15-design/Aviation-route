@@ -428,6 +428,17 @@ export class Globe {
   onWeatherTime: ((t: number | null) => void) | null = null
   /** The moment last reported, so the callback fires on change and not per frame. */
   private wxShown: number | null = null
+  /**
+   * Which picture layers the operator has on.
+   *
+   * Kept apart from whether a series is LOADED. A chip used to hand this a
+   * null series, which disposed all four textures and cleared the decode
+   * cache, so turning it back on rebuilt four mosaics -- sixty-four tiles each,
+   * resampled into a two-thousand-pixel canvas and read back. That is a
+   * second of frozen picture for a toggle that should cost nothing, and the
+   * data had not changed in the meantime.
+   */
+  private wxVisible: Record<'cloud' | 'rain', boolean> = { cloud: true, rain: true }
   /** The moments each layer is currently showing, for the clock report. */
   private wxTimes: Record<WeatherLayer, number[]> = { cloud: [], rain: [], wind: [] }
   private iCenterLon = 127.5
@@ -1669,6 +1680,20 @@ export class Globe {
     }
     pos.needsUpdate = true
     al.needsUpdate = true
+  }
+
+  /**
+   * Show or hide a picture layer without unloading it.
+   *
+   * One uniform, so a chip is a frame rather than a rebuild. The series stays
+   * decoded on the GPU while it is off; a layer only gives its memory back
+   * when the exhibit leaves weather mode, which is when setWeatherSeries is
+   * handed a null series.
+   */
+  setWeatherVisible(layer: 'cloud' | 'rain', on: boolean): void {
+    this.wxVisible[layer] = on
+    const has = layer === 'cloud' ? 'uHasCloud' : 'uHasRain'
+    this.bgUniforms[has].value = on && this.wx[layer].textures.length ? 1 : 0
   }
 
   /**
@@ -3026,11 +3051,11 @@ export class Globe {
       const head = usable[0]
       const isData = head.blend === 'data'
       if (layer === 'cloud') {
-        this.bgUniforms.uHasCloud.value = 1
+        this.bgUniforms.uHasCloud.value = this.wxVisible.cloud ? 1 : 0
         this.bgUniforms.uCloudMerc.value = head.projection === 'mercator' ? 1 : 0
         this.bgUniforms.uCloudData.value = isData ? 1 : 0
       } else {
-        this.bgUniforms.uHasRain.value = 1
+        this.bgUniforms.uHasRain.value = this.wxVisible.rain ? 1 : 0
         this.bgUniforms.uRainMerc.value = head.projection === 'mercator' ? 1 : 0
         this.bgUniforms.uRainData.value = isData ? 1 : 0
       }

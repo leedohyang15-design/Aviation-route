@@ -162,16 +162,25 @@ export function DisplayApp(): JSX.Element {
     g.onWeatherTime = setShownAt
   }, [send])
 
-  // Each layer is hung on or taken off the earth on its own, so a chip toggles
-  // instantly instead of waiting for the next poll.
+  /*
+   * Loading and showing are separate.
+   *
+   * The series follows the MODE, so leaving weather gives the textures back;
+   * the chip only flips a uniform. Tying the two together meant a chip threw
+   * away four decoded mosaics and rebuilt them on the way back, which is a
+   * frozen second for a toggle that changed no data.
+   */
   useEffect(() => {
-    const on = !(state.hiddenWeather ?? []).includes('cloud')
-    globeRef.current?.setWeatherSeries(isWeather && on ? weather.cloud : null, 'cloud')
-  }, [isWeather, weather.cloud, state.hiddenWeather])
+    globeRef.current?.setWeatherSeries(isWeather ? weather.cloud : null, 'cloud')
+  }, [isWeather, weather.cloud])
   useEffect(() => {
-    const on = !(state.hiddenWeather ?? []).includes('rain')
-    globeRef.current?.setWeatherSeries(isWeather && on ? weather.rain : null, 'rain')
-  }, [isWeather, weather.rain, state.hiddenWeather])
+    globeRef.current?.setWeatherSeries(isWeather ? weather.rain : null, 'rain')
+  }, [isWeather, weather.rain])
+  useEffect(() => {
+    const hidden = state.hiddenWeather ?? []
+    globeRef.current?.setWeatherVisible('cloud', isWeather && !hidden.includes('cloud'))
+    globeRef.current?.setWeatherVisible('rain', isWeather && !hidden.includes('rain'))
+  }, [isWeather, state.hiddenWeather])
   useEffect(() => {
     const on = !(state.hiddenWeather ?? []).includes('wind')
     globeRef.current?.setWeatherSeries(isWeather && on ? weather.wind : null, 'wind')
