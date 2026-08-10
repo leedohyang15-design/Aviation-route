@@ -35,6 +35,18 @@ export interface MarsLive {
   drivenKm: number | null
   /** How far from its landing site, km — the figure a child can picture. */
   fromLandingKm: number
+  /**
+   * The whole traverse, thinned, as [lon, lat] in renderer degrees.
+   *
+   * It cannot go on the globe: Curiosity's wanderings span about 21km, which
+   * is 1.6 pixels at world view and 16 at the deepest zoom the map allows, and
+   * reaching 600 would need 364x — at which point one pixel of the 23,040-wide
+   * Mars map covers 26 screen pixels and the ground under the line is mush.
+   * The path has its own scale, so it gets its own frame: the card draws it
+   * with a scale bar and no basemap at all, which is how every published
+   * traverse map reads anyway.
+   */
+  path: [number, number][]
   /** When this was fetched, epoch ms. */
   at: number
 }
@@ -68,6 +80,18 @@ function greatCircleKm(aLon: number, aLat: number, bLon: number, bLat: number): 
     Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLon / 2) ** 2
   return 2 * MARS_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(s)))
 }
+
+/**
+ * How many points of the traverse to keep.
+ *
+ * The files carry 1,371 and 691 waypoints. Drawn into a card 260 pixels wide
+ * that is five points per pixel, so most of them are describing a shape nobody
+ * can see — and every one of them is bytes over the socket and bytes in the
+ * disk cache. Thinning by taking every Nth keeps the shape because a rover's
+ * track is dense ALONG its path rather than clustered; the first and last are
+ * always kept, so the landing site and today are exact.
+ */
+const MAX_PATH = 400
 
 /** The first key that exists and holds a finite number. */
 function pickNumber(props: Record<string, unknown>, names: string[]): { key: string; value: number } | null {
@@ -180,13 +204,44 @@ export function parseWaypoints(json: unknown, id: string): MarsLive | null {
     return null
   }
 
+  /*
+   * The track, in sol order and thinned.
+   *
+   * Sorted rather than trusted: the file's order is whatever the publisher's
+   * pipeline emitted, and a path drawn in the wrong order is not a slower
+   * version of the right one, it is a scribble. Points further from the
+   * landing site than any rover has ever driven are dropped here as well — one
+   * bad row would otherwise set the bounding box and squash the real path into
+   * a dot in the corner.
+   */
+  const track: [number, number][] = feats
+    .map((f) => {
+      const s = pickNumber(f?.properties ?? {}, ['sol', 'sol_number', 'solnumber'])
+      const c = f?.geometry?.coordinates as number[] | undefined
+      return { sol: s?.value ?? -1, c }
+    })
+    .filter((t) => t.sol >= 0 && Array.isArray(t.c) && t.c.length >= 2)
+    .sort((a, b) => a.sol - b.sol)
+    .map((t) => [eastToRendererLon(Number(t.c![0])), Number(t.c![1])] as [number, number])
+    .filter(
+      ([x, y]) =>
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        greatCircleKm(home, homeLat, x, y) <= MARS_MAX_DRIFT_KM
+    )
+  const step = Math.max(1, Math.ceil(track.length / MAX_PATH))
+  const path = track.filter((_, i) => i % step === 0)
+  if (track.length && path[path.length - 1] !== track[track.length - 1]) {
+    path.push(track[track.length - 1])
+  }
+
   opsLog(
     `[mars] ${id}: sol ${bestSol} (from "${solKey}"), ` +
       `${driven == null ? 'no odometry' : `${driven.toFixed(2)}km (from "${distKey}")`}, ` +
       `${lat.toFixed(4)},${lon.toFixed(4)} — ${fromLandingKm.toFixed(1)}km from where it landed, ` +
-      `${feats.length} waypoints`
+      `${feats.length} waypoints → ${path.length} drawn`
   )
-  return { id, lon, lat, sol: bestSol, drivenKm: driven, fromLandingKm, at: Date.now() }
+  return { id, lon, lat, sol: bestSol, drivenKm: driven, fromLandingKm, path, at: Date.now() }
 }
 
 function loadCache(): void {

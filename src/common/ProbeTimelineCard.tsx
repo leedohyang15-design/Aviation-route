@@ -5,6 +5,7 @@ import {
   type MarsProbe
 } from '@shared/probes'
 import type { MarsLiveWire } from '@shared/types'
+import { TraverseMap } from './TraverseMap'
 
 /**
  * A lander's life, as a timeline rather than a path.
@@ -90,6 +91,12 @@ export function ProbeTimelineCard({
           <span>그곳의 지금 시각</span>
         </div>
       </div>
+
+      {/* The path, at its own scale. Only the two that are still driving have
+          one — the rest either never moved or predate anybody publishing it. */}
+      {live && live.path?.length > 1 && (
+        <TraverseMap path={live.path} drivenKm={drivenKm} />
+      )}
 
       <ol className="probe-timeline">
         <li className="landing">

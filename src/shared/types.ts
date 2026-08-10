@@ -337,6 +337,8 @@ export interface MarsLiveWire {
   sol: number
   drivenKm: number | null
   fromLandingKm: number
+  /** The thinned traverse as [lon, lat]; drawn in the card, never on the globe. */
+  path: [number, number][]
   at: number
 }
 
