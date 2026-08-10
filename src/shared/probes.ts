@@ -402,6 +402,26 @@ export function missionSol(probe: MarsProbe, nowMs: number): number {
   return Math.max(0, Math.floor((to - from) / SOL_MS))
 }
 
+/**
+ * Where to draw a probe: today's position if the live check has one, else the
+ * landing site.
+ *
+ * Both windows call this rather than each doing the merge, because the two
+ * decide independently what to draw and a disagreement between them is a
+ * disagreement between the dome and the touchscreen a metre apart. The shape of
+ * `live` is kept structural rather than importing the wire type, so this file
+ * stays free of everything except its own data.
+ */
+export function probePosition(
+  probe: MarsProbe,
+  live?: { lon: number; lat: number }
+): { lon: number; lat: number } {
+  if (live && Number.isFinite(live.lon) && Number.isFinite(live.lat)) {
+    return { lon: live.lon, lat: live.lat }
+  }
+  return { lon: eastToRendererLon(probe.lonEast), lat: probe.lat }
+}
+
 /** The probe nearest a point, for taps that land near a dot but not on one. */
 export function nearestProbe(lon: number, lat: number, maxDeg = 12): MarsProbe | null {
   let best: MarsProbe | null = null

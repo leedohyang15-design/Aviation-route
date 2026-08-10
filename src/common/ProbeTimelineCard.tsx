@@ -4,6 +4,7 @@ import {
   missionSol,
   type MarsProbe
 } from '@shared/probes'
+import type { MarsLiveWire } from '@shared/types'
 
 /**
  * A lander's life, as a timeline rather than a path.
@@ -18,9 +19,28 @@ import {
  * card can fail to load, which is why the tab works with the building's
  * internet unplugged.
  */
-export function ProbeTimelineCard({ probe }: { probe: MarsProbe }): JSX.Element {
+export function ProbeTimelineCard({
+  probe,
+  live
+}: {
+  probe: MarsProbe
+  /** Today's figures for a rover that is still driving. Absent for the rest,
+   *  and absent for these two until the daily check has ever succeeded. */
+  live?: MarsLiveWire
+}): JSX.Element {
   const now = Date.now()
-  const sol = missionSol(probe, now)
+  /*
+   * The live sol when there is one, the arithmetic when there is not.
+   *
+   * They should agree to within a day — the count here is (now - landing) over
+   * the length of a sol — but the mission's own number is the one printed on
+   * NASA's pages and the one a visitor might have read this morning, so when it
+   * is available it wins. When it is not, the arithmetic is still right, and
+   * nothing on this card waits for the network.
+   */
+  const sol = live?.sol ?? missionSol(probe, now)
+  const drivenKm = live?.drivenKm ?? probe.drivenKm
+  const drivenLabel = live ? '오늘까지' : probe.drivenAsOf ? `${probe.drivenAsOf}년 기준` : null
   const landedYear = probe.landed.slice(0, 4)
   const endedYear = probe.ended?.slice(0, 4)
 
@@ -48,10 +68,19 @@ export function ProbeTimelineCard({ probe }: { probe: MarsProbe }): JSX.Element 
             <span>{probe.status === 'active' ? '화성에서 맞은 아침' : '일한 날'}</span>
           </div>
         )}
-        {probe.drivenKm > 0 && (
+        {drivenKm > 0 && (
           <div>
-            <b>{probe.drivenKm < 1 ? `${Math.round(probe.drivenKm * 1000)} m` : `${probe.drivenKm} km`}</b>
-            <span>{probe.drivenAsOf ? `달린 거리 · ${probe.drivenAsOf}년 기준` : '달린 거리'}</span>
+            <b>{drivenKm < 1 ? `${Math.round(drivenKm * 1000)} m` : `${drivenKm.toFixed(1)} km`}</b>
+            <span>{drivenLabel ? `달린 거리 · ${drivenLabel}` : '달린 거리'}</span>
+          </div>
+        )}
+        {/* Distance from the landing site, which is not the same number as the
+            odometry and is the one a child can picture: a rover wanders, so
+            34km of driving can end up four from where it came down. */}
+        {live && live.fromLandingKm >= 0.1 && (
+          <div>
+            <b>{live.fromLandingKm.toFixed(1)} km</b>
+            <span>내린 곳에서 떨어진 거리</span>
           </div>
         )}
         {/* The one number here that is not history. A clock nobody can read
@@ -76,7 +105,11 @@ export function ProbeTimelineCard({ probe }: { probe: MarsProbe }): JSX.Element 
         {probe.status === 'active' ? (
           <li className="live">
             <span className="when">지금</span>
-            <span className="what">아직 화성에 있어요.</span>
+            <span className="what">
+              {live
+                ? `${sol.toLocaleString()}번째 아침을 맞았어요. 아직 화성에 있어요.`
+                : '아직 화성에 있어요.'}
+            </span>
           </li>
         ) : (
           endedYear && (

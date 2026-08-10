@@ -93,8 +93,13 @@ function pickNumber(props: Record<string, unknown>, names: string[]): { key: str
  * what it saw instead of the layer quietly doing nothing — which is the failure
  * mode this project has already paid for once (see server/routes.ts on
  * adsb.lol).
+ *
+ * Exported so it can be exercised without a network. It is checked against a
+ * FeatureCollection, a bare array, kilometres, metres, a file with no sol at
+ * all, an empty file and an HTML error page — and against a longitude read as
+ * west, which it catches at 8,039km from the landing site.
  */
-function parseWaypoints(json: unknown, id: string): MarsLive | null {
+export function parseWaypoints(json: unknown, id: string): MarsLive | null {
   const root = json as { features?: unknown[] } | unknown[]
   const feats = (Array.isArray(root) ? root : root?.features) as
     | { properties?: Record<string, unknown>; geometry?: { coordinates?: unknown } }[]

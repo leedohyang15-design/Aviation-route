@@ -13,7 +13,7 @@ import type {
   WeatherLayer
 } from '@shared/types'
 import * as THREE from 'three'
-import { MARS_PROBES, PROBE_COLOR, eastToRendererLon } from '@shared/probes'
+import { MARS_PROBES, PROBE_COLOR, probePosition } from '@shared/probes'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -24,6 +24,8 @@ interface Props {
   /** Each layer's animation series, and which of them the operator has on. */
   weather?: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   hiddenWeather?: WeatherLayer[]
+  /** Today's rover positions by probe id, so the dots sit where they are now. */
+  marsLive?: Record<string, { lon: number; lat: number }>
   aircraft: Aircraft[]
   selected: string | null
   route: GeoPoint[] | null
@@ -53,6 +55,7 @@ export function MapView({
   satellites,
   weather,
   hiddenWeather,
+  marsLive,
   aircraft,
   selected,
   route,
@@ -126,12 +129,11 @@ export function MapView({
     globeRef.current?.setProbes(
       MARS_PROBES.map((p) => ({
         id: p.id,
-        lon: eastToRendererLon(p.lonEast),
-        lat: p.lat,
+        ...probePosition(p, marsLive?.[p.id]),
         color: new THREE.Color(PROBE_COLOR[p.status])
       }))
     )
-  }, [isMars])
+  }, [isMars, marsLive])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
   }, [mode, aircraft])

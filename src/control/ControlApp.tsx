@@ -226,6 +226,7 @@ export function ControlApp(): JSX.Element {
     satDetail,
     weather,
     weatherAt,
+    marsLive,
     weatherSource
   } = useHub('control')
   const mode = state.mode
@@ -798,7 +799,7 @@ export function ControlApp(): JSX.Element {
           : isMars
           ? marsProbe && (
               <div className="sheet-card" key={marsProbe.id}>
-                <ProbeTimelineCard probe={marsProbe} />
+                <ProbeTimelineCard probe={marsProbe} live={marsLive[marsProbe.id]} />
               </div>
             )
           : isSat

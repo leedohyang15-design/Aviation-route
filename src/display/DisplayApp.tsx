@@ -6,9 +6,9 @@ import * as THREE from 'three'
 import {
   MARS_PROBES,
   PROBE_COLOR,
-  eastToRendererLon,
   marsClock,
-  missionSol
+  missionSol,
+  probePosition
 } from '@shared/probes'
 import { Globe } from './globe'
 import type { OrbitClass } from '@shared/types'
@@ -42,7 +42,7 @@ const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
 export function DisplayApp(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const globeRef = useRef<Globe | null>(null)
-  const { send, aircraft, state, route, detail, satellites, satDetail, weather, weatherAt } =
+  const { send, aircraft, state, route, detail, satellites, satDetail, weather, weatherAt, marsLive } =
     useHub('display')
   /*
    * The moment being DRAWN, which is not the newest moment received.
@@ -136,7 +136,10 @@ export function DisplayApp(): JSX.Element {
         }
       }
       const now = Date.now()
-      const sol = missionSol(p, now)
+      // The mission's own sol when the daily check has one — it is the number
+      // printed on NASA's pages and the one a visitor may have read this
+      // morning. The arithmetic is the floor, and agrees to within a day.
+      const sol = marsLive[p.id]?.sol ?? missionSol(p, now)
       const title = `${p.name}   ${p.place}`
       if (p.status === 'lost') {
         return { ...NOTHING, title, prefix: `${p.landed.slice(0, 4)}년에 내렸지만 소식이 끊겼어요` }
@@ -228,7 +231,7 @@ export function DisplayApp(): JSX.Element {
       return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
     return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
-  }, [isSat, isWeather, isMars, marsTick, shownAt, weatherAt, rainHere, state.selected, satDetail, sel, d])
+  }, [isSat, isWeather, isMars, marsTick, marsLive, shownAt, weatherAt, rainHere, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -259,12 +262,11 @@ export function DisplayApp(): JSX.Element {
     globeRef.current?.setProbes(
       MARS_PROBES.map((p) => ({
         id: p.id,
-        lon: eastToRendererLon(p.lonEast),
-        lat: p.lat,
+        ...probePosition(p, marsLive[p.id]),
         color: new THREE.Color(PROBE_COLOR[p.status])
       }))
     )
-  }, [isMars])
+  }, [isMars, marsLive])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(visible)
   }, [mode, visible])
