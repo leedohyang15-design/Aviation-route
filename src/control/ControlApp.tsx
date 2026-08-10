@@ -5,6 +5,8 @@ import { skyOverhead } from '../common/sky'
 import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
+import { ProbeTimelineCard } from '../common/ProbeTimelineCard'
+import { MARS_PROBES, PROBE_COLOR, PROBE_STATE_LABEL } from '@shared/probes'
 import type { Aircraft, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
@@ -228,6 +230,8 @@ export function ControlApp(): JSX.Element {
   } = useHub('control')
   const mode = state.mode
   const isSat = mode === 'satellite'
+  const isMars = mode === 'mars'
+  const marsProbe = isMars ? MARS_PROBES.find((p) => p.id === state.selected) ?? null : null
   const isWeather = mode === 'weather'
   const hiddenWeather = state.hiddenWeather ?? []
   const toggleWeather = (l: WeatherLayer) => {
@@ -564,6 +568,11 @@ export function ControlApp(): JSX.Element {
                 </>
               )}
             </>
+          ) : isMars ? (
+            <>
+              화성에 내려앉은 로봇 <b>{MARS_PROBES.length}</b>대 · 지금도 일하는 중{' '}
+              <b>{MARS_PROBES.filter((p) => p.status === 'active').length}</b>대
+            </>
           ) : isSat ? (
             <>
               지금 지구 위에 🛰 <b>{satVisible.length.toLocaleString()}</b>개
@@ -578,11 +587,24 @@ export function ControlApp(): JSX.Element {
             simulation — for up to a minute or so after launch. That used to be a
             line of small grey text, which is how a whole evaluation session got
             spent on simulated aircraft. Make it a badge nobody can miss. */}
-        <div className={'src ' + (isWeather ? (weatherAt == null ? 'pending' : 'ok') : isSat || live ? 'ok' : 'pending')}>
+        <div
+          className={
+            'src ' +
+            (isWeather
+              ? weatherAt == null
+                ? 'pending'
+                : 'ok'
+              : isMars || isSat || live
+              ? 'ok'
+              : 'pending')
+          }
+        >
           {/* Attribution — the exhibit's only place for it. Both layers now
               come from the one service, which is the point of the change. */}
           {isWeather
             ? (weatherSource ?? '기상 영상 불러오는 중')
+            : isMars
+            ? 'NASA · ESA · 소련 · 중국 — 착륙 기록'
             : isSat
             ? '위성 궤도 · 실시간 계산'
             : statusText}
@@ -622,6 +644,17 @@ export function ControlApp(): JSX.Element {
             }}
           >
             ☁ 날씨
+          </button>
+          <button
+            role="tab"
+            aria-selected={isMars}
+            className={'feed-tab' + (isMars ? ' on' : '')}
+            onClick={() => {
+              poke()
+              send({ type: 'setMode', mode: 'mars' })
+            }}
+          >
+            🔴 화성
           </button>
         </div>
         {/* There is no live/simulation choice because there is no simulation.
@@ -663,6 +696,32 @@ export function ControlApp(): JSX.Element {
             {!hiddenWeather.includes('wind') && (
               <div className="wind-key">선이 길수록 바람이 빨라요</div>
             )}
+          </div>
+        ) : isMars ? (
+          /*
+           * A list, not just dots on a map.
+           *
+           * Twelve landing sites on an ochre planet are twelve identical specks
+           * a metre away from a touchscreen; the map answers "where", and this
+           * answers "which". Each is a name a child can read and a target a
+           * child can actually hit, and pressing one drives the same selection
+           * the map does — so the dome follows either way.
+           */
+          <div className="legend probe-list">
+            {MARS_PROBES.map((p) => (
+              <button
+                key={p.id}
+                className={'leg probe' + (state.selected === p.id ? ' on' : '')}
+                title={PROBE_STATE_LABEL[p.status]}
+                onClick={() => {
+                  poke()
+                  send({ type: 'select', icao24: state.selected === p.id ? null : p.id })
+                }}
+              >
+                <i style={{ background: PROBE_COLOR[p.status] }} />
+                {p.name}
+              </button>
+            ))}
           </div>
         ) : isSat ? (
           <div className="legend">
@@ -736,6 +795,12 @@ export function ControlApp(): JSX.Element {
       <div className="sheet" ref={sheetRef} style={sheetStyle} hidden={!settled}>
         {isWeather
           ? null
+          : isMars
+          ? marsProbe && (
+              <div className="sheet-card" key={marsProbe.id}>
+                <ProbeTimelineCard probe={marsProbe} />
+              </div>
+            )
           : isSat
           ? state.selected && (
               <div className="sheet-card" key={state.selected}>
@@ -753,7 +818,9 @@ export function ControlApp(): JSX.Element {
           a plane is selected so it doesn't fight the boarding-pass card. */}
       {(!state.selected || attract) && (
         <div className="touch-hint">
-          🖐 지구를 돌려{isWeather ? '보세요!' : `보고, ${isSat ? '위성을' : '비행기를'} 눌러보세요!`}
+          {isMars
+            ? '🖐 화성을 돌려보고, 로봇을 눌러보세요!'
+            : `🖐 지구를 돌려${isWeather ? '보세요!' : `보고, ${isSat ? '위성을' : '비행기를'} 눌러보세요!`}`}
         </div>
       )}
     </div>

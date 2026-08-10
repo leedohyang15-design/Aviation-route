@@ -70,6 +70,19 @@ export const EARTH_TEXTURE_URL = 'earth_equirect.jpg'
 export const EARTH_NIGHT_URL = 'earth_night.jpg'
 
 /**
+ * The Mars map, for the fourth tab. Same rules as the earth one: a 2:1
+ * equirectangular image in the renderer's `public/`, any of jpg/png/webp.
+ *
+ * There is no night map and there is no terminator. Mars gets flat daylight,
+ * which is not a shortcut but the honest choice: this is a mosaic assembled
+ * from thousands of orbital passes over years, not a photograph of one moment,
+ * so drawing a shadow across it would be inventing a time of day for a picture
+ * that does not have one. What time it is on Mars is answered properly
+ * elsewhere — see marsClock() in shared/probes.ts.
+ */
+export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
+
+/**
  * Mip chain and anisotropic filtering on the world maps. On by default.
  *
  * It was off, on the theory that a wrapping texture's pyramid is built with its

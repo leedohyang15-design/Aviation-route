@@ -28,6 +28,7 @@ import type {
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import {
   EARTH_TEXTURE_URL,
+  MARS_TEXTURE_URL,
   EARTH_NIGHT_URL,
   EARTH_MIPMAPS,
   WEATHER_WIND_PARTICLES,
@@ -190,6 +191,17 @@ export interface SelectionAnchor {
 }
 
 const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
+/**
+ * What the instanced quads are currently drawing.
+ *
+ * A third kind rather than a boolean, because the decisions downstream are not
+ * all the same decision: an aircraft has a silhouette to clip and a heading to
+ * point, and neither a satellite nor a landing site has either. Everything that
+ * used to read `=== 'satellite'` now reads `!== 'aircraft'`, which is what it
+ * always meant.
+ */
+export type ObjectKind = 'aircraft' | 'satellite' | 'probe'
+
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 
 // How big an object is drawn, as a fraction of the frame, at a given zoom.
@@ -203,11 +215,14 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
 //
 // Satellites get the smaller constant: they are drawn as dots, there are twice
 // as many, and a dot needs far fewer pixels than a silhouette to read.
-const ICON_K = { aircraft: 0.62, satellite: 0.3 } as const
+/* A landing site is bigger than a satellite dot on purpose: there are a dozen
+   of them on an empty planet rather than thousands on a busy one, and each is
+   a thing a child is meant to walk up to and press. */
+const ICON_K = { aircraft: 0.62, satellite: 0.3, probe: 0.5 } as const
 /** Exponent below 1 = icons shrink when zoomed out. 0.7 doubles them between
  * world view and full zoom, which is enough to matter without ballooning. */
 const ICON_ZOOM_P = 0.7
-function iconScaleFor(kind: 'aircraft' | 'satellite', span: number): number {
+function iconScaleFor(kind: ObjectKind, span: number): number {
   return ICON_K[kind] * Math.pow(Math.max(MIN_SPAN, Math.min(1, span)), ICON_ZOOM_P)
 }
 
@@ -226,7 +241,7 @@ const FLAG_H = 0.03 // country flag
 
 // The selection's halo: warm cabin light for an aircraft, cold instrument
 // light for a satellite. Sized as a multiple of the icon.
-const GLOW_COLOR = { aircraft: '#ffcf8a', satellite: '#9be8ff' } as const
+const GLOW_COLOR = { aircraft: '#ffcf8a', satellite: '#9be8ff', probe: '#ffd7a8' } as const
 const GLOW_SCALE = 3.4
 
 /** One full turn of the earth, compressed. At the real fifteen degrees an hour
@@ -355,7 +370,7 @@ export class Globe {
   /** Which kind of object is on screen. Satellites are drawn as dots (an icon
    * per object is unreadable at catalogue scale) and have no origin/destination,
    * so several pieces of the flight presentation are suppressed for them. */
-  private kind: 'aircraft' | 'satellite' = 'aircraft'
+  private kind: ObjectKind = 'aircraft'
   private planeTex!: THREE.Texture
   private dotTex!: THREE.CanvasTexture
   private satTex!: THREE.CanvasTexture
@@ -392,6 +407,12 @@ export class Globe {
   private routeCenterLon: number | null = null
   private pendingRecenter = false // center on the route once, on selection only
   private hasEarthTexture = false
+  private planet: 'earth' | 'mars' = 'earth'
+  private earthTex: THREE.Texture | null = null
+  private nightTex: THREE.Texture | null = null
+  private marsTex: THREE.Texture | null = null
+  /** So a missing Mars map is looked for once, not on every tab press. */
+  private marsTried = false
   private nightHourOverride: number | null = null // null = live time
 
   // Interactive (control) mode: the operator drives the camera locally with
@@ -557,6 +578,7 @@ export class Globe {
       uSunLon: { value: 0 },
       uSunDecl: { value: 0 },
       uNightFloor: { value: 0.22 }, // how much of the day map survives at night
+      uDayOnly: { value: 0 },
       // Weather. Two Mercator mosaics, remapped to this frame in the shader.
       uCloud: { value: null },
       uHasCloud: { value: 0 },
@@ -611,6 +633,9 @@ export class Globe {
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
+        // 1 on a body whose map is a multi-year mosaic rather than a photograph
+        // of one moment — see MARS_TEXTURE_URL.
+        uniform float uDayOnly;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
@@ -687,7 +712,7 @@ export class Globe {
           float slon = uSunLon * rad;
           float cosZenith =
             sin(plat) * sin(sdecl) + cos(plat) * cos(sdecl) * cos(plon - slon);
-          float uNight = smoothstep(0.10, -0.10, cosZenith);
+          float uNight = smoothstep(0.10, -0.10, cosZenith) * (1.0 - uDayOnly);
 
           // Weather arrives as Web Mercator tiles. Mercator's x is linear in
           // longitude, so the same uv.x works (offset and seam wrap included)
@@ -1891,6 +1916,7 @@ export class Globe {
       this.textureCandidates(EARTH_TEXTURE_URL),
       (tex) => {
         this.tuneTexture(tex)
+        this.earthTex = tex
         this.bgUniforms.uMap.value = tex
         this.bgUniforms.uHasMap.value = 1
         // Photographic maps carry their own graticule — drop the procedural grid.
@@ -1911,6 +1937,7 @@ export class Globe {
       this.textureCandidates(EARTH_NIGHT_URL),
       (tex) => {
         this.tuneTexture(tex)
+        this.nightTex = tex
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
         console.log(`[earth] loaded night texture`)
@@ -1919,6 +1946,107 @@ export class Globe {
         /* no night texture — night side just dims globally */
       }
     )
+  }
+
+  /**
+   * Which body the background is showing.
+   *
+   * The earth's textures are loaded once in the constructor and stay loaded;
+   * Mars is fetched the first time the tab is opened and then kept, because a
+   * visitor who presses 화성 twice should not wait twice. The two maps are held
+   * side by side rather than swapped in and out — they are a few megabytes of
+   * GPU memory each, and re-decoding a 2:1 photograph to save that is a bad
+   * trade on a machine that will run for months without a restart.
+   */
+  setPlanet(planet: 'earth' | 'mars'): void {
+    if (planet === this.planet) return
+    this.planet = planet
+    if (planet === 'earth') {
+      this.bgUniforms.uMap.value = this.earthTex
+      this.bgUniforms.uHasMap.value = this.earthTex ? 1 : 0
+      this.bgUniforms.uHasNight.value = this.nightTex ? 1 : 0
+      this.bgUniforms.uShowGrid.value = this.earthTex ? 0 : 1
+      this.bgUniforms.uDayOnly.value = 0
+      return
+    }
+    // No city lights and no terminator: see MARS_TEXTURE_URL for why the
+    // shadow would be a fiction on a multi-year mosaic.
+    this.bgUniforms.uHasNight.value = 0
+    this.bgUniforms.uDayOnly.value = 1
+    if (this.marsTex) {
+      this.bgUniforms.uMap.value = this.marsTex
+      this.bgUniforms.uHasMap.value = 1
+      this.bgUniforms.uShowGrid.value = 0
+      return
+    }
+    // Nothing to show yet. The procedural grid stands in rather than the earth,
+    // which would be a worse lie than a wireframe.
+    this.bgUniforms.uHasMap.value = 0
+    this.bgUniforms.uShowGrid.value = 1
+    if (this.marsTried) return
+    this.marsTried = true
+    this.loadFirstTexture(
+      this.textureCandidates(MARS_TEXTURE_URL),
+      (tex) => {
+        this.tuneTexture(tex)
+        this.marsTex = tex
+        console.log(`[mars] loaded map (${tex.image?.src ?? MARS_TEXTURE_URL})`)
+        if (this.planet === 'mars') {
+          this.bgUniforms.uMap.value = tex
+          this.bgUniforms.uHasMap.value = 1
+          this.bgUniforms.uShowGrid.value = 0
+        }
+      },
+      () => {
+        console.warn(
+          `[mars] no/invalid map — showing the grid instead. ` +
+            `Put a 2:1 image at public/${MARS_TEXTURE_URL} (or .png). ` +
+            `Check the file name has no hidden double extension.`
+        )
+      }
+    )
+  }
+
+  /**
+   * The landing sites, as dots that do not move.
+   *
+   * They ride the same instanced quads as the aircraft and the satellites, so
+   * selection, easing and the zoom-dependent icon size all come for free. Speed
+   * is zero, which turns off dead reckoning — a lander that drifted between
+   * frames would be a lie about the one thing these have in common.
+   */
+  setProbes(list: { id: string; lon: number; lat: number; color: THREE.Color }[]): void {
+    const seen = new Set<string>()
+    for (const p of list) {
+      if (!isPlausibleCoord(p.lon, p.lat)) continue
+      seen.add(p.id)
+      const cur = this.eased.get(p.id)
+      if (cur) {
+        cur.lon = p.lon
+        cur.lat = p.lat
+        cur.tLon = p.lon
+        cur.tLat = p.lat
+        cur.color = p.color
+      } else {
+        this.eased.set(p.id, {
+          lon: p.lon,
+          lat: p.lat,
+          heading: 0,
+          speed: 0,
+          tLon: p.lon,
+          tLat: p.lat,
+          tHeading: 0,
+          color: p.color
+        })
+        this.order.push(p.id)
+      }
+    }
+    // Nothing here has a route, and the attract cycle must not prefer one.
+    this.routed.clear()
+    this.story.clear()
+    for (const p of list) this.routed.add(p.id)
+    for (const id of [...this.eased.keys()]) if (!seen.has(id)) this.eased.delete(id)
+    this.order = this.order.filter((id) => this.eased.has(id))
   }
 
   /** The control map's viewport. On the projected display we only take the
@@ -2071,7 +2199,7 @@ export class Globe {
     // round the whole globe that says the same thing everywhere, and treating
     // it as sacred meant no spot on the screen was ever clear and the card fled
     // to a corner. So the orbit is simply not something to avoid.
-    const pts = this.kind === 'satellite' ? null : this.routePoints
+    const pts = this.kind !== 'aircraft' ? null : this.routePoints
     if (pts && pts.length) {
       const step = Math.max(1, Math.ceil(pts.length / 40))
       for (let i = 0; i < pts.length; i += step) {
@@ -2526,25 +2654,25 @@ export class Globe {
    * textures, and gates the aircraft-only furniture (endpoint markers, place
    * names, flags, flown/remaining split) that makes no sense for an orbit.
    */
-  setObjectKind(kind: 'aircraft' | 'satellite'): void {
+  setObjectKind(kind: ObjectKind): void {
     if (kind === this.kind) return
     this.kind = kind
     const inst = this.planes.material as THREE.MeshBasicMaterial
     const selMat = this.selectedPlane.material as THREE.MeshBasicMaterial
-    inst.map = kind === 'satellite' ? this.dotTex : this.planeTex
+    inst.map = kind !== 'aircraft' ? this.dotTex : this.planeTex
     // A dot has no silhouette to clip, and alphaTest would eat its soft edge.
-    inst.alphaTest = kind === 'satellite' ? 0 : 0.35
+    inst.alphaTest = kind !== 'aircraft' ? 0 : 0.35
     inst.needsUpdate = true
-    selMat.map = kind === 'satellite' ? this.satTex : this.planeTex
+    selMat.map = kind !== 'aircraft' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
     // An aircraft's lights are out on the wingtips, a satellite's beacon is on
     // its nose — nowhere near each other in icon space, so each kind gets its
     // own texture rather than one shared set of spots.
     const litMat = this.selectedLights.material as THREE.MeshBasicMaterial
-    litMat.map = kind === 'satellite' ? this.satLightTex : this.planeLightTex
+    litMat.map = kind !== 'aircraft' ? this.satLightTex : this.planeLightTex
     litMat.needsUpdate = true
-    if (kind === 'satellite') {
+    if (kind !== 'aircraft') {
       for (const m of [
         this.originMarker,
         this.destMarker,
@@ -2747,7 +2875,7 @@ export class Globe {
     this.disposeRouteGroup()
     const pts = this.routePoints
     if (!pts) return
-    if (this.kind === 'satellite') {
+    if (this.kind !== 'aircraft') {
       if (pts.length >= 2) {
         this.addRouteLines(pts, this.orbitCasingMat, 0.18)
         this.addRouteLines(pts, this.orbitMat, 0.22)
@@ -3531,7 +3659,7 @@ export class Globe {
           1 - v,
           0,
           isSel ? 0 : ICON_H * this.iconScale,
-          this.kind === 'satellite' ? 0 : angle,
+          this.kind !== 'aircraft' ? 0 : angle,
           e.lat
         )
       )
@@ -3589,7 +3717,7 @@ export class Globe {
         }
         // A satellite icon is drawn upright; turning it to the ground track just
         // makes the solar panels point at nothing.
-        placeSelected(u, 1 - v, this.kind === 'satellite' ? 0 : angle, e.lat)
+        placeSelected(u, 1 - v, this.kind !== 'aircraft' ? 0 : angle, e.lat)
         this.emitAnchor(u, 1 - v)
         this.selectedPlane.visible = true
         // Place the info chip. Centered on the plane, offset either to the side

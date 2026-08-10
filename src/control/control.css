@@ -632,3 +632,146 @@ body,
     #dc5cea
   );
 }
+
+
+/* ---------------------------------------------------------------------------
+   Mars: the landing sites, and what happened after each one.
+
+   The exhibit's other cards answer "where is it going". This one cannot — a
+   rover's whole life of driving is three pixels wide at the scale a planet fits
+   on a screen — so it answers "what happened", and the layout is a timeline
+   rather than a route.
+   --------------------------------------------------------------------------- */
+
+/* The probe picker. Wraps rather than scrolls: twelve names fit, and a row that
+   scrolls hides half the solar system's history behind a gesture nobody on a
+   museum floor knows to make. */
+.ctrl-info .probe-list {
+  max-width: 46vw;
+}
+.ctrl-info .leg.probe {
+  font-size: 0.82rem;
+}
+.ctrl-info .leg.probe.on {
+  border-color: rgba(255, 209, 102, 0.85);
+  box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.35);
+}
+
+.probe-card {
+  min-width: 300px;
+  max-width: 400px;
+  padding: 16px 18px 14px;
+  color: #eaf2ff;
+}
+.probe-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.probe-name {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.probe-name .probe-sub {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.5;
+  letter-spacing: 0;
+  margin-top: 1px;
+}
+/* The state is the first thing to read: whether this machine is still alive is
+   the question every child asks before any other. */
+.probe-state {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+  background: rgba(159, 182, 207, 0.16);
+  color: #cfdcec;
+}
+.probe-card.active .probe-state {
+  background: rgba(255, 209, 102, 0.18);
+  color: #ffd166;
+}
+.probe-card.lost .probe-state {
+  background: rgba(210, 115, 95, 0.18);
+  color: #ffab95;
+}
+
+.probe-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 12px 0 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.probe-facts > div {
+  display: flex;
+  flex-direction: column;
+}
+.probe-facts b {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #ffd7a8;
+}
+.probe-facts span {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  margin-top: 1px;
+}
+
+/* The timeline itself: a rule down the left with a bead at every chapter, which
+   is the one layout that reads as "this happened, then this". */
+.probe-timeline {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0 0 0 15px;
+  border-left: 2px solid rgba(255, 255, 255, 0.14);
+}
+.probe-timeline li {
+  position: relative;
+  padding: 0 0 11px;
+}
+.probe-timeline li::before {
+  content: '';
+  position: absolute;
+  left: -21px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9fb6cf;
+}
+.probe-timeline li.landing::before {
+  background: #ffd7a8;
+}
+/* The living ones get a bead that is lit rather than merely coloured. */
+.probe-timeline li.live::before {
+  background: #ffd166;
+  box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.22);
+}
+.probe-timeline li.end::before {
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  left: -22px;
+  top: 4px;
+}
+.probe-timeline .when {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  opacity: 0.55;
+  letter-spacing: 0.02em;
+}
+.probe-timeline .what {
+  display: block;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  margin-top: 1px;
+}

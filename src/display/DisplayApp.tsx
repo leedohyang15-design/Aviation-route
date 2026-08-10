@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useHub } from '../common/useHub'
 import { applyFilter } from '../common/filter'
 import { skyOverhead } from '../common/sky'
+import * as THREE from 'three'
+import {
+  MARS_PROBES,
+  PROBE_COLOR,
+  eastToRendererLon,
+  marsClock,
+  missionSol
+} from '@shared/probes'
 import { Globe } from './globe'
 import type { OrbitClass } from '@shared/types'
 
@@ -51,6 +59,21 @@ export function DisplayApp(): JSX.Element {
   const mode = state.mode
   const isSat = mode === 'satellite'
   const isWeather = mode === 'weather'
+  const isMars = mode === 'mars'
+  /*
+   * A slow tick, only on Mars.
+   *
+   * The plate carries the local time where the selected probe is standing, and
+   * a clock that never moves is worse than no clock. Twenty seconds is far
+   * finer than the minute it displays and costs nothing; every other tab gets
+   * no timer at all.
+   */
+  const [marsTick, setMarsTick] = useState(0)
+  useEffect(() => {
+    if (!isMars) return
+    const t = setInterval(() => setMarsTick((n) => n + 1), 20_000)
+    return () => clearInterval(t)
+  }, [isMars])
   const hiddenWx = (state.hiddenWeather ?? []).join(',')
   const showCloud = isWeather && !hiddenWx.includes('cloud')
   const showRain = isWeather && !hiddenWx.includes('rain')
@@ -91,6 +114,48 @@ export function DisplayApp(): JSX.Element {
    * gets there, or until it passes over us.
    */
   const callout = useMemo<Callout>(() => {
+    /*
+     * Mars: a place, and how long the thing standing there has been standing.
+     *
+     * The traverse cannot be the story on a dome — a rover's whole life's
+     * driving is three pixels at this scale — so the number that carries the
+     * plate is TIME instead of distance: how many Martian mornings this machine
+     * has woken up to. That is a figure a child can hold, and it is the same
+     * shape of answer the other tabs give (minutes to arrival, minutes to a
+     * pass overhead).
+     */
+    if (isMars) {
+      void marsTick
+      const p = MARS_PROBES.find((x) => x.id === state.selected)
+      if (!p) {
+        const alive = MARS_PROBES.filter((x) => x.status === 'active').length
+        return {
+          ...NOTHING,
+          title: '화성',
+          prefix: `사람이 보낸 로봇 ${MARS_PROBES.length}대가 여기 내려앉았고, 그중 ${alive}대는 지금도 일하고 있어요`
+        }
+      }
+      const now = Date.now()
+      const sol = missionSol(p, now)
+      const title = `${p.name}   ${p.place}`
+      if (p.status === 'lost') {
+        return { ...NOTHING, title, prefix: `${p.landed.slice(0, 4)}년에 내렸지만 소식이 끊겼어요` }
+      }
+      if (p.status === 'active') {
+        return {
+          title,
+          prefix: `화성에 온 지`,
+          value: `${sol.toLocaleString()}솔`,
+          suffix: `· 그곳은 지금 ${marsClock(p.lonEast, now)}`
+        }
+      }
+      return {
+        title,
+        prefix: `${p.landed.slice(0, 4)}년부터`,
+        value: `${sol.toLocaleString()}솔`,
+        suffix: '동안 일했어요'
+      }
+    }
     // Weather has nothing to select, so the plate says what the picture is and
     // how old it is — the one thing that stops a still image reading as a
     // decoration rather than as today's sky.
@@ -163,7 +228,7 @@ export function DisplayApp(): JSX.Element {
       return { ...NOTHING, title, prefix: where ? `곧 ${where}에 도착해요` : '곧 도착해요' }
     }
     return { title, prefix: '도착까지', value: hhmm(d.etaRemainingSec), suffix: '남음' }
-  }, [isSat, isWeather, shownAt, weatherAt, rainHere, state.selected, satDetail, sel, d])
+  }, [isSat, isWeather, isMars, marsTick, shownAt, weatherAt, rainHere, state.selected, satDetail, sel, d])
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -182,9 +247,24 @@ export function DisplayApp(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    globeRef.current?.setObjectKind(isSat ? 'satellite' : 'aircraft')
+    // A switch on the mode, not a boolean. `isSat ? 'satellite' : 'aircraft'`
+    // quietly gave the fourth tab aeroplane silhouettes pointing at headings
+    // that landers do not have.
+    globeRef.current?.setObjectKind(isSat ? 'satellite' : isMars ? 'probe' : 'aircraft')
+    globeRef.current?.setPlanet(isMars ? 'mars' : 'earth')
     globeRef.current?.clearObjects()
-  }, [mode, isSat])
+  }, [mode, isSat, isMars])
+  useEffect(() => {
+    if (!isMars) return
+    globeRef.current?.setProbes(
+      MARS_PROBES.map((p) => ({
+        id: p.id,
+        lon: eastToRendererLon(p.lonEast),
+        lat: p.lat,
+        color: new THREE.Color(PROBE_COLOR[p.status])
+      }))
+    )
+  }, [isMars])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(visible)
   }, [mode, visible])

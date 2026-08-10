@@ -12,6 +12,8 @@ import type {
   WeatherFrame,
   WeatherLayer
 } from '@shared/types'
+import * as THREE from 'three'
+import { MARS_PROBES, PROBE_COLOR, eastToRendererLon } from '@shared/probes'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -110,9 +112,26 @@ export function MapView({
 
   // Wipe the previous layer's objects so they don't linger under the new one.
   useEffect(() => {
-    globeRef.current?.setObjectKind(mode === 'satellite' ? 'satellite' : 'aircraft')
+    // A switch, not a boolean: the fourth mode used to inherit the aircraft
+    // branch and draw landing sites as aeroplanes pointing at a heading.
+    globeRef.current?.setObjectKind(
+      mode === 'satellite' ? 'satellite' : mode === 'mars' ? 'probe' : 'aircraft'
+    )
+    globeRef.current?.setPlanet(mode === 'mars' ? 'mars' : 'earth')
     globeRef.current?.clearObjects()
   }, [mode])
+  const isMars = mode === 'mars'
+  useEffect(() => {
+    if (!isMars) return
+    globeRef.current?.setProbes(
+      MARS_PROBES.map((p) => ({
+        id: p.id,
+        lon: eastToRendererLon(p.lonEast),
+        lat: p.lat,
+        color: new THREE.Color(PROBE_COLOR[p.status])
+      }))
+    )
+  }, [isMars])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
   }, [mode, aircraft])

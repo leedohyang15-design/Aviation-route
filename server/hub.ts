@@ -18,6 +18,7 @@ import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
 import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
+import { MARS_PROBES } from '../src/shared/probes'
 import { withDeadline } from './http'
 import { opsLog } from './log'
 import {
@@ -321,6 +322,13 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
         feed.setPaused(true, '위성 모드')
         startSatellites(onSatellites)
         break
+      case 'mars':
+        // Nothing to start. The landing sites are settled history and live in
+        // shared/probes.ts, which both windows import directly — no poll, no
+        // socket traffic, and the tab works with the building unplugged.
+        stopSatellites()
+        feed.setPaused(true, '화성 모드')
+        break
       case 'weather':
         stopSatellites()
         feed.setPaused(true, '날씨 모드')
@@ -460,6 +468,7 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   function belongsToLayer(id: string): boolean {
     // Weather is a picture, not a set of objects — there is nothing to select.
     if (state.mode === 'weather') return false
+    if (state.mode === 'mars') return MARS_PROBES.some((p) => p.id === id)
     if (state.mode === 'satellite') return satDetail(id) != null
     // An aircraft that has just blinked out of one snapshot is still the
     // visitor's selection (see holdSelection), so the grace window counts too.
@@ -479,6 +488,26 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
         // on the layer currently on screen.
         if (msg.icao24 && !belongsToLayer(msg.icao24)) {
           opsLog(`[hub] select ${msg.icao24} ignored — not on the ${state.mode} layer`)
+          return
+        }
+        /*
+         * Mars first, because everything below this is about aircraft.
+         *
+         * A landing site has no callsign to look up, no route to resolve and no
+         * snapshot to be missing from — so the aircraft path would have logged
+         * "NOT in the current snapshot" about a probe that is exactly where it
+         * has been since 1976, and then sent a detail request for it. This is
+         * the fourth-mode trap the satellite tab already hit once: the branch
+         * that catches everything is an aircraft branch.
+         */
+        if (state.mode === 'mars') {
+          state.selected = msg.icao24
+          opsLog(`[hub] mars select ${msg.icao24 ?? '(cleared)'}`)
+          broadcast({ type: 'state', state })
+          // Nothing else has anything to say about a probe: the card is built
+          // in the window from shared/probes.ts.
+          broadcast({ type: 'route', icao24: '', points: null })
+          broadcast({ type: 'detail', detail: null })
           return
         }
         // Log what arrived, and whether the hub can even see that aircraft.
