@@ -28,6 +28,8 @@ import type {
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import {
   EARTH_TEXTURE_URL,
+  MARS_BRIGHTNESS,
+  MARS_SATURATION,
   MARS_TEXTURE_URL,
   EARTH_NIGHT_URL,
   EARTH_MIPMAPS,
@@ -1967,8 +1969,14 @@ export class Globe {
       this.bgUniforms.uHasNight.value = this.nightTex ? 1 : 0
       this.bgUniforms.uShowGrid.value = this.earthTex ? 0 : 1
       this.bgUniforms.uDayOnly.value = 0
+      this.bgUniforms.uBrightness.value = 1
+      this.bgUniforms.uSaturation.value = 1
       return
     }
+    // See MARS_BRIGHTNESS: the source is graded for print, not for a projector
+    // in a dark room, and left alone it is one muddy red with the terrain gone.
+    this.bgUniforms.uBrightness.value = MARS_BRIGHTNESS
+    this.bgUniforms.uSaturation.value = MARS_SATURATION
     // No city lights and no terminator: see MARS_TEXTURE_URL for why the
     // shadow would be a fiction on a multi-year mosaic.
     this.bgUniforms.uHasNight.value = 0
@@ -1990,7 +1998,26 @@ export class Globe {
       (tex) => {
         this.tuneTexture(tex)
         this.marsTex = tex
-        console.log(`[mars] loaded map (${tex.image?.src ?? MARS_TEXTURE_URL})`)
+        /*
+         * The dimensions, not just "loaded".
+         *
+         * An equirectangular map has to be exactly 2:1 or the shader's
+         * latitude is wrong everywhere — the poles smear into a band across
+         * the top and the whole map creeps north or south. That failure looks
+         * like a rendering bug and is actually a file, so the file says so
+         * here rather than being guessed at from a photograph of a screen.
+         */
+        const img = tex.image as { width?: number; height?: number } | undefined
+        const w = img?.width ?? 0
+        const h = img?.height ?? 0
+        const ratio = h ? w / h : 0
+        console.log(
+          `[mars] loaded map ${w}x${h} (${ratio.toFixed(3)}:1) — ` +
+            (Math.abs(ratio - 2) < 0.01
+              ? 'equirectangular, correct'
+              : 'NOT 2:1 — this map is not plate carree, or it has a border or a ' +
+                'colour key baked into it. Every latitude on it will be drawn wrong.')
+        )
         if (this.planet === 'mars') {
           this.bgUniforms.uMap.value = tex
           this.bgUniforms.uHasMap.value = 1

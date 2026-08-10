@@ -81,6 +81,22 @@ export const EARTH_NIGHT_URL = 'earth_night.jpg'
  * elsewhere — see marsClock() in shared/probes.ts.
  */
 export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
+/**
+ * Grading for the Mars map, because Mars maps arrive graded for print.
+ *
+ * The earth photograph is shown at 1.0/1.0 — neutral, faithful to the source.
+ * Mars mosaics are not neutral to begin with: they are colour-balanced to look
+ * like the popular idea of Mars, which on a dark projector in a dark room comes
+ * out as a single muddy red with the terrain lost inside it. Pulling the
+ * saturation back and lifting the brightness is not making it "less red", it is
+ * undoing a correction that was applied for a different medium — the craters
+ * and the ridges come back, and it still reads unmistakably as Mars.
+ *
+ * Both are env-tunable so the exhibit can be matched to its own projector
+ * without a rebuild, which is the only way anyone can actually judge this.
+ */
+export const MARS_BRIGHTNESS = Number(readEnv('MARS_BRIGHTNESS') ?? 1.28)
+export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.7)
 
 /**
  * Mip chain and anisotropic filtering on the world maps. On by default.
