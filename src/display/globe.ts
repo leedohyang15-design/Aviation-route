@@ -28,8 +28,9 @@ import type {
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import {
   EARTH_TEXTURE_URL,
-  MARS_BRIGHTNESS,
+  MARS_LIFT,
   MARS_SATURATION,
+  MARS_TINT,
   MARS_TEXTURE_URL,
   EARTH_NIGHT_URL,
   EARTH_MIPMAPS,
@@ -621,7 +622,9 @@ export class Globe {
       uRainGamma: { value: 1 },
       uShowGrid: { value: 1 },
       uBrightness: { value: 1.0 }, // neutral — show the image faithfully
-      uSaturation: { value: 1.0 } // neutral — keep the source photo's saturation
+      uSaturation: { value: 1.0 }, // neutral — keep the source photo's saturation
+      uTint: { value: new THREE.Vector3(1, 1, 1) },
+      uLift: { value: 1 }
     }
     const bgMat = new THREE.ShaderMaterial({
       uniforms: this.bgUniforms,
@@ -649,6 +652,9 @@ export class Globe {
         uniform vec2 uRainScale; // x = where rain starts to show, y = full intensity
         uniform float uRainGamma;
         uniform float uShowGrid; uniform float uBrightness; uniform float uSaturation;
+        // Per-channel gain and a mid-tone lift, for a map that is not a
+        // photograph of Earth. Both neutral on the earth. See MARS_TINT.
+        uniform vec3 uTint; uniform float uLift;
 
         // Unpack one data pixel into [real value, coverage]. The channels are
         // big-endian bytes of one integer; alpha is the no-data mask.
@@ -686,7 +692,18 @@ export class Globe {
           vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
           // Brightness + saturation grade on the daytime image.
           float luma = dot(day, vec3(0.299, 0.587, 0.114));
-          day = mix(vec3(luma), day, uSaturation) * uBrightness;
+          day = mix(vec3(luma), day, uSaturation) * uBrightness * uTint;
+          /*
+           * A gamma lift, not another multiply.
+           *
+           * Multiplying to brighten takes the brightest thing on the map first:
+           * on Mars that is the polar caps, and at 1.28 they went to flat white
+           * and read as a pink band smeared across the top and bottom of the
+           * frame. Raising to a power below one lifts the mid-tones — the
+           * terrain, which is what nobody could see — while leaving 1.0 at 1.0,
+           * so the caps stay caps.
+           */
+          day = pow(max(day, vec3(0.0)), vec3(1.0 / uLift));
 
           if (uShowGrid > 0.5) {
             float lon = uv.x * 360.0 - 180.0;
@@ -1971,12 +1988,21 @@ export class Globe {
       this.bgUniforms.uDayOnly.value = 0
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
+      this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
+      this.bgUniforms.uLift.value = 1
       return
     }
-    // See MARS_BRIGHTNESS: the source is graded for print, not for a projector
-    // in a dark room, and left alone it is one muddy red with the terrain gone.
-    this.bgUniforms.uBrightness.value = MARS_BRIGHTNESS
+    // See MARS_TINT: desaturating a red image only makes it a duller red. What
+    // moves it off blood-red is lifting green and blue against red, and what
+    // brings the terrain back without blowing the polar caps is a gamma.
     this.bgUniforms.uSaturation.value = MARS_SATURATION
+    this.bgUniforms.uTint.value = new THREE.Vector3(
+      MARS_TINT[0] ?? 1,
+      MARS_TINT[1] ?? 1,
+      MARS_TINT[2] ?? 1
+    )
+    this.bgUniforms.uLift.value = MARS_LIFT
+    this.bgUniforms.uBrightness.value = 1
     // No city lights and no terminator: see MARS_TEXTURE_URL for why the
     // shadow would be a fiction on a multi-year mosaic.
     this.bgUniforms.uHasNight.value = 0
@@ -2014,7 +2040,8 @@ export class Globe {
         console.log(
           `[mars] loaded map ${w}x${h} (${ratio.toFixed(3)}:1) — ` +
             (Math.abs(ratio - 2) < 0.01
-              ? 'equirectangular, correct'
+              ? 'equirectangular, correct — the bands at top and bottom are the ' +
+                'polar caps, which converge to a smear in this projection'
               : 'NOT 2:1 — this map is not plate carree, or it has a border or a ' +
                 'colour key baked into it. Every latitude on it will be drawn wrong.')
         )

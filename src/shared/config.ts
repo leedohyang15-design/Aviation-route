@@ -95,8 +95,33 @@ export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
  * Both are env-tunable so the exhibit can be matched to its own projector
  * without a rebuild, which is the only way anyone can actually judge this.
  */
-export const MARS_BRIGHTNESS = Number(readEnv('MARS_BRIGHTNESS') ?? 1.28)
-export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.7)
+export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.62)
+/**
+ * Per-channel gain. This, not saturation, is what answers "too red".
+ *
+ * Desaturating a red-dominant image only walks it toward grey — the hue stays
+ * where it was, so the map goes from bright red to dull red. What actually
+ * moves it is lifting green and blue against red, which takes it from the
+ * blood-red of a Viking-era colour calibration toward the butterscotch that
+ * white-balanced surface photographs from Curiosity actually show. That is not
+ * a stylisation away from the truth; it is a step toward it.
+ *
+ * Measured on representative pixels, the red-to-green ratio of typical terrain
+ * goes 1.69 (raw) → 1.46 (saturation alone) → 1.21 (with this).
+ */
+export const MARS_TINT = (readEnv('MARS_TINT') ?? '0.94,1.03,1.18')
+  .split(',')
+  .map(Number)
+/**
+ * Mid-tone lift as a gamma, deliberately not a brightness multiply.
+ *
+ * A multiply takes the brightest thing on the map first, and on Mars that is
+ * the polar caps: at 1.28 they clipped to flat white and read as a pink band
+ * smeared across the top and bottom of the frame — which is what the caps
+ * looked like on the first attempt. A power below one lifts the terrain and
+ * leaves 1.0 at 1.0, so the caps stay caps.
+ */
+export const MARS_LIFT = Number(readEnv('MARS_LIFT') ?? 1.3)
 
 /**
  * Mip chain and anisotropic filtering on the world maps. On by default.
