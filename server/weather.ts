@@ -517,15 +517,27 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
   if (!Array.isArray(index?.variables)) throw new Error('index has no variables — the API shape has changed')
 
   /*
-   * Rain first, then cloud — the cloud follows the rain's clock.
+   * Rain, then wind, then cloud — and the order is load-bearing twice over.
    *
-   * Which moments exist at all is the model's to decide: it publishes hourly
-   * steps and the camera can be asked for any minute, so the only order that
-   * can produce one shared timeline is the one that asks the constrained side
-   * first.
+   * Rain has to go first because it owns the clock: which moments exist at all
+   * is the model's to decide, it publishes hourly steps, and the camera can be
+   * asked for any minute, so the only order that produces one shared timeline
+   * is the one that asks the constrained side first.
+   *
+   * Wind goes second because it is cheap and cloud is not. Cloud is thirty-odd
+   * separate satellite images -- five sensors for the live picture and again
+   * for every archive step -- while the wind is a single keyframe. Behind the
+   * cloud, the wind took minutes to reach the screen on a cold start and the
+   * log simply ended before it was ever mentioned. In front, it arrives with
+   * the rain.
+   *
+   * The comparator this replaces did produce this order for three layers, but
+   * only by accident: it was not a consistent ordering, and a fourth layer
+   * would have shuffled the other three unpredictably.
    */
+  const ORDER: WeatherLayer[] = ['rain', 'wind', 'cloud']
   let timeline: number[] | null = null
-  for (const layer of [...LAYERS].sort((a, b) => (a === 'rain' ? -1 : b === 'rain' ? 1 : 0))) {
+  for (const layer of ORDER.filter((l) => LAYERS.includes(l))) {
     if (stopped) return
     let series = await fetchMaptilerLayer(index, layer)
     if (series && layer === 'rain' && series.length > 1) {
@@ -1011,16 +1023,34 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
       continue
     }
     const stamp = new Date(at).toISOString().replace(/\.\d+Z$/, 'Z')
-    const tiles: WeatherFrame['tiles'] = []
-    for (const slot of WEATHER_GIBS_SLOTS) {
-      // Only the sensors the present frame actually has. Chasing one that is
-      // already missing wastes a request, and a step that covered MORE of the
-      // globe than its neighbours would make that region blink in the loop.
-      if (!nowSensors.has(slot.lon)) continue
-      for (const name of slot.names) {
-        if (await fetchSlot(name, slot.lon, slot.url, stamp, tiles)) break
-      }
-    }
+    /*
+     * The five sensors at once, not one after another.
+     *
+     * A step is five satellites and each is a megabyte, and this waited for
+     * every one of them in turn — then did it again for the next step, and the
+     * next. On a cold start that is thirty-odd sequential downloads before a
+     * single cloud reaches the screen, with the wind queued behind all of it.
+     * The sensors are independent, so there is nothing to wait for.
+     *
+     * Each slot writes into its OWN array and they are joined in the order the
+     * slots are declared. Sharing one array would have the pictures land in
+     * whatever order the network returned them, and a mosaic that composites
+     * in a different order on every poll is a mosaic that can flicker.
+     *
+     * Within a slot the names stay sequential: they are spares, tried in turn
+     * until one answers, which is a fallback and not a fan-out.
+     */
+    const live = WEATHER_GIBS_SLOTS.filter((s) => nowSensors.has(s.lon))
+    const perSlot = await Promise.all(
+      live.map(async (slot) => {
+        const out: WeatherFrame['tiles'] = []
+        for (const name of slot.names) {
+          if (await fetchSlot(name, slot.lon, slot.url, stamp, out)) break
+        }
+        return out
+      })
+    )
+    const tiles: WeatherFrame['tiles'] = perSlot.flat()
     // Same sensors as now, or the loop flickers wherever they disagree.
     if (new Set(tiles.map((t) => t.centerLon)).size === nowSensors.size && tiles.length) {
       cloudSteps.set(at, tiles)
