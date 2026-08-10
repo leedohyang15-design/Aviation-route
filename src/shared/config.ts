@@ -95,7 +95,7 @@ export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
  * Both are env-tunable so the exhibit can be matched to its own projector
  * without a rebuild, which is the only way anyone can actually judge this.
  */
-export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.62)
+export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.72)
 /**
  * Per-channel gain. This, not saturation, is what answers "too red".
  *
@@ -107,9 +107,15 @@ export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.62)
  * a stylisation away from the truth; it is a step toward it.
  *
  * Measured on representative pixels, the red-to-green ratio of typical terrain
- * goes 1.69 (raw) → 1.46 (saturation alone) → 1.21 (with this).
+ * goes 1.69 (raw) → 1.46 (saturation alone) → 1.22 (with this).
+ *
+ * Note that this is the wrong knob for "too dark". Pulling red down darkens the
+ * whole image, because red is most of the luminance in a Mars map — the first
+ * settings that fixed the redness took typical terrain to 51% brightness and
+ * the dark basalt plains to 33%, which reads as mud. MARS_LIFT is the knob for
+ * that, and raising it does not put the red back.
  */
-export const MARS_TINT = (readEnv('MARS_TINT') ?? '0.94,1.03,1.18')
+export const MARS_TINT = (readEnv('MARS_TINT') ?? '0.97,1.02,1.10')
   .split(',')
   .map(Number)
 /**
@@ -120,8 +126,13 @@ export const MARS_TINT = (readEnv('MARS_TINT') ?? '0.94,1.03,1.18')
  * smeared across the top and bottom of the frame — which is what the caps
  * looked like on the first attempt. A power below one lifts the terrain and
  * leaves 1.0 at 1.0, so the caps stay caps.
+ *
+ * This is the knob for "too dark" and "too bright", and it does not disturb the
+ * colour. At 1.7 typical terrain sits at 59% brightness and the dark plains at
+ * 43%; at 1.3 they were 51% and 33%, which was legible on a monitor and muddy
+ * on a projector.
  */
-export const MARS_LIFT = Number(readEnv('MARS_LIFT') ?? 1.3)
+export const MARS_LIFT = Number(readEnv('MARS_LIFT') ?? 1.7)
 
 /**
  * Mip chain and anisotropic filtering on the world maps. On by default.

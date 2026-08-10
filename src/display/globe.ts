@@ -2003,6 +2003,12 @@ export class Globe {
     )
     this.bgUniforms.uLift.value = MARS_LIFT
     this.bgUniforms.uBrightness.value = 1
+    // Say what is being applied. Three numbers tuned for a projector nobody
+    // here can see need to be readable from the machine that has one.
+    console.log(
+      `[mars] grading: saturation ${MARS_SATURATION}, tint ${MARS_TINT.join('/')}, ` +
+        `lift ${MARS_LIFT} — MARS_LIFT for darker/brighter, MARS_TINT for redder/less red`
+    )
     // No city lights and no terminator: see MARS_TEXTURE_URL for why the
     // shadow would be a fiction on a multi-year mosaic.
     this.bgUniforms.uHasNight.value = 0
