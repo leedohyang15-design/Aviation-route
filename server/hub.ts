@@ -19,6 +19,7 @@ import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
+import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
 import { opsLog } from './log'
 import {
@@ -433,6 +434,8 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     console.log(`[hub] window connected (${wss.clients.size} total)`)
     // Bring the new window fully up to date immediately.
     send(ws, { type: 'state', state })
+    // Two objects at most, and only when there is something to say.
+    if (marsLive().length) send(ws, { type: 'marsLive', data: marsLive() })
     if (state.mode === 'weather') {
       // Whatever is already assembled, so a window that connects (or reloads)
       // mid-session doesn't sit on a bare earth until the next poll.
@@ -599,6 +602,9 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
    * instant it is pressed.
    */
   startWeather(onWeather)
+  // Same reasoning as the weather warm start: one request a day, and the tab is
+  // current the instant it is pressed rather than a day behind.
+  startMars(() => broadcast({ type: 'marsLive', data: marsLive() }))
 
   console.log(`[hub] listening on ws://127.0.0.1:${port} (feed: ${feed.source})`)
 
@@ -607,6 +613,7 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
       feed.stop()
       stopSatellites()
       stopWeather()
+      stopMars()
       stopRouteResolver()
       saveRouteCache()
       wss.close()

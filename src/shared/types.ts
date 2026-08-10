@@ -329,6 +329,17 @@ export const DEFAULT_PRESENTATION_STATE: PresentationState = {
 // ---------------------------------------------------------------------------
 
 /** Messages the hub pushes to clients. */
+/** One live rover, as sent to the windows. Mirrors MarsLive in server/mars.ts. */
+export interface MarsLiveWire {
+  id: string
+  lon: number
+  lat: number
+  sol: number
+  drivenKm: number | null
+  fromLandingKm: number
+  at: number
+}
+
 export type ServerMessage =
   | { type: 'aircraft'; mode: 'full' | 'delta'; data: Aircraft[]; removed?: string[]; serverTime: number }
   | { type: 'state'; state: PresentationState }
@@ -337,6 +348,15 @@ export type ServerMessage =
   | { type: 'satellites'; data: Satellite[]; serverTime: number }
   | { type: 'satDetail'; detail: SatelliteDetail | null }
   | { type: 'weather'; frame: WeatherFrame }
+  /**
+   * Where the two still-driving rovers are today, over the settled history.
+   *
+   * Tiny and rarely sent — daily at most — so it goes out to every window
+   * regardless of which tab is up rather than being gated on the mode. Gating
+   * it would buy nothing and add one more place a fourth mode can be
+   * forgotten.
+   */
+  | { type: 'marsLive'; data: MarsLiveWire[] }
   | {
       type: 'status'
       /** Which feed is actually painting the screen right now. */

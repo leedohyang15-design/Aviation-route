@@ -16,6 +16,7 @@ import {
   type ClientMessage,
   type FlightDetail,
   type GeoPoint,
+  type MarsLiveWire,
   type PresentationState,
   type Satellite,
   type SatelliteDetail,
@@ -38,6 +39,8 @@ export interface HubView {
   weather: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
   weatherAt: number | null
+  /** Live rover positions by probe id; empty until (or unless) the check lands. */
+  marsLive: Record<string, MarsLiveWire>
   weatherSource: string | null
 }
 
@@ -83,6 +86,8 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [detail, setDetail] = useState<FlightDetail | null>(null)
   const [satellites, setSatellites] = useState<Satellite[]>([])
   const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
+  /** Live rover positions, keyed by probe id. Empty until the daily check lands. */
+  const [marsLive, setMarsLive] = useState<Record<string, MarsLiveWire>>({})
   const [weather, setWeather] = useState<{ cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }>({
     cloud: [],
     rain: [],
@@ -116,6 +121,9 @@ export function useHub(role: 'control' | 'display'): HubView {
           break
         case 'satDetail':
           setSatDetail(msg.detail)
+          break
+        case 'marsLive':
+          setMarsLive(Object.fromEntries(msg.data.map((r) => [r.id, r])))
           break
         case 'weather': {
           // A series arrives one frame at a time, step 0 first. Step 0 is
@@ -154,6 +162,7 @@ export function useHub(role: 'control' | 'display'): HubView {
     detail,
     satellites,
     satDetail,
+    marsLive,
     weather,
     /** Whose imagery is on screen, taken from the newest frame so the badge
      * can never credit a source the picture did not come from. */

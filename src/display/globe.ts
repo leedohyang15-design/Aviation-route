@@ -1177,8 +1177,26 @@ export class Globe {
   }
 
   /** Apply crisp filtering (mipmaps + anisotropy) to reduce shimmer/blur. */
-  private tuneTexture(tex: THREE.Texture): void {
-    tex.colorSpace = THREE.SRGBColorSpace
+  /**
+   * @param passThrough Hand the file's own numbers to the shader, undecoded.
+   *
+   * Marking a map as sRGB makes the GPU decode it to linear when it is sampled.
+   * That is correct only if something encodes it back on the way out, and the
+   * background is a raw ShaderMaterial writing gl_FragColor directly with no
+   * `<colorspace_fragment>` — so the decode happened and the encode never did,
+   * and the map was displayed in linear values. Measured on typical Mars
+   * terrain that turns rgb(150,89,61) into rgb(78,26,12): brightness 41% to
+   * 16%, and red-to-green 1.69 to 3.06. Which is exactly "too dark" and "too
+   * red", and is why two rounds of colour grading could not fix it — there was
+   * nothing wrong with the colour.
+   *
+   * Passing through is the consistent choice for this shader rather than a
+   * patch: every literal in it — the rain ramp, the cloud white, the night
+   * tint — was authored as a display value and written straight out. It works
+   * in display space, so its textures should arrive in display space too.
+   */
+  private tuneTexture(tex: THREE.Texture, passThrough = false): void {
+    tex.colorSpace = passThrough ? THREE.NoColorSpace : THREE.SRGBColorSpace
     tex.wrapS = THREE.RepeatWrapping
     // See EARTH_MIPMAPS: a wrapping texture's mip chain is built with the
     // edges clamped, so the two sides of the wrap disagree at every reduced
@@ -2028,7 +2046,7 @@ export class Globe {
     this.loadFirstTexture(
       this.textureCandidates(MARS_TEXTURE_URL),
       (tex) => {
-        this.tuneTexture(tex)
+        this.tuneTexture(tex, true)
         this.marsTex = tex
         /*
          * The dimensions, not just "loaded".

@@ -82,20 +82,22 @@ export const EARTH_NIGHT_URL = 'earth_night.jpg'
  */
 export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
 /**
- * Grading for the Mars map, because Mars maps arrive graded for print.
+ * Grading for the Mars map. NEUTRAL by default, and that is the point.
  *
- * The earth photograph is shown at 1.0/1.0 — neutral, faithful to the source.
- * Mars mosaics are not neutral to begin with: they are colour-balanced to look
- * like the popular idea of Mars, which on a dark projector in a dark room comes
- * out as a single muddy red with the terrain lost inside it. Pulling the
- * saturation back and lifting the brightness is not making it "less red", it is
- * undoing a correction that was applied for a different medium — the craters
- * and the ridges come back, and it still reads unmistakably as Mars.
+ * These exist because two rounds of them were spent chasing a map that looked
+ * too red and then too dark, and neither was a colour problem: the texture was
+ * being decoded from sRGB to linear on sampling with nothing encoding it back,
+ * so it was displayed in linear values — rgb(150,89,61) reaching the screen as
+ * rgb(78,26,12), brightness 41% down to 16% and red-to-green 1.69 up to 3.06.
+ * See tuneTexture in globe.ts. With that fixed the file needs no help at all.
  *
- * Both are env-tunable so the exhibit can be matched to its own projector
- * without a rebuild, which is the only way anyone can actually judge this.
+ * They stay because a projector in a dark room is not a monitor and somebody
+ * may still want to trim it, but every one of them defaults to no-op. If the
+ * map ever looks wrong again, suspect the pipeline before reaching for these.
+ * MARS_LIFT is the knob for dark/bright and does not disturb the colour;
+ * MARS_TINT is per-channel gain, for red/less red.
  */
-export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.72)
+export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 1)
 /**
  * Per-channel gain. This, not saturation, is what answers "too red".
  *
@@ -115,7 +117,7 @@ export const MARS_SATURATION = Number(readEnv('MARS_SATURATION') ?? 0.72)
  * the dark basalt plains to 33%, which reads as mud. MARS_LIFT is the knob for
  * that, and raising it does not put the red back.
  */
-export const MARS_TINT = (readEnv('MARS_TINT') ?? '0.97,1.02,1.10')
+export const MARS_TINT = (readEnv('MARS_TINT') ?? '1,1,1')
   .split(',')
   .map(Number)
 /**
@@ -132,7 +134,51 @@ export const MARS_TINT = (readEnv('MARS_TINT') ?? '0.97,1.02,1.10')
  * 43%; at 1.3 they were 51% and 33%, which was legible on a monitor and muddy
  * on a projector.
  */
-export const MARS_LIFT = Number(readEnv('MARS_LIFT') ?? 1.7)
+export const MARS_LIFT = Number(readEnv('MARS_LIFT') ?? 1)
+
+/**
+ * Where the two live rovers are today — the only part of the Mars tab that moves.
+ *
+ * NASA's MMGIS publishes the waypoint track each mission drives, which is what
+ * their own "Where is the rover" pages read. Everything the tab NEEDS is the
+ * settled history in shared/probes.ts and works offline; this only replaces the
+ * sol count, the odometry and the dot's position for Curiosity and
+ * Perseverance, which are still driving.
+ *
+ * NOT VERIFIED FROM THE DEVELOPMENT SANDBOX. Its proxy refuses mars.nasa.gov,
+ * so nobody here has watched these answer. The reader in server/mars.ts is
+ * written to discover the file's shape rather than assert it, and to say in the
+ * log exactly which fields it found — because the failure this project has
+ * already paid weeks for was an endpoint written into the code that quietly did
+ * nothing. Run this on the exhibit machine before trusting the layer:
+ *
+ *   curl.exe -s "https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_waypoints.json" | more
+ *
+ * Set either to an empty string to turn that rover's live position off.
+ */
+export const MARS_WAYPOINTS: Record<string, string> = {
+  curiosity:
+    readEnv('MARS_MSL_WAYPOINTS') ??
+    'https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json',
+  perseverance:
+    readEnv('MARS_M20_WAYPOINTS') ??
+    'https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_waypoints.json'
+}
+/**
+ * How often to look. Daily, because that is how fast the data moves: a rover
+ * drives a few times a week and the file is republished some sols behind.
+ */
+export const MARS_POLL_MS = Number(readEnv('MARS_POLL_MS') ?? 24 * 3600_000)
+/**
+ * How far a rover may be from its landing site before the position is refused.
+ *
+ * The furthest any of them has ever driven is Opportunity's 45km, so a waypoint
+ * hundreds of kilometres away is not a busy rover — it is a longitude
+ * convention read backwards, or the wrong file. Refusing it leaves the dot
+ * where the history says it is instead of putting Perseverance in the southern
+ * highlands and saying nothing about it.
+ */
+export const MARS_MAX_DRIFT_KM = Number(readEnv('MARS_MAX_DRIFT_KM') ?? 200)
 
 /**
  * Mip chain and anisotropic filtering on the world maps. On by default.
