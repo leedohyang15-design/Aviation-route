@@ -536,6 +536,7 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
    * would have shuffled the other three unpredictably.
    */
   const ORDER: WeatherLayer[] = ['rain', 'wind', 'cloud']
+  const ready: { layer: WeatherLayer; series: WeatherFrame[] }[] = []
   let timeline: number[] | null = null
   for (const layer of ORDER.filter((l) => LAYERS.includes(l))) {
     if (stopped) return
@@ -554,8 +555,43 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
     if (!series) continue
     // Same moment as what is already on screen: nothing to send.
     if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
-    latest.set(layer, series)
-    for (const f of series) onFrame(f)
+    // Held, not published. `latest` is what a window reads when it connects and
+    // what the next poll compares against, so writing it here would hand a
+    // window that arrived mid-poll the same mismatched pair by another door.
+    ready.push({ layer, series })
+  }
+  /*
+   * All of it, or none of it — the layers go out together.
+   *
+   * They were sent the moment each one finished, and the layers do not finish
+   * together: the rain is 256 packed tiles and the cloud is thirty-odd
+   * separate satellite photographs, so the rain lands in seconds and the cloud
+   * takes the better part of a minute. In that gap the screen carried this
+   * hour's rain over last hour's cloud, and said so:
+   *
+   *   clocks (local): cloud [13:00 14:00 15:00 16:00]
+   *                    rain [14:00 15:00 16:00 17:00] -> NOT IN SYNC
+   *
+   * Which is precisely the fault the shared clock exists to prevent -- rain
+   * falling where the sky is empty -- reintroduced as a transient. A whole
+   * poll's worth of layers swapped at once keeps the set on screen internally
+   * consistent at every instant: until the new cloud is ready, the previous
+   * rain stays beside the previous cloud, which is a complete and honest
+   * picture of an hour ago rather than an incoherent one of now.
+   *
+   * A yield between frames because each is several megabytes of base64 and
+   * stringifying them is the hub's only thread; sent in one burst they arrive
+   * late and the windows stutter.
+   */
+  // One synchronous pass, so there is no tick at which `latest` holds this
+  // hour's rain beside last hour's cloud.
+  for (const { layer, series } of ready) latest.set(layer, series)
+  for (const { series } of ready) {
+    for (const f of series) {
+      if (stopped) return
+      onFrame(f)
+      await new Promise((r) => setImmediate(r))
+    }
   }
   saveCache()
 }
