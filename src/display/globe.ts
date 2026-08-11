@@ -2185,7 +2185,25 @@ export class Globe {
         // Photographic maps carry their own graticule — drop the procedural grid.
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
-        this.note(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
+        /*
+         * Say how big it is, like the other two maps do.
+         *
+         * This one only ever printed its URL, and it cost 789ms to upload — the
+         * second most expensive thing in the whole startup — with nothing in
+         * the log to say why. The other two planets report their dimensions
+         * against the GPU's limit; the planet that is on screen by default was
+         * the one nobody could check.
+         */
+        const img = tex.image as { width?: number; height?: number } | undefined
+        const w = img?.width ?? 0
+        const h = img?.height ?? 0
+        const maxTex = this.renderer.capabilities.maxTextureSize
+        this.note(
+          `[earth] loaded day map ${w}x${h} (${h ? (w / h).toFixed(3) : '?'}:1, GPU max ${maxTex})` +
+            (w > maxTex
+              ? ` — WIDER THAN THE GPU TAKES: three.js rescales it on the CPU at load, in every window`
+              : '')
+        )
       },
       () => {
         this.note(
