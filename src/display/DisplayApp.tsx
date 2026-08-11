@@ -375,9 +375,9 @@ export function DisplayApp(): JSX.Element {
     ])
   }, [isMars, marsLive])
   useEffect(() => {
-    globeRef.current?.setProbeIcon(
-      isTargetId(state.selected) ? 'target' : 'rover'
-    )
+    const place =
+      isTargetId(state.selected) || (isJupiter && state.selected === GALILEO_PROBE.id)
+    globeRef.current?.setProbeIcon(place ? 'target' : 'rover')
   }, [isMars, isJupiter, state.selected])
   // Jupiter carries one marker: the only spot anything has ever been. The moons
   // are not on the planet, so they are not on the map — see MoonOrrery.
@@ -399,6 +399,9 @@ export function DisplayApp(): JSX.Element {
         color: new THREE.Color(GALILEO_PROBE.color)
       }
     ])
+    // The entry point is a PLACE, not a body, so it wears the landing-site
+    // diamond the Mars tab uses rather than the moons' ball.
+    globeRef.current?.setPlaceMarker(GALILEO_PROBE.id, new THREE.Color(GALILEO_PROBE.color))
   }, [isJupiter, marsTick])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(visible)

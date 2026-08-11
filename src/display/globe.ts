@@ -440,6 +440,9 @@ export class Globe {
   private roverTex!: THREE.CanvasTexture
   private targetTex!: THREE.CanvasTexture
   private moonTex!: THREE.CanvasTexture
+  private placeMesh!: THREE.Mesh
+  /** Which tracked id is drawn by placeMesh instead of the instanced pass. */
+  private placeId: string | null = null
   private probeIcon: 'rover' | 'target' = 'rover'
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
@@ -1171,6 +1174,18 @@ export class Globe {
     this.originLabel = label()
     this.destLabel = label()
     this.infoLabel = label() // flight info chip next to the selected plane
+    /*
+     * One extra quad, for a PLACE on a layer whose objects are not places.
+     *
+     * An instanced mesh has one material and therefore one icon, which is why
+     * the four moons and the Galileo probe's entry point came out as five
+     * identical balls — and the entry point is not a body, it is a spot on a
+     * planet, exactly like a Mars landing site. It gets the landing-site
+     * diamond back by being drawn on its own, outside the instanced pass. One
+     * quad is enough because Jupiter has exactly one place: nothing else has
+     * ever touched it.
+     */
+    this.placeMesh = label()
     this.originFlag = label() // country flag above the origin marker
     this.destFlag = label() // country flag above the destination marker
 
@@ -2847,6 +2862,7 @@ export class Globe {
     this.selectedPlane.visible = false
     this.selectedGlow.visible = false
     this.selectedLights.visible = false
+    this.placeMesh.visible = false
     if (icao24) {
       // Request a one-shot camera align on the plane — done in frame() the moment
       // the selected plane is rendered, so it works with OR without a route and
@@ -3029,6 +3045,8 @@ export class Globe {
     // A fresh layer starts on the default icon; setProbeIcon puts it back if
     // the selection that survives the switch is one of the landing targets.
     this.probeIcon = 'rover'
+    this.placeId = null
+    this.placeMesh.visible = false
   }
 
   /**
@@ -3042,16 +3060,33 @@ export class Globe {
    * ever touched shows a survey reticle instead of a machine that isn't there.
    */
   setProbeIcon(icon: 'rover' | 'target'): void {
-    if (this.kind !== 'probe' || icon === this.probeIcon) return
+    if ((this.kind !== 'probe' && this.kind !== 'moon') || icon === this.probeIcon) return
     this.probeIcon = icon
     const selMat = this.selectedPlane.material as THREE.MeshBasicMaterial
-    selMat.map = icon === 'target' ? this.targetTex : this.roverTex
+    selMat.map =
+      icon === 'target' ? this.targetTex : this.kind === 'moon' ? this.moonTex : this.roverTex
     selMat.needsUpdate = true
     // The halo goes with it, or a green reticle sits in a warm amber glow that
     // belongs to the machines and quietly says "this one is a probe too".
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(
-      icon === 'target' ? '#9beec0' : GLOW_COLOR.probe
+      icon === 'target' ? '#9beec0' : GLOW_COLOR[this.kind]
     )
+  }
+
+  /**
+   * Nominate one tracked object to be drawn as a PLACE rather than as a body.
+   *
+   * It stays in `eased` — so tapping still finds it and the card still opens —
+   * and its instance is collapsed to nothing, the same trick the selected
+   * object already uses to avoid being drawn twice.
+   */
+  setPlaceMarker(id: string | null, color?: THREE.Color): void {
+    this.placeId = id
+    const mat = this.placeMesh.material as THREE.MeshBasicMaterial
+    mat.map = this.probeTex
+    if (color) mat.color.copy(color)
+    mat.needsUpdate = true
+    if (!id) this.placeMesh.visible = false
   }
 
   /** Drop every tracked object — used when switching layers so the old one
@@ -3065,6 +3100,7 @@ export class Globe {
     this.selectedPlane.visible = false
     this.selectedGlow.visible = false
     this.selectedLights.visible = false
+    this.placeMesh.visible = false
     // And the route with them. The hub sends a route:null on the switch, but it
     // arrives on its own schedule, and until it did an aircraft's flight path
     // hung over the satellite map with no aircraft under it. Dropping it here
@@ -4095,6 +4131,7 @@ export class Globe {
       const { u, v } = projectNorm(e.lon, e.lat, this.lonOffset)
       const angle = this.iconAngle(e.heading, e.lat) // align icon to its track
       const isSel = id === this.selected
+      const isPlace = id === this.placeId && !isSel
       // The selected object is drawn separately, larger and brighter — and for
       // an aircraft, snapped onto its route line. Leaving its instance in as
       // well drew it twice, in two different places, both highlighted. Collapse
@@ -4106,7 +4143,7 @@ export class Globe {
           u,
           1 - v,
           0,
-          isSel ? 0 : ICON_H * this.iconScale,
+          isSel || isPlace ? 0 : ICON_H * this.iconScale,
           this.kind !== 'aircraft' ? 0 : angle,
           e.lat
         )
@@ -4122,6 +4159,16 @@ export class Globe {
         .multiplyScalar(1 + localNight * (0.35 + 0.55 * this.pulse))
       if (selVisible && !isSel) this.scratchColor.multiplyScalar(0.28)
       this.planes.setColorAt(i, this.scratchColor)
+
+      if (isPlace) {
+        // Same size as the bodies around it so it does not read as a lesser
+        // thing — a different SHAPE is the whole point, not a smaller one.
+        this.placeMesh.matrix.copy(
+          this.setSpriteMatrix(u, 1 - v, 0.68, ICON_H * this.iconScale, 0, e.lat)
+        )
+        this.placeMesh.matrixWorldNeedsUpdate = true
+        this.placeMesh.visible = true
+      }
 
       if (isSel) {
         // First frame the selected plane is rendered → center the camera on it.

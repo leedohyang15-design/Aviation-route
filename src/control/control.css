@@ -747,28 +747,35 @@ body,
 }
 
 /*
- * The three candidate regions, on a line of their own.
+ * Each group on a line of its own, with a heading that says what the group is.
  *
- * `flex-basis: 100%` forces a break in the wrapping legend, so they never sit
- * on the end of a row of landings and read as a thirteenth one. The little
- * heading is what makes the break mean something rather than look like a gap.
+ * `flex-basis: 100%` forces the break in the wrapping legend, so a group never
+ * runs on from the one above it and reads as one long undifferentiated row —
+ * which is what fifteen identical pills were.
  */
+.ctrl-info .probe-list .probe-row,
 .ctrl-info .probe-list .target-row {
   flex: 0 0 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.16);
+  margin-top: 2px;
 }
 .ctrl-info .target-lead {
+  /* Fixed width so the three headings line up and the chips start on a common
+     left edge — ragged group labels read as three unrelated rows. */
+  flex: 0 0 96px;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: rgba(124, 224, 168, 0.9);
-  margin-right: 2px;
+}
+.ctrl-info .target-lead.live {
+  color: #ffd166;
+}
+.ctrl-info .target-lead.past {
+  color: rgba(159, 182, 207, 0.9);
 }
 /* Dashed, because the ground under these is a proposal. It is the same signal
    an architect's drawing uses for a wall that is not built yet, and it costs
@@ -776,14 +783,29 @@ body,
 .ctrl-info .leg.probe.target {
   border-style: dashed;
 }
-.ctrl-info .leg.probe.target em {
-  color: #7ce0a8;
-  opacity: 0.75;
-}
 .ctrl-info .leg.probe.target.on {
   border-style: solid;
   border-color: rgba(124, 224, 168, 0.85);
   box-shadow: 0 0 0 1px rgba(124, 224, 168, 0.35);
+}
+/* The door to the ten that are finished. Quieter than a mission chip, because
+   it is a control rather than one of the things being chosen between. */
+.ctrl-info .leg.probe.more {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.28);
+  opacity: 0.8;
+  font-weight: 700;
+}
+.ctrl-info .leg.probe.more.on {
+  opacity: 1;
+}
+/* History, one press in. Dimmer than the two that are still working, so the
+   row still has a foreground even when it is twelve chips long. */
+.ctrl-info .leg.probe.past {
+  opacity: 0.72;
+}
+.ctrl-info .leg.probe.past.on {
+  opacity: 1;
 }
 
 /*

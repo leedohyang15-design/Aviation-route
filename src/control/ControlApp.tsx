@@ -35,6 +35,9 @@ const TITLES: Record<ExhibitMode, [string, string]> = {
 
 /** Card footprint, matched to .sheet in control.css — used to keep the card
  * inside the window when it is anchored to a tapped object. */
+/** The ten that are no longer working — everything but the two still driving. */
+const PAST_PROBES = MARS_PROBES.filter((p) => p.status !== 'active')
+
 const SHEET_W = 360
 const SHEET_H = 660
 /** How far the card keeps off the object it describes. Generous: at the old
@@ -337,6 +340,9 @@ export function ControlApp(): JSX.Element {
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
+  /** Whether the ten finished missions are showing. Collapses again on a tab
+   *  change, so the next visitor meets the short row the first one did. */
+  const [showPast, setShowPast] = useState(false)
   /* The moment being DRAWN, not the newest one received: the series ping-pongs
    * through four hourly steps, so the newest is on screen a quarter of the time. */
   const [shownAt, setShownAt] = useState<number | null>(null)
@@ -444,6 +450,10 @@ export function ControlApp(): JSX.Element {
     }
     placedRef.current = { ...p, rect: { ...p.rect, x: left, y: top, w, h } }
   }
+
+  useEffect(() => {
+    setShowPast(false)
+  }, [mode])
 
   useEffect(() => {
     placedRef.current = null
@@ -775,31 +785,43 @@ export function ControlApp(): JSX.Element {
            * child can actually hit, and pressing one drives the same selection
            * the map does — so the dome follows either way.
            */
+          /*
+           * Two of fifteen, and a door to the rest.
+           *
+           * Every landing site had a chip, which put fifteen pills in three
+           * rows under the tabs — more buttons than any other tab has, all the
+           * same size, none of them more important than its neighbours. A
+           * visitor cannot scan that; they can only give up on it. But every
+           * one of the fifteen is still on the map, and the map is the thing
+           * this row exists to shortcut, so nothing needs to be deleted — it
+           * needs to be RANKED.
+           *
+           * What is open by default is what a child would ask first: the two
+           * that are still working right now, and the places nobody has been.
+           * The other ten are history, they are behind one press, and the
+           * press says how many are behind it.
+           */
           <div className="legend probe-list">
-            {MARS_PROBES.map((p) => (
-              <button
-                key={p.id}
-                className={'leg probe' + (state.selected === p.id ? ' on' : '')}
-                title={PROBE_STATE_LABEL[p.status]}
-                onClick={() => {
-                  poke()
-                  send({ type: 'select', icao24: state.selected === p.id ? null : p.id })
-                }}
-              >
-                <i style={{ background: PROBE_COLOR[p.status] }} />
-                {p.name}
-                <em>{p.landed.slice(0, 4)}</em>
-              </button>
-            ))}
-            {/*
-             * The three that have not happened.
-             *
-             * On its own row with its own heading, because a chip that looks
-             * like the twelve above it reads as a thirteenth landing, and
-             * these are the opposite of a landing. The row break is doing the
-             * same job the green is doing on the map.
-             */}
-            <div className="target-row">
+            <div className="probe-row">
+              <span className="target-lead live">지금도 일하는 중</span>
+              {MARS_PROBES.filter((p) => p.status === 'active').map((p) => (
+                <button
+                  key={p.id}
+                  className={'leg probe' + (state.selected === p.id ? ' on' : '')}
+                  title={PROBE_STATE_LABEL[p.status]}
+                  onClick={() => {
+                    poke()
+                    send({ type: 'select', icao24: state.selected === p.id ? null : p.id })
+                  }}
+                >
+                  <i style={{ background: PROBE_COLOR[p.status] }} />
+                  {p.name}
+                  <em>{p.landed.slice(0, 4)}</em>
+                </button>
+              ))}
+            </div>
+
+            <div className="probe-row">
               <span className="target-lead">앞으로 갈 곳</span>
               {MARS_TARGETS.map((t) => (
                 <button
@@ -813,53 +835,41 @@ export function ControlApp(): JSX.Element {
                 >
                   <i style={{ background: TARGET_COLOR }} />
                   {t.name}
-                  {/* Where a probe chip carries the year it landed, this one
-                      carries the soonest anyone could go — so the whole row
-                      reads as one timeline running past the present. */}
-                  <em>{MARS_PLAN.earliest}</em>
                 </button>
               ))}
             </div>
-          </div>
-        ) : isJupiter ? (
-          /*
-           * Four moons, the one entry point, and the two still on their way.
-           *
-           * Same shape as the Mars list, and the same reason: seven names a
-           * child can read beat seven specks on a planet the size of a wall.
-           * The break before the last two says the same thing the Mars list's
-           * break says — everything above it has happened.
-           */
-          <div className="legend probe-list">
-            {GALILEAN.map((m) => (
+
+            <div className="probe-row">
+              {/* Labelled like the other two so all three chip runs start on
+                  one left edge — a row that begins further left reads as
+                  belonging to nothing. */}
+              <span className="target-lead past">먼저 다녀간</span>
               <button
-                key={m.id}
-                className={'leg probe' + (state.selected === m.id ? ' on' : '')}
-                title={m.headline}
+                className={'leg probe more' + (showPast ? ' on' : '')}
                 onClick={() => {
                   poke()
-                  send({ type: 'select', icao24: state.selected === m.id ? null : m.id })
+                  setShowPast((v) => !v)
                 }}
               >
-                <i style={{ background: m.color }} />
-                {m.name}
+                {showPast ? '접기' : `로봇 ${PAST_PROBES.length}대 보기`}
               </button>
-            ))}
-            <button
-              className={'leg probe' + (state.selected === GALILEO_PROBE.id ? ' on' : '')}
-              title="목성 안으로 들어간 단 하나"
-              onClick={() => {
-                poke()
-                send({
-                  type: 'select',
-                  icao24: state.selected === GALILEO_PROBE.id ? null : GALILEO_PROBE.id
-                })
-              }}
-            >
-              <i style={{ background: GALILEO_PROBE.color }} />
-              {GALILEO_PROBE.name}
-              <em>{GALILEO_PROBE.entered.slice(0, 4)}</em>
-            </button>
+              {showPast &&
+                PAST_PROBES.map((p) => (
+                  <button
+                    key={p.id}
+                    className={'leg probe past' + (state.selected === p.id ? ' on' : '')}
+                    title={PROBE_STATE_LABEL[p.status]}
+                    onClick={() => {
+                      poke()
+                      send({ type: 'select', icao24: state.selected === p.id ? null : p.id })
+                    }}
+                  >
+                    <i style={{ background: PROBE_COLOR[p.status] }} />
+                    {p.name}
+                    <em>{p.landed.slice(0, 4)}</em>
+                  </button>
+                ))}
+            </div>
           </div>
         ) : isSat ? (
           <div className="legend">

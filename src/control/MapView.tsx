@@ -155,7 +155,8 @@ export function MapView({
     // A reticle for a place and a rover for a machine. On Jupiter the only
     // marker is where the probe went IN, which is a spot on a planet rather
     // than a vehicle standing on one, so it wears the reticle too.
-    globeRef.current?.setProbeIcon(isTargetId(selected) ? 'target' : 'rover')
+    const place = isTargetId(selected) || (isJupiter && selected === GALILEO_PROBE.id)
+    globeRef.current?.setProbeIcon(place ? 'target' : 'rover')
   }, [isMars, isJupiter, selected])
   /*
    * One marker, and it is the only place anything has ever been.
@@ -182,6 +183,9 @@ export function MapView({
         color: new THREE.Color(GALILEO_PROBE.color)
       }
     ])
+    // The entry point is a PLACE, not a body, so it wears the landing-site
+    // diamond the Mars tab uses rather than the moons' ball.
+    globeRef.current?.setPlaceMarker(GALILEO_PROBE.id, new THREE.Color(GALILEO_PROBE.color))
   }, [isJupiter])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
