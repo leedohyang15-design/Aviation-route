@@ -31,6 +31,7 @@ import {
   EARTH_TEXTURE_URL,
   MARS_DAY_PERIOD_MS,
   MARS_LIFT,
+  MARS_NIGHT_FLOOR,
   MARS_SATURATION,
   MARS_TINT,
   MARS_TEXTURE_URL,
@@ -211,25 +212,16 @@ export type ObjectKind = 'aircraft' | 'satellite' | 'probe'
 
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 /**
- * How far Mars may be zoomed, which is further than the map can honestly hold.
+ * How much of the Mars map survives the night.
  *
- * On Earth the limit is set by the map: at 10x a 16,384px world map is drawn at
- * about one texel per pixel, so going deeper buys blur and nothing else. Mars
- * has the same map and a subject that is a hundred times smaller — Curiosity's
- * wanderings span 21km, which is sixteen pixels at that limit. There is nothing
- * to look at unless the limit moves.
- *
- * So it moves, and the ground goes soft: at 80x each texel of the map covers
- * about eight screen pixels. That is a deliberate trade, not an oversight. The
- * traverse is the subject and it is real data drawn at full precision; the
- * blurred terrain behind it is context, and a visitor zooming in that far has
- * plainly asked to see the path rather than the rocks. Sharp ground at this
- * scale needs a separate site image — see the note on Phase 3.
+ * HIGHER than Earth's 0.22, not lower, which is the opposite of what I first
+ * reasoned. The earth's night side is carried by its city lights — the floor
+ * only has to keep the coastlines faintly there behind them. Mars has nothing
+ * down there at all, so the floor IS the night side, and at 0.12 half the
+ * planet was a black hole with landing sites floating in it. It also sits
+ * still: Mars turns at its real rate here, so whichever half is dark stays
+ * dark for the whole of anybody's visit.
  */
-const MARS_MIN_SPAN = 1 / 160
-/** How much of the Mars map survives the night. Lower than Earth's 0.22: there
- *  are no cities down there, and two moons too small to light anything. */
-const MARS_NIGHT_FLOOR = 0.12
 
 // How big an object is drawn, as a fraction of the frame, at a given zoom.
 //
@@ -436,8 +428,7 @@ export class Globe {
   private routeCenterLon: number | null = null
   private pendingRecenter = false // center on the route once, on selection only
   private hasEarthTexture = false
-  /** How far in this body may be zoomed; see MARS_MIN_SPAN. */
-  private minSpan = MIN_SPAN
+
   private planet: 'earth' | 'mars' = 'earth'
   private earthTex: THREE.Texture | null = null
   private nightTex: THREE.Texture | null = null
@@ -2041,7 +2032,6 @@ export class Globe {
       this.bgUniforms.uHasNight.value = this.nightTex ? 1 : 0
       this.bgUniforms.uShowGrid.value = this.earthTex ? 0 : 1
       this.bgUniforms.uNightFloor.value = 0.22
-      this.minSpan = MIN_SPAN
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
       this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
@@ -2083,7 +2073,6 @@ export class Globe {
      */
     this.bgUniforms.uNightFloor.value = MARS_NIGHT_FLOOR
     // Further in than the map can honestly hold; see MARS_MIN_SPAN.
-    this.minSpan = MARS_MIN_SPAN
     if (this.marsTex) {
       this.bgUniforms.uMap.value = this.marsTex
       this.bgUniforms.uHasMap.value = 1
@@ -2233,7 +2222,7 @@ export class Globe {
    * Horizontal via lonOffset (wraps); vertical + zoom via the camera y-rect,
    * clamped so the rect never leaves the [0,1] background plane. */
   private applyInteractiveView(): void {
-    const s = Math.max(this.minSpan, Math.min(1, this.iSpan))
+    const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
     this.targetLonOffset = -this.iCenterLon
     let vCenter = (this.iCenterLat + 90) / 180
     vCenter = Math.max(s / 2, Math.min(1 - s / 2, vCenter))
@@ -2323,7 +2312,7 @@ export class Globe {
 
   /** Programmatic zoom for the on-screen +/− buttons (factor <1 zooms in). */
   zoomBy(factor: number): void {
-    this.iSpan = Math.max(this.minSpan, Math.min(1, this.iSpan * factor))
+    this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * factor))
     this.applyInteractiveView()
     this.emitView()
     this.resetAttract()
@@ -2522,7 +2511,7 @@ export class Globe {
         // Pinch: span scales with the inverse of the finger-distance change.
         const [a, b] = [...this.pointers.values()]
         const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
-        this.iSpan = Math.max(this.minSpan, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
+        this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
         this.movedDuringDrag = true
         this.applyInteractiveView()
         this.emitView()
@@ -2572,7 +2561,7 @@ export class Globe {
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
       this.resetAttract() // operator is here — postpone the auto-demo
-      this.iSpan = Math.max(this.minSpan, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
+      this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
       this.emitView()
     }
@@ -2587,7 +2576,7 @@ export class Globe {
         this.resetAttract() // operator is here — postpone the auto-demo
         // Step proportionally to the zoom so one press moves the same fraction
         // of the screen however far in the operator is.
-        const s = Math.max(this.minSpan, Math.min(1, this.iSpan))
+        const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
         if (panX) this.iCenterLon = wrapLon(this.iCenterLon + panX * 20 * s)
         if (panY) this.iCenterLat += panY * 10 * s
         this.applyInteractiveView() // clamps latitude to keep the view on the map
@@ -2693,57 +2682,15 @@ export class Globe {
 
   /** Center the camera once on the selected plane (called from frame() when it is
    * first rendered). Works for routed and route-less planes alike. */
-  /**
-   * The span that would fit the current route, with room around it.
-   *
-   * The view rectangle is `s` wide in u and `s` tall in v, and u covers 360
-   * degrees against v's 180 — so a box needs `dLon/360` horizontally and
-   * `dLat/180` vertically, and the larger wins. Null when there is no route to
-   * fit or it is a single point.
-   */
-  private routeSpan(): number | null {
-    const pts = this.routePoints
-    if (!pts || pts.length < 2) return null
-    let minLon = Infinity
-    let maxLon = -Infinity
-    let minLat = Infinity
-    let maxLat = -Infinity
-    for (const p of pts) {
-      if (p.lon < minLon) minLon = p.lon
-      if (p.lon > maxLon) maxLon = p.lon
-      if (p.lat < minLat) minLat = p.lat
-      if (p.lat > maxLat) maxLat = p.lat
-    }
-    const dLon = maxLon - minLon
-    const dLat = maxLat - minLat
-    if (!Number.isFinite(dLon) || !Number.isFinite(dLat)) return null
-    // A third again, so the track does not run into the edges of the frame.
-    const s = Math.max(dLon / 360, dLat / 180) * 1.35
-    return s > 0 ? Math.min(1, s) : null
-  }
-
   private recenterOnPlane(lon: number, lat: number): void {
     if (this.interactive) {
       this.iCenterLon = lon
       this.iCenterLat = lat
-      /*
-       * Frame the LINE when the line is the point.
-       *
-       * A moderate span — not full zoom-out — is right for an aircraft: at span
-       * 1 the vertical centre is pinned to the equator, so a plane away from
-       * lat 0 could never be centred, and a flight path is thousands of
-       * kilometres so 0.6 already shows it. For a rover it is wrong by two
-       * orders of magnitude. Curiosity's traverse spans 21km, which at span 0.6
-       * is 2.7 pixels — drawn correctly, every frame, underneath a
-       * forty-pixel selection icon. The line was never missing.
-       *
-       * So a probe is framed to its own track instead, clamped at the limit
-       * where the map gives up (MARS_MIN_SPAN). That puts the traverse at about
-       * 260 pixels: the ground behind it is soft, and the thing the visitor
-       * asked to see is the size of a thing.
-       */
-      const fit = this.kind === 'probe' ? this.routeSpan() : null
-      this.iSpan = fit != null ? Math.max(this.minSpan, fit) : Math.min(this.iSpan, 0.6)
+      // A moderate span (not full zoom-out): at span 1 the vertical center is
+      // pinned to the equator, so a plane away from lat 0 could never actually
+      // be centered — that was the "centering sometimes fails" bug. Zooming in a
+      // little gives room to center the plane vertically as well as horizontally.
+      this.iSpan = Math.min(this.iSpan, 0.6)
       this.applyInteractiveView()
       this.emitView()
     } else {
@@ -3038,11 +2985,6 @@ export class Globe {
     // One line per selection, not per frame. "The line is not drawn" has three
     // possible causes — nothing sent, nothing received, nothing rendered — and
     // only the renderer can rule out the middle one.
-    // A traverse arrives after its probe is selected, and it is what decides
-    // how far in to zoom — so the framing has to be asked for again once it is
-    // here. Without this the camera keeps whatever span it had when the dot was
-    // tapped, which is how a correctly drawn line stays three pixels wide.
-    if (next && this.kind === 'probe') this.pendingRecenter = true
     this.disposeRouteGroup()
     const on = !!this.routePoints
     this.originMarker.visible = on

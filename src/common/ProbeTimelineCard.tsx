@@ -5,6 +5,7 @@ import {
   type MarsProbe
 } from '@shared/probes'
 import type { MarsLiveWire } from '@shared/types'
+import { TraverseMap } from './TraverseMap'
 
 /**
  * A lander's life, as a timeline rather than a path.
@@ -19,11 +20,11 @@ import type { MarsLiveWire } from '@shared/types'
  * card can fail to load, which is why the tab works with the building's
  * internet unplugged.
  *
- * The traverse itself is NOT here. It was, drawn small in its own frame, and
- * two drawings of one path is one drawing too many: the map beside this card
- * shows the same track at a size worth looking at, and a thumbnail of it here
- * only split the attention of somebody deciding where to look. The card keeps
- * the figures the map cannot say.
+ * The traverse is drawn HERE and nowhere else. It went on the globe for one
+ * commit and the globe had to zoom to 160x to make 21km of driving into
+ * something visible, which is a magnification that turns the map underneath
+ * into mush and reads as the exhibit having lost its place. The path has its
+ * own scale; this is the frame that scale fits in.
  */
 export function ProbeTimelineCard({
   probe,
@@ -100,6 +101,12 @@ export function ProbeTimelineCard({
           <span>그곳의 지금 시각</span>
         </div>
       </div>
+
+      {/* The path, at its own scale. Only the two still driving have one — the
+          rest either never moved or predate anybody publishing a track. */}
+      {live && live.path?.length > 1 && (
+        <TraverseMap path={live.path} drivenKm={drivenKm} />
+      )}
 
       <ol className="probe-timeline">
         <li className="landing">

@@ -821,3 +821,73 @@ body,
 
 
 
+
+/* The traverse. No basemap on purpose — at this scale the SHAPE of the path is
+   the information, and a photograph behind it would be 26 screen pixels per
+   texel of mush. Every published traverse map is drawn this way. */
+.traverse {
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.traverse svg {
+  display: block;
+  background: rgba(8, 12, 22, 0.55);
+  border-radius: 8px;
+}
+.traverse .track {
+  fill: none;
+  stroke: #ffd7a8;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+.traverse .start {
+  fill: none;
+  stroke: #9fb6cf;
+  stroke-width: 1.6;
+}
+/* The living end of the line is the one that should catch the eye. */
+.traverse .now {
+  fill: #ffd166;
+  stroke: rgba(255, 209, 102, 0.3);
+  stroke-width: 5;
+}
+.traverse .bar line {
+  stroke: rgba(255, 255, 255, 0.45);
+  stroke-width: 1;
+}
+.traverse .bar text {
+  fill: rgba(255, 255, 255, 0.6);
+  font-size: 9px;
+  text-anchor: middle;
+}
+.traverse figcaption {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 7px;
+  font-size: 0.68rem;
+  opacity: 0.75;
+}
+.traverse figcaption .k::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: 1px;
+}
+.traverse figcaption .k.start::before {
+  border: 1.5px solid #9fb6cf;
+}
+.traverse figcaption .k.now::before {
+  background: #ffd166;
+}
+.traverse figcaption .total {
+  margin-left: auto;
+  color: #ffd7a8;
+  font-weight: 700;
+}

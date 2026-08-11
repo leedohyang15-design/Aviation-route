@@ -202,6 +202,22 @@ export const MARS_MAX_DRIFT_KM = Number(readEnv('MARS_MAX_DRIFT_KM') ?? 200)
 export const MARS_DAY_PERIOD_MS = Number(readEnv('MARS_DAY_PERIOD_MS') ?? 0)
 
 /**
+ * How much of the Mars map survives the night.
+ *
+ * HIGHER than Earth's 0.22, not lower, which is the opposite of what I first
+ * reasoned. Earth's night side is carried by its city lights — the floor only
+ * has to keep the coastlines faintly there behind them. Mars has nothing down
+ * there at all, so the floor IS the night side, and at 0.12 half the planet was
+ * a black hole with landing sites floating in it.
+ *
+ * It also sits still. Mars turns at its real rate here rather than the earth's
+ * six-minute loop, so whichever half is dark stays dark for the whole of
+ * anybody's visit — which makes the night side a permanent part of the exhibit
+ * rather than a passing effect, and it has to stay readable.
+ */
+export const MARS_NIGHT_FLOOR = Number(readEnv('MARS_NIGHT_FLOOR') ?? 0.48)
+
+/**
  * Mip chain and anisotropic filtering on the world maps. On by default.
  *
  * It was off, on the theory that a wrapping texture's pyramid is built with its

@@ -163,17 +163,11 @@ export function MapView({
     globeRef.current?.setWindVisible(showWind)
   }, [showWind, weather?.wind])
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
+  // No line on Mars: the traverse is drawn in the card, at its own scale.
+  // See the note in DisplayApp.
   useEffect(() => {
-    // On Mars the "route" is the traverse; the globe's polyline is the same
-    // machinery, pointed at different points. See DisplayApp for the note.
-    if (isMars) {
-      const p = selected ? marsLive?.[selected] : null
-      const path = (p as { path?: [number, number][] } | undefined)?.path
-      globeRef.current?.setRoute(path?.length ? path.map(([lon, lat]) => ({ lon, lat })) : null)
-      return
-    }
-    globeRef.current?.setRoute(route)
-  }, [isMars, marsLive, selected, route])
+    globeRef.current?.setRoute(isMars ? null : route)
+  }, [isMars, route])
   useEffect(
     () => globeRef.current?.autoAdvanceOnNoRoute(noRouteForSelected),
     [noRouteForSelected, selected]

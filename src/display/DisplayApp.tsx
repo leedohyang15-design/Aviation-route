@@ -321,20 +321,16 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])
   useEffect(() => {
     /*
-     * On Mars the "route" is the traverse.
+     * No line on Mars. The traverse is drawn in the card instead.
      *
-     * The globe already knows how to draw a polyline on a sphere and to frame
-     * it when it is selected, so a rover's track needs no new machinery — it
-     * needs the existing one pointed at different points. The hub sends no
-     * route in this mode, so nothing is being overridden.
+     * It was here, and to make 21km of driving visible on a planet the camera
+     * had to go to 160x — at which point one pixel of the map covers sixteen
+     * screen pixels and the globe reads as having lost its place rather than
+     * as having zoomed in. The path has its own scale and the card is the frame
+     * that scale fits in.
      */
-    if (isMars) {
-      const p = state.selected ? marsLive[state.selected] : null
-      globeRef.current?.setRoute(p?.path?.length ? p.path.map(([lon, lat]) => ({ lon, lat })) : null)
-      return
-    }
-    globeRef.current?.setRoute(route.points)
-  }, [isMars, marsLive, state.selected, route])
+    globeRef.current?.setRoute(isMars ? null : route.points)
+  }, [isMars, route])
   useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
   useEffect(() => {
     // Satellites have no origin or destination, so never carry the aviation
