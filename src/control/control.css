@@ -801,7 +801,18 @@ body,
   position: relative;
   display: flex;
   flex-direction: column;
-  max-height: min(72vh, 680px);
+  /*
+   * Tall enough that the longest card fits, on the screen the exhibit runs on.
+   *
+   * At 680 the two biggest — Opportunity at 699px and the future card at 692 —
+   * were each clipped by about one line, and the line lost was the last one:
+   * Opportunity's final transmission, and the date stamp under the plan. The
+   * cap exists so every probe's card is roughly the same shape rather than to
+   * hit a number, so it moves up to where the real content ends. Anything that
+   * still does not fit — a shorter screen, or a card that grows later — crawls
+   * into view instead (useAutoScroll).
+   */
+  max-height: min(86vh, 760px);
   padding: 18px 20px 16px 24px;
   border-radius: 18px;
   background: rgba(10, 15, 27, 0.92);
@@ -990,10 +1001,42 @@ body,
 .probe-card.future .probe-facts b {
   color: #a9ebc6;
 }
+/*
+ * On the future card the whole body scrolls, not just the timeline.
+ *
+ * The probe card is a fixed head over one growing list, so making the list the
+ * only flexible child was right there. Here there are four blocks ahead of the
+ * timeline, and the same rule squeezed it to 26px — a single clipped line —
+ * with the three dates the card exists to show sitting below the fold. So the
+ * timeline goes back to its natural height and this box does the scrolling.
+ */
+.future-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* No scrollbar: it crawls by itself (useAutoScroll) and a bar on a projected
+     kiosk panel is furniture nobody can use. */
+  scrollbar-width: none;
+}
+.future-scroll::-webkit-scrollbar {
+  display: none;
+}
+.probe-card.future .probe-timeline {
+  flex: none;
+  overflow: visible;
+}
 /* Three figures, not four: this card counts time three ways and a 2x2 grid
    would leave a hole where a fourth ought to be. */
 .probe-facts.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* A third of 360px is 105, and "2년 1개월" at 20px does not fit in it — it
+   wrapped mid-figure, which makes a number read as two. */
+.probe-facts.three b {
+  font-size: 17px;
+}
+.probe-facts.three span {
+  font-size: 10.5px;
 }
 .future-note {
   margin: 8px 0 0;

@@ -212,6 +212,10 @@ export interface CalloutSkin {
   rule: string
   /** Outline, or none. Dark plates need one; the paper tag does not. */
   border?: string
+  /** Corner radius in design units. The tag is soft, the instrument is not. */
+  radius?: number
+  /** Set the title in the figure's monospace rather than the sans. */
+  mono?: boolean
 }
 
 const PAPER_SKIN: CalloutSkin = {
@@ -219,6 +223,27 @@ const PAPER_SKIN: CalloutSkin = {
   ink: INK,
   accent: ACCENT,
   rule: 'rgba(20,18,15,0.16)'
+}
+
+/**
+ * The telemetry sheet's own materials, for the satellite plate.
+ *
+ * These four values are copied from `.sat-panel` in control.css and are meant
+ * to stay copied. The plate was the aircraft tab's boarding-pass tag — soft
+ * corners, sans title, its own slightly different cream — which is a different
+ * object from the ruled instrument in the operator's hands, close enough to
+ * look like a mistake rather than a choice. Square corners and a monospace
+ * designation are what the sheet is; the plate now is too.
+ */
+export function telemetrySkin(): CalloutSkin {
+  return {
+    paper: '#f4f1ea',
+    ink: '#14120f',
+    accent: '#e8590c',
+    rule: '#d8d3c8',
+    radius: 3,
+    mono: true
+  }
 }
 
 /** The dark-glass plate, matching .probe-card on the control screen. */
@@ -272,7 +297,7 @@ export function calloutTexture(
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
   const valueFont = `700 ${27 * SS}px ${MONO}`
   const wordFont = `600 ${19 * SS}px ${SANS}`
-  const titleFont = `700 ${16 * SS}px ${SANS}`
+  const titleFont = `700 ${16 * SS}px ${skin.mono ? MONO : SANS}`
   measuring.font = wordFont
   const preW = prefix ? measuring.measureText(prefix).width / SS : 0
   const sufW = suffix ? measuring.measureText(suffix).width / SS : 0
@@ -294,7 +319,7 @@ export function calloutTexture(
   c.height = Math.ceil(H * SS)
   const g = c.getContext('2d') as Ctx
 
-  const r = 6 * SS
+  const r = (skin.radius ?? 6) * SS
   g.beginPath()
   g.moveTo(r, 0)
   g.arcTo(c.width, 0, c.width, c.height, r)

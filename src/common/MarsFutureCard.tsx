@@ -5,6 +5,7 @@ import {
   nextTransferWindow,
   type MarsTarget
 } from '@shared/mars-future'
+import { useAutoScroll } from './useAutoScroll'
 
 /**
  * The other Mars card: a place nobody has been, and when somebody could go.
@@ -21,6 +22,7 @@ import {
  * part that goes stale, and a child should be able to see which half is which.
  */
 export function MarsFutureCard({ target }: { target: MarsTarget }): JSX.Element {
+  const scroller = useAutoScroll<HTMLDivElement>()
   const now = Date.now()
   const win = nextTransferWindow(now)
   // The one after it, to price the cost of missing this one. Asked from a
@@ -64,54 +66,68 @@ export function MarsFutureCard({ target }: { target: MarsTarget }): JSX.Element 
           {target.name}
           <span className="probe-sub">{target.subtitle}</span>
         </div>
-        <div className="probe-state">아직 아무도 못 가봤어요</div>
-      </div>
-      <div className="probe-where">
-        <b>{fmtCoord(target.lat, target.lonEast)}</b>
-        <span>화성 북쪽의 낮은 벌판</span>
-      </div>
-      <p className="future-note">{target.note}</p>
-
-      {/* Three figures, all of them time. Distance is the wrong number for this
-          card: Mars is between 5,500만 and 4억 km away depending on the day,
-          so "how far" has no single answer, while "how long you would be in
-          the spaceship" has exactly one. */}
-      <div className="probe-facts three">
-        <div>
-          <b>{left.toLocaleString()}일</b>
-          <span>다음 출발까지</span>
-        </div>
-        <div>
-          <b>{travel}일</b>
-          <span>가는 데 걸리는 시간 · 약 {Math.round(travel / 30.44)}개월</span>
-        </div>
-        <div>
-          <b>{monthsLabel(waitDays)}</b>
-          <span>놓치면 기다리는 시간</span>
-        </div>
+        <div className="probe-state">가 본 적 없어요</div>
       </div>
 
-      <p className="future-why">
-        지구는 1년, 화성은 1년 10개월 만에 해를 한 바퀴 돌아요. 그래서 둘이 나란히 서는 때가
-        약 26개월에 한 번뿐이고, 로켓은 그때만 떠날 수 있어요.
-      </p>
+      {/*
+       * Everything below the name scrolls, and on this card that is the whole
+       * card — which is the difference between it and a probe's.
+       *
+       * A probe card is a fixed head over a timeline that grows, so only the
+       * timeline needed to scroll. This one has four blocks of its own before
+       * the timeline even starts, and letting the timeline be the only flexible
+       * thing squeezed it to 26 pixels — one clipped line — while the three
+       * dates it exists to show sat underneath, unreachable. The dates are the
+       * point of the card, so the card scrolls and they keep their full height.
+       */}
+      <div className="future-scroll" ref={scroller}>
+        <div className="probe-where">
+          <b>{fmtCoord(target.lat, target.lonEast)}</b>
+          <span>화성 북쪽의 낮은 벌판</span>
+        </div>
+        <p className="future-note">{target.note}</p>
 
-      <ol className="probe-timeline">
-        {events.map((e) => (
-          <li key={e.at} className={e.cls}>
-            <span className="when">{fmtDate(e.at)}</span>
-            <span className="what">{e.what}</span>
-          </li>
-        ))}
-      </ol>
+        {/* Three figures, all of them time. Distance is the wrong number for
+            this card: Mars is between 5,500만 and 4억 km away depending on the
+            day, so "how far" has no single answer, while "how long you would be
+            in the spaceship" has exactly one. */}
+        <div className="probe-facts three">
+          <div>
+            <b>{left.toLocaleString()}일</b>
+            <span>다음 출발까지</span>
+          </div>
+          <div>
+            <b>{travel}일</b>
+            <span>가는 데 · 약 {Math.round(travel / 30.44)}개월</span>
+          </div>
+          <div>
+            <b>{monthsLabel(waitDays)}</b>
+            <span>놓치면 기다려요</span>
+          </div>
+        </div>
 
-      {/* The perishable part, fenced off and dated. */}
-      <div className="future-plan">
-        <b>사람은 아직이에요</b>
-        <p>
-          {MARS_PLAN.who}는 {MARS_PLAN.what} {MARS_PLAN.why}
+        <p className="future-why">
+          지구는 1년, 화성은 1년 10개월 만에 해를 한 바퀴 돌아요. 그래서 둘이 나란히 서는 때가
+          약 26개월에 한 번뿐이고, 로켓은 그때만 떠날 수 있어요.
         </p>
-        <em>{MARS_PLAN.asOf} 기준</em>
+
+        <ol className="probe-timeline">
+          {events.map((e) => (
+            <li key={e.at} className={e.cls}>
+              <span className="when">{fmtDate(e.at)}</span>
+              <span className="what">{e.what}</span>
+            </li>
+          ))}
+        </ol>
+
+        {/* The perishable part, fenced off and dated. */}
+        <div className="future-plan">
+          <b>사람은 아직이에요</b>
+          <p>
+            {MARS_PLAN.who}는 {MARS_PLAN.what} {MARS_PLAN.why}
+          </p>
+          <em>{MARS_PLAN.asOf} 기준</em>
+        </div>
       </div>
     </div>
   )

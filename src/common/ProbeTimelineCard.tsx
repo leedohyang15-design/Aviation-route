@@ -7,6 +7,7 @@ import {
 import type { MarsLiveWire } from '@shared/types'
 import { SOL_MS } from '@shared/probes'
 import { TraverseMap } from './TraverseMap'
+import { useAutoScroll } from './useAutoScroll'
 
 /**
  * Sols as a length of time on Earth.
@@ -49,6 +50,7 @@ export function ProbeTimelineCard({
    *  and absent for these two until the daily check has ever succeeded. */
   live?: MarsLiveWire
 }): JSX.Element {
+  const scroller = useAutoScroll<HTMLOListElement>()
   const now = Date.now()
   /*
    * The live sol when there is one, the arithmetic when there is not.
@@ -135,7 +137,10 @@ export function ProbeTimelineCard({
         <TraverseMap path={live.path} drivenKm={drivenKm} />
       )}
 
-      <ol className="probe-timeline">
+      {/* The timeline is the part that grows, so it is the part that scrolls —
+          and it scrolls itself, because Opportunity's runs 114px past the
+          bottom of the box and nobody at a kiosk drags inside a panel. */}
+      <ol className="probe-timeline" ref={scroller}>
         <li className="landing">
           <span className="when">{landedYear}</span>
           <span className="what">화성에 내려앉았어요.</span>

@@ -19,7 +19,7 @@ import {
   targetPosition
 } from '@shared/mars-future'
 import { Globe } from './globe'
-import { panelSkin } from './textures'
+import { panelSkin, telemetrySkin } from './textures'
 import type { OrbitClass } from '@shared/types'
 
 const ORBIT_LABEL: Record<OrbitClass, string> = {
@@ -421,7 +421,7 @@ export function DisplayApp(): JSX.Element {
          * putting the choice at the single place the plate is drawn makes it
          * impossible for a sixth branch to forget.
          */
-        isMars ? panelSkin(marsAccent(state.selected)) : undefined
+        isMars ? panelSkin(marsAccent(state.selected)) : isSat ? telemetrySkin() : undefined
       ),
     [callout, isSat, isMars, state.selected]
   )
