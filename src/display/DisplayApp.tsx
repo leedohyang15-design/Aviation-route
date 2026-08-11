@@ -10,6 +10,14 @@ import {
   missionSol,
   probePosition
 } from '@shared/probes'
+import {
+  MARS_TARGETS,
+  TARGET_COLOR,
+  isTargetId,
+  daysUntil,
+  nextTransferWindow,
+  targetPosition
+} from '@shared/mars-future'
 import { Globe } from './globe'
 import type { OrbitClass } from '@shared/types'
 
@@ -126,6 +134,28 @@ export function DisplayApp(): JSX.Element {
      */
     if (isMars) {
       void marsTick
+      /*
+       * A candidate landing region, which is the one thing on this dome that
+       * has not happened yet.
+       *
+       * So the number is a countdown rather than a tally. Every other plate in
+       * the exhibit counts something that exists — minutes to arrival, sols
+       * survived — and this one counts down to the next date the two planets
+       * are in the right places, which is the only part of going to Mars that
+       * nobody gets to reschedule.
+       */
+      const t = MARS_TARGETS.find((x) => x.id === state.selected)
+      if (t) {
+        const now = Date.now()
+        const win = nextTransferWindow(now)
+        const d = new Date(win.departMs)
+        return {
+          title: `${t.name}   아직 아무도 못 가본 곳`,
+          prefix: '다음에 지구를 떠날 수 있는 날까지',
+          value: `${daysUntil(win.departMs, now).toLocaleString()}일`,
+          suffix: `· ${d.getFullYear()}년 ${d.getMonth() + 1}월`
+        }
+      }
       const p = MARS_PROBES.find((x) => x.id === state.selected)
       if (!p) {
         const alive = MARS_PROBES.filter((x) => x.status === 'active').length
@@ -259,14 +289,25 @@ export function DisplayApp(): JSX.Element {
   }, [mode, isSat, isMars])
   useEffect(() => {
     if (!isMars) return
-    globeRef.current?.setProbes(
-      MARS_PROBES.map((p) => ({
+    // Twelve places robots reached, then three nobody has. Same instanced
+    // layer, and the colour is what separates them: warm for the machines,
+    // green for the ground that is still just an idea.
+    globeRef.current?.setProbes([
+      ...MARS_PROBES.map((p) => ({
         id: p.id,
         ...probePosition(p, marsLive[p.id]),
         color: new THREE.Color(PROBE_COLOR[p.status])
+      })),
+      ...MARS_TARGETS.map((t) => ({
+        id: t.id,
+        ...targetPosition(t),
+        color: new THREE.Color(TARGET_COLOR)
       }))
-    )
+    ])
   }, [isMars, marsLive])
+  useEffect(() => {
+    globeRef.current?.setProbeIcon(isTargetId(state.selected) ? 'target' : 'rover')
+  }, [isMars, state.selected])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(visible)
   }, [mode, visible])

@@ -6,7 +6,9 @@ import { categoryKey, type CategoryKey } from '../common/flightClass'
 import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
 import { ProbeTimelineCard } from '../common/ProbeTimelineCard'
+import { MarsFutureCard } from '../common/MarsFutureCard'
 import { MARS_PROBES, PROBE_COLOR, PROBE_STATE_LABEL } from '@shared/probes'
+import { MARS_TARGETS, TARGET_COLOR } from '@shared/mars-future'
 import type { Aircraft, ExhibitMode, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
@@ -248,6 +250,7 @@ export function ControlApp(): JSX.Element {
   const isSat = mode === 'satellite'
   const isMars = mode === 'mars'
   const marsProbe = isMars ? MARS_PROBES.find((p) => p.id === state.selected) ?? null : null
+  const marsTarget = isMars ? MARS_TARGETS.find((t) => t.id === state.selected) ?? null : null
   const isWeather = mode === 'weather'
   const hiddenWeather = state.hiddenWeather ?? []
   const toggleWeather = (l: WeatherLayer) => {
@@ -591,7 +594,8 @@ export function ControlApp(): JSX.Element {
           ) : isMars ? (
             <>
               화성에 내려앉은 로봇 <b>{MARS_PROBES.length}</b>대 · 지금도 일하는 중{' '}
-              <b>{MARS_PROBES.filter((p) => p.status === 'active').length}</b>대
+              <b>{MARS_PROBES.filter((p) => p.status === 'active').length}</b>대 · 앞으로 갈 곳{' '}
+              <b>{MARS_TARGETS.length}</b>곳
             </>
           ) : isSat ? (
             <>
@@ -744,6 +748,32 @@ export function ControlApp(): JSX.Element {
                 <em>{p.landed.slice(0, 4)}</em>
               </button>
             ))}
+            {/*
+             * The three that have not happened.
+             *
+             * On its own row with its own heading, because a chip that looks
+             * like the twelve above it reads as a thirteenth landing, and
+             * these are the opposite of a landing. The row break is doing the
+             * same job the green is doing on the map.
+             */}
+            <div className="target-row">
+              <span className="target-lead">앞으로 갈 곳</span>
+              {MARS_TARGETS.map((t) => (
+                <button
+                  key={t.id}
+                  className={'leg probe target' + (state.selected === t.id ? ' on' : '')}
+                  title="아직 아무도 못 가본 곳"
+                  onClick={() => {
+                    poke()
+                    send({ type: 'select', icao24: state.selected === t.id ? null : t.id })
+                  }}
+                >
+                  <i style={{ background: TARGET_COLOR }} />
+                  {t.name}
+                  <em>아직</em>
+                </button>
+              ))}
+            </div>
           </div>
         ) : isSat ? (
           <div className="legend">
@@ -818,11 +848,16 @@ export function ControlApp(): JSX.Element {
         {isWeather
           ? null
           : isMars
-          ? marsProbe && (
+          ? (marsTarget && (
+              <div className="sheet-card" key={marsTarget.id}>
+                <MarsFutureCard target={marsTarget} />
+              </div>
+            )) ||
+            (marsProbe && (
               <div className="sheet-card" key={marsProbe.id}>
                 <ProbeTimelineCard probe={marsProbe} live={marsLive[marsProbe.id]} />
               </div>
-            )
+            ))
           : isSat
           ? state.selected && (
               <div className="sheet-card" key={state.selected}>

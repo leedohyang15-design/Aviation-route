@@ -689,12 +689,6 @@ body,
    rather than a route.
    --------------------------------------------------------------------------- */
 
-/* The probe picker. Wraps rather than scrolls: twelve names fit, and a row that
-   scrolls hides half the solar system's history behind a gesture nobody on a
-   museum floor knows to make. */
-.ctrl-info .probe-list {
-  max-width: 46vw;
-}
 /* The probe chips run oldest to newest, and the year is what makes that
    readable — without it the order is arbitrary to anyone who does not already
    know when Viking landed. */
@@ -726,6 +720,46 @@ body,
 .ctrl-info .leg.probe.on {
   border-color: rgba(255, 209, 102, 0.85);
   box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.35);
+}
+
+/*
+ * The three candidate regions, on a line of their own.
+ *
+ * `flex-basis: 100%` forces a break in the wrapping legend, so they never sit
+ * on the end of a row of landings and read as a thirteenth one. The little
+ * heading is what makes the break mean something rather than look like a gap.
+ */
+.ctrl-info .probe-list .target-row {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.16);
+}
+.ctrl-info .target-lead {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: rgba(124, 224, 168, 0.9);
+  margin-right: 2px;
+}
+/* Dashed, because the ground under these is a proposal. It is the same signal
+   an architect's drawing uses for a wall that is not built yet, and it costs
+   nothing to read. */
+.ctrl-info .leg.probe.target {
+  border-style: dashed;
+}
+.ctrl-info .leg.probe.target em {
+  color: #7ce0a8;
+  opacity: 0.75;
+}
+.ctrl-info .leg.probe.target.on {
+  border-style: solid;
+  border-color: rgba(124, 224, 168, 0.85);
+  box-shadow: 0 0 0 1px rgba(124, 224, 168, 0.35);
 }
 
 /*
@@ -911,6 +945,95 @@ body,
   font-size: 14px;
   line-height: 1.5;
   margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   The future card — same panel, one hue away.
+
+   It shares .probe-card on purpose: a visitor who has already tapped four
+   landing sites should not have to learn a second card, and the only thing
+   that changes between them is that everything here is ahead of us instead of
+   behind. Green does that, and nothing else needs to.
+   --------------------------------------------------------------------------- */
+.probe-card.future .probe-edge {
+  background: #7ce0a8;
+  box-shadow: 0 0 16px rgba(124, 224, 168, 0.4);
+}
+.probe-card.future .probe-state {
+  background: rgba(124, 224, 168, 0.16);
+  color: #a9ebc6;
+}
+.probe-card.future .probe-facts b {
+  color: #a9ebc6;
+}
+/* Three figures, not four: this card counts time three ways and a 2x2 grid
+   would leave a hole where a fourth ought to be. */
+.probe-facts.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.future-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: 0.72;
+}
+/* The bit of physics the whole card rests on. Indented and quieter than the
+   figures, because it is the answer to "why" and nobody asks that first. */
+.future-why {
+  margin: 13px 0 0;
+  padding-left: 11px;
+  border-left: 2px solid rgba(124, 224, 168, 0.35);
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.78;
+}
+.probe-card.future .probe-timeline li::before {
+  background: #7ce0a8;
+}
+.probe-card.future .probe-timeline li.landing::before {
+  background: #a9ebc6;
+  box-shadow: 0 0 0 4px rgba(124, 224, 168, 0.22);
+}
+.probe-card.future .probe-timeline li.live::before {
+  background: transparent;
+  border: 2px solid rgba(124, 224, 168, 0.7);
+  box-shadow: none;
+  left: -23px;
+  top: 4px;
+}
+/*
+ * The perishable paragraph, walled off.
+ *
+ * Everything above it recomputes itself and will be true in 2035. This will
+ * not, so it gets a different ground, smaller type and a date — an exhibit
+ * that mixes an orbit with a press release in the same voice teaches that
+ * they are the same kind of fact, and they are not.
+ */
+.future-plan {
+  flex: none;
+  margin-top: 14px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.future-plan b {
+  font-size: 13px;
+  font-weight: 800;
+}
+.future-plan p {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  opacity: 0.78;
+}
+.future-plan em {
+  display: block;
+  margin-top: 6px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.42;
+  font-variant-numeric: tabular-nums;
 }
 
 

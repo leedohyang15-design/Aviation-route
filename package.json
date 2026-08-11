@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "hub": "tsx server/standalone.ts",
     "test:projection": "tsx server/../scripts/test-projection.ts",
+    "test:mars": "tsx scripts/test-mars-future.ts",
     "test:flights": "tsx scripts/test-opensky-flights.ts",
     "pack:win": "npm run build && electron-builder --win --dir",
     "dist:win": "npm run build && electron-builder --win",

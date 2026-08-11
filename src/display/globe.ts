@@ -66,6 +66,7 @@ import {
   plainDotTexture,
   probeTexture,
   roverTexture,
+  targetTexture,
   satelliteTexture
 } from './textures'
 
@@ -395,6 +396,8 @@ export class Globe {
   private satTex!: THREE.CanvasTexture
   private probeTex!: THREE.CanvasTexture
   private roverTex!: THREE.CanvasTexture
+  private targetTex!: THREE.CanvasTexture
+  private probeIcon: 'rover' | 'target' = 'rover'
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
@@ -978,6 +981,7 @@ export class Globe {
     this.satTex = this.tuneSprite(satelliteTexture())
     this.probeTex = this.tuneSprite(probeTexture())
     this.roverTex = this.tuneSprite(roverTexture())
+    this.targetTex = this.tuneSprite(targetTexture())
     // Unit quad: every sprite's real size lives in its instance matrix, because
     // width has to be derived from the frame aspect (see setSpriteMatrix).
     const quad = new THREE.PlaneGeometry(1, 1)
@@ -2809,6 +2813,7 @@ export class Globe {
     // A dot has no silhouette to clip, and alphaTest would eat its soft edge.
     inst.alphaTest = kind !== 'aircraft' ? 0 : 0.35
     inst.needsUpdate = true
+    this.probeIcon = 'rover'
     selMat.map = kind === 'probe' ? this.roverTex : kind === 'satellite' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
@@ -2830,6 +2835,32 @@ export class Globe {
         m.visible = false
       }
     }
+    // A fresh layer starts on the default icon; setProbeIcon puts it back if
+    // the selection that survives the switch is one of the landing targets.
+    this.probeIcon = 'rover'
+  }
+
+  /**
+   * Which picture the SELECTED marker wears inside the Mars layer.
+   *
+   * The twelve probes and the three candidate regions ride the same instanced
+   * mesh, and an instanced mesh has one material and therefore one icon — so
+   * the crowd is diamonds either way and colour carries the difference. The
+   * selected marker is a separate quad, though, and it can tell the truth:
+   * tapping a rover shows a rover, tapping a patch of ground that nobody has
+   * ever touched shows a survey reticle instead of a machine that isn't there.
+   */
+  setProbeIcon(icon: 'rover' | 'target'): void {
+    if (this.kind !== 'probe' || icon === this.probeIcon) return
+    this.probeIcon = icon
+    const selMat = this.selectedPlane.material as THREE.MeshBasicMaterial
+    selMat.map = icon === 'target' ? this.targetTex : this.roverTex
+    selMat.needsUpdate = true
+    // The halo goes with it, or a green reticle sits in a warm amber glow that
+    // belongs to the machines and quietly says "this one is a probe too".
+    ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(
+      icon === 'target' ? '#9beec0' : GLOW_COLOR.probe
+    )
   }
 
   /** Drop every tracked object — used when switching layers so the old one

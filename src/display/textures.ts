@@ -485,3 +485,46 @@ export function roverTexture(): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
 }
+
+/**
+ * The selected marker for a place nobody has landed on yet.
+ *
+ * The rover icon cannot do this job — it is a picture of a machine, and the
+ * whole point of these three dots is that there is no machine there. A survey
+ * reticle says "somebody has measured this spot and is thinking about it",
+ * which is exactly the claim, and it is a shape with no vehicle in it at all.
+ */
+export function targetTexture(): THREE.CanvasTexture {
+  const s = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  const m = s / 2
+  g.strokeStyle = 'rgba(255,255,255,1)'
+  g.fillStyle = 'rgba(255,255,255,1)'
+  g.lineCap = 'round'
+  // The ring, left open at the four ticks so the shape reads as something
+  // drawn ON the ground rather than as a filled dot with a halo round it.
+  g.lineWidth = s * 0.075
+  for (let i = 0; i < 4; i++) {
+    const a = i * (Math.PI / 2) + Math.PI / 12
+    g.beginPath()
+    g.arc(m, m, s * 0.3, a, a + Math.PI / 3)
+    g.stroke()
+  }
+  // Ticks reaching in from outside the ring, through the gaps.
+  g.lineWidth = s * 0.06
+  for (let i = 0; i < 4; i++) {
+    const a = i * (Math.PI / 2)
+    g.beginPath()
+    g.moveTo(m + Math.cos(a) * s * 0.44, m + Math.sin(a) * s * 0.44)
+    g.lineTo(m + Math.cos(a) * s * 0.22, m + Math.sin(a) * s * 0.22)
+    g.stroke()
+  }
+  g.beginPath()
+  g.arc(m, m, s * 0.075, 0, Math.PI * 2)
+  g.fill()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}

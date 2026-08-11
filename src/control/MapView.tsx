@@ -14,6 +14,7 @@ import type {
 } from '@shared/types'
 import * as THREE from 'three'
 import { MARS_PROBES, PROBE_COLOR, probePosition } from '@shared/probes'
+import { MARS_TARGETS, TARGET_COLOR, isTargetId, targetPosition } from '@shared/mars-future'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -126,14 +127,25 @@ export function MapView({
   const isMars = mode === 'mars'
   useEffect(() => {
     if (!isMars) return
-    globeRef.current?.setProbes(
-      MARS_PROBES.map((p) => ({
+    // Warm dots for the machines that got there, green for the three regions
+    // people are still only looking at. Same list, because they share the one
+    // instanced mesh; the colour is what tells them apart.
+    globeRef.current?.setProbes([
+      ...MARS_PROBES.map((p) => ({
         id: p.id,
         ...probePosition(p, marsLive?.[p.id]),
         color: new THREE.Color(PROBE_COLOR[p.status])
+      })),
+      ...MARS_TARGETS.map((t) => ({
+        id: t.id,
+        ...targetPosition(t),
+        color: new THREE.Color(TARGET_COLOR)
       }))
-    )
+    ])
   }, [isMars, marsLive])
+  useEffect(() => {
+    globeRef.current?.setProbeIcon(isTargetId(selected) ? 'target' : 'rover')
+  }, [isMars, selected])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
   }, [mode, aircraft])

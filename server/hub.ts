@@ -19,6 +19,7 @@ import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
+import { isTargetId } from '../src/shared/mars-future'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
 import { opsLog } from './log'
@@ -471,7 +472,10 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   function belongsToLayer(id: string): boolean {
     // Weather is a picture, not a set of objects — there is nothing to select.
     if (state.mode === 'weather') return false
-    if (state.mode === 'mars') return MARS_PROBES.some((p) => p.id === id)
+    // Landing sites and candidate regions both live on the Mars layer. The
+    // targets are not probes and are not in MARS_PROBES, so leaving them out
+    // here made every tap on one a silent "ignored — not on the mars layer".
+    if (state.mode === 'mars') return MARS_PROBES.some((p) => p.id === id) || isTargetId(id)
     if (state.mode === 'satellite') return satDetail(id) != null
     // An aircraft that has just blinked out of one snapshot is still the
     // visitor's selection (see holdSelection), so the grace window counts too.
