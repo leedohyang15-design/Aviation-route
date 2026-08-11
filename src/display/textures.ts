@@ -216,6 +216,15 @@ export interface CalloutSkin {
   radius?: number
   /** Set the title in the figure's monospace rather than the sans. */
   mono?: boolean
+  /**
+   * Paint the title row as a dark bar with the title reversed out of it.
+   *
+   * This is the satellite sheet's signature — `.sat-head` and `.sat-foot`
+   * bracket that card in solid ink — and it is the only part of it that
+   * survives being shrunk to a two-line plate and looked at from the far side
+   * of a room.
+   */
+  headBar?: boolean
 }
 
 const PAPER_SKIN: CalloutSkin = {
@@ -229,11 +238,17 @@ const PAPER_SKIN: CalloutSkin = {
  * The telemetry sheet's own materials, for the satellite plate.
  *
  * These four values are copied from `.sat-panel` in control.css and are meant
- * to stay copied. The plate was the aircraft tab's boarding-pass tag — soft
- * corners, sans title, its own slightly different cream — which is a different
- * object from the ruled instrument in the operator's hands, close enough to
- * look like a mistake rather than a choice. Square corners and a monospace
- * designation are what the sheet is; the plate now is too.
+ * to stay copied. The plate was the aircraft tab's boarding-pass tag, which is
+ * a different object from the ruled instrument in the operator's hands — close
+ * enough to look like a mistake rather than a choice.
+ *
+ * The head bar is the part that does the work. A first attempt at this changed
+ * only the cream (#f7f5f0 to #f4f1ea), the corner radius (6 to 3) and the
+ * title's typeface, all of which are true to the sheet and none of which can
+ * be seen from where the exhibit is actually viewed — a correct change that
+ * was, from any useful distance, no change at all. The solid ink bar across
+ * the top is what the sheet looks like from across a room, so that is what
+ * the plate wears.
  */
 export function telemetrySkin(): CalloutSkin {
   return {
@@ -242,7 +257,8 @@ export function telemetrySkin(): CalloutSkin {
     accent: '#e8590c',
     rule: '#d8d3c8',
     radius: 3,
-    mono: true
+    mono: true,
+    headBar: true
   }
 }
 
@@ -320,13 +336,19 @@ export function calloutTexture(
   const g = c.getContext('2d') as Ctx
 
   const r = (skin.radius ?? 6) * SS
-  g.beginPath()
-  g.moveTo(r, 0)
-  g.arcTo(c.width, 0, c.width, c.height, r)
-  g.arcTo(c.width, c.height, 0, c.height, r)
-  g.arcTo(0, c.height, 0, 0, r)
-  g.arcTo(0, 0, c.width, 0, r)
-  g.closePath()
+  // Traced rather than drawn once, because three things need this exact
+  // outline: the fill, the clip that keeps the accent rule and the head bar
+  // inside the rounded corners, and the border stroke.
+  const plate = (): void => {
+    g.beginPath()
+    g.moveTo(r, 0)
+    g.arcTo(c.width, 0, c.width, c.height, r)
+    g.arcTo(c.width, c.height, 0, c.height, r)
+    g.arcTo(0, c.height, 0, 0, r)
+    g.arcTo(0, 0, c.width, 0, r)
+    g.closePath()
+  }
+  plate()
   g.fillStyle = skin.paper
   g.fill()
   g.save()
@@ -338,6 +360,7 @@ export function calloutTexture(
   // over it. A translucent plate needs it: without one, a dark card over the
   // night side of Mars has no edge at all and reads as a hole in the planet.
   if (skin.border) {
+    plate()
     g.strokeStyle = skin.border
     g.lineWidth = SS
     g.stroke()
@@ -345,10 +368,23 @@ export function calloutTexture(
 
   const left = (EDGE_W + CALLOUT_PAD) * SS
   if (title) {
+    if (skin.headBar) {
+      // Runs the full width and butts into the accent rule, exactly as
+      // .sat-head does on the card, and clipped to the plate so the top
+      // corners stay round. No hairline underneath it — the change of ground
+      // already separates the name from the figure, and a rule as well would
+      // be two devices doing one job.
+      g.save()
+      plate()
+      g.clip()
+      g.fillStyle = skin.ink
+      g.fillRect(EDGE_W * SS, 0, c.width, titleH * SS)
+      g.restore()
+    }
     g.font = titleFont
-    g.fillStyle = skin.ink
+    g.fillStyle = skin.headBar ? skin.paper : skin.ink
     g.fillText(title, left, 20 * SS)
-    if (hasLine) {
+    if (hasLine && !skin.headBar) {
       // Hairline between the name and the figure, inset from the accent bar.
       g.fillStyle = skin.rule
       g.fillRect(left, titleH * SS - SS, c.width - left - CALLOUT_PAD * SS, SS)
