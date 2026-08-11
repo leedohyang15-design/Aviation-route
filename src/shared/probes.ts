@@ -351,6 +351,18 @@ export const MARS_PROBES: MarsProbe[] = [
 // ---------------------------------------------------------------------------
 
 /** A Mars day: 24 hours 39 minutes 35.244 seconds, in milliseconds. */
+/**
+ * A sol count, written the way the missions themselves write it.
+ *
+ * "sol" is not an English word standing in for a Korean one — it is the unit's
+ * name, the way "km" is, and every mission page a visitor might look up after
+ * leaving says 4,981 sols. Writing 4,981솔 quietly invents a different unit.
+ * What it MEANS stays in Korean, in the caption underneath.
+ */
+export function solLabel(n: number): string {
+  return `${n.toLocaleString()} ${n === 1 ? 'sol' : 'sols'}`
+}
+
 export const SOL_MS = 88775244
 
 /**

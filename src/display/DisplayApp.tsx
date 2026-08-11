@@ -8,7 +8,8 @@ import {
   PROBE_COLOR,
   marsClock,
   missionSol,
-  probePosition
+  probePosition,
+  solLabel
 } from '@shared/probes'
 import {
   MARS_TARGETS,
@@ -193,14 +194,14 @@ export function DisplayApp(): JSX.Element {
         return {
           title,
           prefix: `화성에 온 지`,
-          value: `${sol.toLocaleString()}솔`,
+          value: solLabel(sol),
           suffix: `· 그곳은 지금 ${marsClock(p.lonEast, now)}`
         }
       }
       return {
         title,
         prefix: `${p.landed.slice(0, 4)}년부터`,
-        value: `${sol.toLocaleString()}솔`,
+        value: solLabel(sol),
         suffix: '동안 일했어요'
       }
     }

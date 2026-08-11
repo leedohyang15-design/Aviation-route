@@ -1,11 +1,12 @@
 import {
   PROBE_STATE_LABEL,
+  SOL_MS,
   marsClock,
   missionSol,
+  solLabel,
   type MarsProbe
 } from '@shared/probes'
 import type { MarsLiveWire } from '@shared/types'
-import { SOL_MS } from '@shared/probes'
 import { TraverseMap } from './TraverseMap'
 import { useAutoScroll } from './useAutoScroll'
 
@@ -91,7 +92,7 @@ export function ProbeTimelineCard({
             child than a number of Earth days would be. */}
         {probe.status !== 'lost' && (
           <div>
-            <b>{sol.toLocaleString()}솔</b>
+            <b>{solLabel(sol)}</b>
             {/* A sol count with no yardstick is just a big number. "5,111" and
                 "14년" are the same fact, and only one of them is a length of
                 time a nine-year-old has actually lived through. */}
