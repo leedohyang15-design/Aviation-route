@@ -510,7 +510,44 @@ export class Globe {
   // Fired true when the exhibit is auto-cycling (attract), false on operator input.
   onAttractChange: ((active: boolean) => void) | null = null
   /** Set to put a line in the exe's log from the renderer. */
-  onNote: ((text: string) => void) | null = null
+/**
+   * A line for the operator's log file.
+   *
+   * The packaged exe has no console, so a renderer-side console.log goes
+   * nowhere anybody can read — which is how the map diagnostics ended up
+   * invisible on the one machine they exist for. Anything worth reading later
+   * goes through note() instead, which forwards to the hub and lands in
+   * aviation-route.log.
+   */
+  private _onNote: ((text: string) => void) | null = null
+  /**
+   * Lines emitted before the sink was attached.
+   *
+   * The maps are fetched from the constructor, on purpose, and the window wires
+   * this up in an effect a moment later. Without a queue the two most useful
+   * lines in the file — what the map actually is, and how long it took to
+   * upload — would be the two that are lost, every single time.
+   */
+  private noteQueue: string[] = []
+
+  get onNote(): ((text: string) => void) | null {
+    return this._onNote
+  }
+  set onNote(fn: ((text: string) => void) | null) {
+    this._onNote = fn
+    if (!fn) return
+    const held = this.noteQueue
+    this.noteQueue = []
+    for (const line of held) fn(line)
+  }
+
+  /** Say it in the log AND in the console — the console is for a developer at
+   *  a desk, the log is for the exhibit machine. */
+  private note(text: string): void {
+    console.log(text)
+    if (this._onNote) this._onNote(text)
+    else if (this.noteQueue.length < 50) this.noteQueue.push(text)
+  }
   /** A ramp measured off the data, applied after applyDecode has set the one
    * the declared unit implies. Null means the declared unit was believed. */
   private rainFit: { lo: number; hi: number; gamma: number } | null = null
@@ -1360,11 +1397,11 @@ export class Globe {
     } catch (err) {
       // Never fatal: a failed pre-upload only means it happens later, the way
       // it always used to.
-      console.warn(`[${tag}] pre-upload failed: ${(err as Error).message}`)
+      this.note(`[${tag}] pre-upload failed: ${(err as Error).message}`)
       return
     }
     const ms = performance.now() - t0
-    console.log(
+    this.note(
       `[${tag}] uploaded to GPU in ${ms.toFixed(0)}ms` +
         (ms > 250 ? ' — this is the pause the tab used to make' : '')
     )
@@ -2135,10 +2172,10 @@ export class Globe {
         // Photographic maps carry their own graticule — drop the procedural grid.
         this.bgUniforms.uShowGrid.value = 0
         this.hasEarthTexture = true
-        console.log(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
+        this.note(`[earth] loaded day texture (${tex.image?.src ?? EARTH_TEXTURE_URL})`)
       },
       () => {
-        console.warn(
+        this.note(
           `[earth] no/invalid day texture — using procedural ocean+grid. ` +
             `Put a 2:1 image at public/${EARTH_TEXTURE_URL} (or .png). ` +
             `Check the file name has no hidden double extension.`
@@ -2154,7 +2191,7 @@ export class Globe {
         this.uploadNow('night', tex)
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
-        console.log(`[earth] loaded night texture`)
+        this.note(`[earth] loaded night texture`)
       },
       () => {
         /* no night texture — night side just dims globally */
@@ -2248,8 +2285,9 @@ export class Globe {
     this.bgUniforms.uLift.value = MARS_LIFT
     this.bgUniforms.uBrightness.value = 1
     // Say what is being applied. Three numbers tuned for a projector nobody
-    // here can see need to be readable from the machine that has one.
-    console.log(
+    // here can see need to be readable from the machine that has one — which
+    // means the LOG, not a console the exe does not have.
+    this.note(
       `[mars] grading: saturation ${MARS_SATURATION}, tint ${MARS_TINT.join('/')}, ` +
         `lift ${MARS_LIFT} — MARS_LIFT for darker/brighter, MARS_TINT for redder/less red`
     )
@@ -2344,7 +2382,7 @@ export class Globe {
          */
         const maxTex = this.renderer.capabilities.maxTextureSize
         if (w > maxTex) {
-          console.warn(
+          this.note(
             `[${tag}] map is ${w}px wide but this GPU takes ${maxTex} — three.js will ` +
               `redraw it through a canvas on the CPU every time it loads, in every ` +
               `window. That is the pause when the tab opens. A ${maxTex}px or smaller ` +
@@ -2353,7 +2391,7 @@ export class Globe {
               `identical.`
           )
         }
-        console.log(
+        this.note(
           `[${tag}] loaded map ${w}x${h} (${ratio.toFixed(3)}:1, GPU max ${maxTex}) — ` +
             (Math.abs(ratio - 2) < 0.01
               ? 'equirectangular, correct'
@@ -2367,7 +2405,7 @@ export class Globe {
         }
       },
       () => {
-        console.warn(
+        this.note(
           `[${tag}] no/invalid map — showing the grid instead. ` +
             `Put a 2:1 image at public/${url} (or .png). ` +
             `Check the file name has no hidden double extension.`
