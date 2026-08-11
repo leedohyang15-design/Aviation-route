@@ -222,7 +222,7 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
  * plainly asked to see the path rather than the rocks. Sharp ground at this
  * scale needs a separate site image — see the note on Phase 3.
  */
-const MARS_MIN_SPAN = 1 / 80
+const MARS_MIN_SPAN = 1 / 160
 
 // How big an object is drawn, as a fraction of the frame, at a given zoom.
 //
@@ -2673,15 +2673,57 @@ export class Globe {
 
   /** Center the camera once on the selected plane (called from frame() when it is
    * first rendered). Works for routed and route-less planes alike. */
+  /**
+   * The span that would fit the current route, with room around it.
+   *
+   * The view rectangle is `s` wide in u and `s` tall in v, and u covers 360
+   * degrees against v's 180 — so a box needs `dLon/360` horizontally and
+   * `dLat/180` vertically, and the larger wins. Null when there is no route to
+   * fit or it is a single point.
+   */
+  private routeSpan(): number | null {
+    const pts = this.routePoints
+    if (!pts || pts.length < 2) return null
+    let minLon = Infinity
+    let maxLon = -Infinity
+    let minLat = Infinity
+    let maxLat = -Infinity
+    for (const p of pts) {
+      if (p.lon < minLon) minLon = p.lon
+      if (p.lon > maxLon) maxLon = p.lon
+      if (p.lat < minLat) minLat = p.lat
+      if (p.lat > maxLat) maxLat = p.lat
+    }
+    const dLon = maxLon - minLon
+    const dLat = maxLat - minLat
+    if (!Number.isFinite(dLon) || !Number.isFinite(dLat)) return null
+    // A third again, so the track does not run into the edges of the frame.
+    const s = Math.max(dLon / 360, dLat / 180) * 1.35
+    return s > 0 ? Math.min(1, s) : null
+  }
+
   private recenterOnPlane(lon: number, lat: number): void {
     if (this.interactive) {
       this.iCenterLon = lon
       this.iCenterLat = lat
-      // A moderate span (not full zoom-out): at span 1 the vertical center is
-      // pinned to the equator, so a plane away from lat 0 could never actually
-      // be centered — that was the "centering sometimes fails" bug. Zooming in a
-      // little gives room to center the plane vertically as well as horizontally.
-      this.iSpan = Math.min(this.iSpan, 0.6)
+      /*
+       * Frame the LINE when the line is the point.
+       *
+       * A moderate span — not full zoom-out — is right for an aircraft: at span
+       * 1 the vertical centre is pinned to the equator, so a plane away from
+       * lat 0 could never be centred, and a flight path is thousands of
+       * kilometres so 0.6 already shows it. For a rover it is wrong by two
+       * orders of magnitude. Curiosity's traverse spans 21km, which at span 0.6
+       * is 2.7 pixels — drawn correctly, every frame, underneath a
+       * forty-pixel selection icon. The line was never missing.
+       *
+       * So a probe is framed to its own track instead, clamped at the limit
+       * where the map gives up (MARS_MIN_SPAN). That puts the traverse at about
+       * 260 pixels: the ground behind it is soft, and the thing the visitor
+       * asked to see is the size of a thing.
+       */
+      const fit = this.kind === 'probe' ? this.routeSpan() : null
+      this.iSpan = fit != null ? Math.max(this.minSpan, fit) : Math.min(this.iSpan, 0.6)
       this.applyInteractiveView()
       this.emitView()
     } else {
@@ -2977,6 +3019,11 @@ export class Globe {
     // possible causes — nothing sent, nothing received, nothing rendered — and
     // only the renderer can rule out the middle one.
     this.onNote?.(`[route] ${next ? `${next.length} points` : 'cleared'} (${this.kind})`)
+    // A traverse arrives after its probe is selected, and it is what decides
+    // how far in to zoom — so the framing has to be asked for again once it is
+    // here. Without this the camera keeps whatever span it had when the dot was
+    // tapped, which is how a correctly drawn line stays three pixels wide.
+    if (next && this.kind === 'probe') this.pendingRecenter = true
     this.disposeRouteGroup()
     const on = !!this.routePoints
     this.originMarker.visible = on
