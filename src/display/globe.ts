@@ -2072,7 +2072,6 @@ export class Globe {
      * though — a hemisphere of nothing is a map nobody can read.
      */
     this.bgUniforms.uNightFloor.value = MARS_NIGHT_FLOOR
-    // Further in than the map can honestly hold; see MARS_MIN_SPAN.
     if (this.marsTex) {
       this.bgUniforms.uMap.value = this.marsTex
       this.bgUniforms.uHasMap.value = 1
