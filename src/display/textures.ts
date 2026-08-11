@@ -603,6 +603,45 @@ export function roverTexture(): THREE.CanvasTexture {
 }
 
 /**
+ * A moon: a ball, not a mark on a map.
+ *
+ * The landing-site diamond is a symbol for a PLACE — it says "something is
+ * here" about a point on a surface. The four Galilean moons are not places on
+ * Jupiter, they are worlds going round it, and a diamond made them read as
+ * four more landing sites on the cloud tops. A filled disc with a soft rim is
+ * the shape of the thing itself, and at a glance across a room it is the only
+ * shape on any of the five tabs that says "this is round".
+ */
+export function moonTexture(): THREE.CanvasTexture {
+  const s = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  const m = s / 2
+  // A soft halo first, so a pale moon still separates from a pale cloud band.
+  const halo = g.createRadialGradient(m, m, s * 0.26, m, m, s * 0.5)
+  halo.addColorStop(0, 'rgba(255,255,255,0.5)')
+  halo.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = halo
+  g.beginPath()
+  g.arc(m, m, s * 0.5, 0, Math.PI * 2)
+  g.fill()
+  // The body. Lit from the upper left, which is the direction every drawing of
+  // a sphere has been lit since before anybody drew a planet.
+  const body = g.createRadialGradient(m - s * 0.09, m - s * 0.09, s * 0.03, m, m, s * 0.29)
+  body.addColorStop(0, 'rgba(255,255,255,1)')
+  body.addColorStop(0.65, 'rgba(255,255,255,0.94)')
+  body.addColorStop(1, 'rgba(255,255,255,0.72)')
+  g.fillStyle = body
+  g.beginPath()
+  g.arc(m, m, s * 0.29, 0, Math.PI * 2)
+  g.fill()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/**
  * The selected marker for a place nobody has landed on yet.
  *
  * The rover icon cannot do this job — it is a picture of a machine, and the

@@ -1,25 +1,16 @@
-import {
-  GALILEO_PROBE,
-  cruiseProgress,
-  moonPeriodDays,
-  monthsUntil,
-  waitLabel,
-  type JupiterMoon,
-  type JupiterVisitor
-} from '@shared/jupiter'
+import { GALILEO_PROBE, moonPeriodDays, type JupiterMoon } from '@shared/jupiter'
 import { MoonOrrery } from './MoonOrrery'
 import { useAutoScroll } from './useAutoScroll'
 
 /**
- * The three things you can tap on the Jupiter tab, as three cards that share a
+ * The two things you can tap on the Jupiter tab, as two cards that share a
  * shape.
  *
  * They reuse .probe-card because a visitor arriving here from Mars should not
  * have to learn a second card — the panel, the status pill, the coloured rule
  * and the scrolling body all mean what they meant one tab ago. What changes is
  * the figure each one leads with, and that is the point of each card: a moon
- * leads with the length of its day, a spacecraft with how long it still has to
- * fly, and the probe with how long it lasted.
+ * leads with the length of its day, and the probe with how long it lasted.
  */
 
 /** 3,643 km against something a child has a size for. */
@@ -89,70 +80,6 @@ export function MoonCard({ moon, now }: { moon: JupiterMoon; now: number }): JSX
             </li>
           ))}
         </ol>
-      </div>
-    </div>
-  )
-}
-
-export function VisitorCard({ visitor: v, now }: { visitor: JupiterVisitor; now: number }): JSX.Element {
-  const scroller = useAutoScroll<HTMLDivElement>()
-  const months = monthsUntil(v.arrivesYm, now)
-  const pct = Math.round(cruiseProgress(v, now) * 100)
-  const launchedYear = v.launched.slice(0, 4)
-
-  return (
-    <div className="probe-card jupiter">
-      <div className="probe-edge" style={{ background: v.color }} />
-      <div className="probe-head">
-        <div className="probe-name">
-          {v.name}
-          <span className="probe-sub">{v.subtitle}</span>
-        </div>
-        <div className="probe-state">가는 중</div>
-      </div>
-
-      <div className="future-scroll" ref={scroller}>
-        <div className="probe-where">
-          <b>{v.target}로 가요</b>
-          <span>{v.agency}</span>
-        </div>
-        <p className="future-note">{v.why}</p>
-
-        <div className="probe-facts three">
-          <div>
-            <b>{waitLabel(months)}</b>
-            <span>도착까지</span>
-          </div>
-          <div>
-            <b>{pct}%</b>
-            <span>지금까지 온 길</span>
-          </div>
-          <div>
-            {/* Year in the figure, month in the caption: "2030년 4월" set at
-                the figure size wraps mid-date in a third of a 360px card. */}
-            <b>{v.arrivesYm.slice(0, 4)}년</b>
-            <span>{Number(v.arrivesYm.slice(5))}월에 도착해요</span>
-          </div>
-        </div>
-
-        {/* The bar is the whole story of a cruise to Jupiter: it left before
-            most of the children looking at it could read, and it arrives after
-            they leave primary school. */}
-        <div className="cruise">
-          <div className="cruise-bar">
-            <i style={{ width: `${pct}%`, background: v.color }} />
-          </div>
-          <div className="cruise-ends">
-            <span>{launchedYear} 출발</span>
-            <span>{v.arrivesLabel} 도착</span>
-          </div>
-        </div>
-
-        <p className="future-why">
-          목성은 너무 멀어서 곧장 갈 수가 없어요. 지구와 금성 옆을 몇 번씩 스쳐 지나가며 그 힘을
-          빌려 속도를 올린 다음에야 목성까지 갈 수 있어요. 그래서 {launchedYear}년에 떠나서{' '}
-          {v.arrivesLabel}에 도착해요.
-        </p>
       </div>
     </div>
   )

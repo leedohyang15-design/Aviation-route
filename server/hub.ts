@@ -20,7 +20,7 @@ import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
-import { GALILEAN, GALILEO_PROBE, JUPITER_BOUND } from '../src/shared/jupiter'
+import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
 import { opsLog } from './log'
@@ -484,14 +484,10 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     // targets are not probes and are not in MARS_PROBES, so leaving them out
     // here made every tap on one a silent "ignored — not on the mars layer".
     if (state.mode === 'mars') return MARS_PROBES.some((p) => p.id === id) || isTargetId(id)
-    // Four moons, two spacecraft on their way, and the one place anything ever
-    // went in. None of them is a probe on a surface, so none is in MARS_PROBES.
+    // Four moons and the one place anything ever went in. Neither is a probe
+    // on a surface, so neither is in MARS_PROBES.
     if (state.mode === 'jupiter') {
-      return (
-        GALILEAN.some((m) => m.id === id) ||
-        JUPITER_BOUND.some((v) => v.id === id) ||
-        id === GALILEO_PROBE.id
-      )
+      return GALILEAN.some((m) => m.id === id) || id === GALILEO_PROBE.id
     }
     if (state.mode === 'satellite') return satDetail(id) != null
     // An aircraft that has just blinked out of one snapshot is still the

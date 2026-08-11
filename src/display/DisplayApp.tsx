@@ -22,11 +22,8 @@ import {
 import {
   GALILEAN,
   GALILEO_PROBE,
-  JUPITER_BOUND,
   moonMapLon,
   moonPeriodDays,
-  monthsUntil,
-  waitLabel,
   westToRendererLon
 } from '@shared/jupiter'
 import { Globe } from './globe'
@@ -57,8 +54,6 @@ function planetAccent(selected: string | null, jupiter = false): string {
   if (jupiter) {
     const m = GALILEAN.find((x) => x.id === selected)
     if (m) return m.color
-    const v = JUPITER_BOUND.find((x) => x.id === selected)
-    if (v) return v.color
     // Nothing chosen, or the probe entry: the planet's own colour, which is
     // the belts rather than any one object on it.
     return GALILEO_PROBE.color
@@ -160,17 +155,16 @@ export function DisplayApp(): JSX.Element {
    */
   const callout = useMemo<Callout>(() => {
     /*
-     * Jupiter: the four moons, and the two things still flying there.
+     * Jupiter: the four moons, and the one place anything ever went in.
      *
      * The figure is never a distance. Jupiter is between 590 and 970 million
      * kilometres away depending on the month, and no number that big means
      * anything to a child standing in front of it — so the plate carries TIME,
-     * the same as every other tab does. A moon's day, or the years a
-     * spacecraft still has to fly.
+     * the same as every other tab does. How long a moon takes to go round, or
+     * how long the probe lasted on the way down.
      */
     if (isJupiter) {
       void marsTick
-      const now = Date.now()
       const m = GALILEAN.find((x) => x.id === state.selected)
       if (m) {
         const days = moonPeriodDays(m)
@@ -179,15 +173,6 @@ export function DisplayApp(): JSX.Element {
           prefix: '목성을 한 바퀴 도는 데',
           value: days < 5 ? `${(days * 24).toFixed(0)}시간` : `${days.toFixed(1)}일`,
           suffix: `· 지금 목성 둘레의 저 점에 있어요`
-        }
-      }
-      const v = JUPITER_BOUND.find((x) => x.id === state.selected)
-      if (v) {
-        return {
-          title: `${v.name}   ${v.target}로 가는 중`,
-          prefix: `${v.launched.slice(0, 4)}년에 떠나서, 도착까지`,
-          value: waitLabel(monthsUntil(v.arrivesYm, now)),
-          suffix: `· ${v.arrivesLabel}`
         }
       }
       if (state.selected === GALILEO_PROBE.id) {
@@ -366,7 +351,7 @@ export function DisplayApp(): JSX.Element {
     // quietly gave the fourth tab aeroplane silhouettes pointing at headings
     // that landers do not have.
     globeRef.current?.setObjectKind(
-      isSat ? 'satellite' : isMars || isJupiter ? 'probe' : 'aircraft'
+      isSat ? 'satellite' : isJupiter ? 'moon' : isMars ? 'probe' : 'aircraft'
     )
     globeRef.current?.setPlanet(isMars ? 'mars' : isJupiter ? 'jupiter' : 'earth')
     globeRef.current?.clearObjects()
@@ -391,7 +376,7 @@ export function DisplayApp(): JSX.Element {
   }, [isMars, marsLive])
   useEffect(() => {
     globeRef.current?.setProbeIcon(
-      isTargetId(state.selected) || isJupiter ? 'target' : 'rover'
+      isTargetId(state.selected) ? 'target' : 'rover'
     )
   }, [isMars, isJupiter, state.selected])
   // Jupiter carries one marker: the only spot anything has ever been. The moons

@@ -241,73 +241,12 @@ export function westToRendererLon(lonWest: number): number {
   return e > 180 ? e - 360 : e
 }
 
-/* ------------------------------------------------------------------ *
- * On their way
- * ------------------------------------------------------------------ */
-
-export interface JupiterVisitor {
-  id: string
-  name: string
-  subtitle: string
-  agency: string
-  /** Launch, ISO. */
-  launched: string
-  /**
-   * Arrival, to the MONTH — which is the precision the published plans have
-   * and the precision this shows. A day here would be invented.
-   */
-  arrivesYm: string
-  arrivesLabel: string
-  target: string
-  why: string
-  color: string
-}
-
-export const JUPITER_BOUND: JupiterVisitor[] = [
-  {
-    id: 'clipper',
-    name: '유로파 클리퍼',
-    subtitle: 'Europa Clipper',
-    agency: 'NASA',
-    launched: '2024-10-14',
-    arrivesYm: '2030-04',
-    arrivesLabel: '2030년 4월',
-    target: '유로파',
-    why: '얼음 밑 바다에 생명이 살 만한지 알아보러 가요. 유로파 옆을 50번 스쳐 지나갈 거예요.',
-    color: '#7ce0a8'
-  },
-  {
-    id: 'juice',
-    name: '주스',
-    subtitle: 'JUICE',
-    agency: 'ESA',
-    launched: '2023-04-14',
-    arrivesYm: '2031-07',
-    arrivesLabel: '2031년 7월',
-    target: '가니메데',
-    why: '가니메데를 도는 첫 탐사선이 될 거예요. 다른 행성의 위성을 도는 건 처음이에요.',
-    color: '#b48cff'
-  }
-]
-
-/** Months from now until a YYYY-MM, never negative. */
-export function monthsUntil(ym: string, nowMs: number): number {
-  const [y, m] = ym.split('-').map(Number)
-  const now = new Date(nowMs)
-  return Math.max(0, (y - now.getFullYear()) * 12 + (m - 1 - now.getMonth()))
-}
-
-/** 68 -> "5년 8개월". Years alone is too coarse when the wait is this long. */
-export function waitLabel(months: number): string {
-  const y = Math.floor(months / 12)
-  const m = months % 12
-  if (!y) return `${m}개월`
-  return m ? `${y}년 ${m}개월` : `${y}년`
-}
-
-/** How far along the cruise is, 0..1 — launch to arrival. */
-export function cruiseProgress(v: JupiterVisitor, nowMs: number): number {
-  const from = Date.parse(v.launched + 'T00:00:00Z')
-  const to = Date.parse(v.arrivesYm + '-01T00:00:00Z')
-  return Math.max(0, Math.min(1, (nowMs - from) / (to - from)))
-}
+/*
+ * The two spacecraft on their way to Jupiter used to live here — Europa
+ * Clipper, arriving 2030, and JUICE, 2031 — with a cruise bar showing how far
+ * along each was. They came out because this tab is about four worlds a child
+ * can go outside and look at tonight, and two dots that will not arrive until
+ * those children have left primary school were a second, weaker story
+ * competing with it. The Mars tab already carries "what happens next"; this
+ * one is better for being only about what is there.
+ */

@@ -9,8 +9,8 @@ import { ProbeTimelineCard } from '../common/ProbeTimelineCard'
 import { MarsFutureCard } from '../common/MarsFutureCard'
 import { MARS_PROBES, PROBE_COLOR, PROBE_STATE_LABEL } from '@shared/probes'
 import { MARS_PLAN, MARS_TARGETS, TARGET_COLOR } from '@shared/mars-future'
-import { GALILEAN, GALILEO_PROBE, JUPITER_BOUND } from '@shared/jupiter'
-import { MoonCard, ProbeEntryCard, VisitorCard } from '../common/JupiterCard'
+import { GALILEAN, GALILEO_PROBE } from '@shared/jupiter'
+import { MoonCard, ProbeEntryCard } from '../common/JupiterCard'
 import type { Aircraft, ExhibitMode, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
@@ -256,7 +256,6 @@ export function ControlApp(): JSX.Element {
   const marsProbe = isMars ? MARS_PROBES.find((p) => p.id === state.selected) ?? null : null
   const marsTarget = isMars ? MARS_TARGETS.find((t) => t.id === state.selected) ?? null : null
   const jMoon = isJupiter ? GALILEAN.find((m) => m.id === state.selected) ?? null : null
-  const jVisitor = isJupiter ? JUPITER_BOUND.find((v) => v.id === state.selected) ?? null : null
   const jProbe = isJupiter && state.selected === GALILEO_PROBE.id
   const isWeather = mode === 'weather'
   const hiddenWeather = state.hiddenWeather ?? []
@@ -619,8 +618,8 @@ export function ControlApp(): JSX.Element {
             </>
           ) : isJupiter ? (
             <>
-              목성을 도는 큰 달 <b>{GALILEAN.length}</b>개 · 가는 중인 탐사선{' '}
-              <b>{JUPITER_BOUND.length}</b>대
+              목성을 도는 큰 달 <b>{GALILEAN.length}</b>개 · 목성 안으로 들어간 것{' '}
+              <b>1</b>대
             </>
           ) : isMars ? (
             <>
@@ -861,24 +860,6 @@ export function ControlApp(): JSX.Element {
               {GALILEO_PROBE.name}
               <em>{GALILEO_PROBE.entered.slice(0, 4)}</em>
             </button>
-            <div className="target-row">
-              <span className="target-lead">가는 중</span>
-              {JUPITER_BOUND.map((v) => (
-                <button
-                  key={v.id}
-                  className={'leg probe target' + (state.selected === v.id ? ' on' : '')}
-                  title={`${v.target}로 가는 중 · ${v.arrivesLabel} 도착`}
-                  onClick={() => {
-                    poke()
-                    send({ type: 'select', icao24: state.selected === v.id ? null : v.id })
-                  }}
-                >
-                  <i style={{ background: v.color }} />
-                  {v.name}
-                  <em>{v.arrivesLabel.slice(0, 5)}</em>
-                </button>
-              ))}
-            </div>
           </div>
         ) : isSat ? (
           <div className="legend">
@@ -956,11 +937,6 @@ export function ControlApp(): JSX.Element {
           ? (jMoon && (
               <div className="sheet-card" key={jMoon.id}>
                 <MoonCard moon={jMoon} now={Date.now()} />
-              </div>
-            )) ||
-            (jVisitor && (
-              <div className="sheet-card" key={jVisitor.id}>
-                <VisitorCard visitor={jVisitor} now={Date.now()} />
               </div>
             )) ||
             (jProbe && (

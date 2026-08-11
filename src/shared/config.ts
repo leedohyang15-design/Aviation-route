@@ -105,6 +105,27 @@ export const JUPITER_TEXTURE_URL = 'jupiter_equirect.jpg'
  */
 export const JUPITER_POLE_FADE_DEG = 14
 /**
+ * How long one Jupiter day takes on screen. Six minutes, matching Mars.
+ *
+ * The real one is 9h 55m, which is the fastest day of any planet and still far
+ * too slow to see: a visitor stands here for two or three minutes, in which the
+ * true terminator creeps about a degree and a half and half the planet is
+ * simply dark throughout. Compressing it is also what keeps the tab honest —
+ * at six minutes a lap nothing on screen claims to be the real longitude of
+ * noon on Jupiter this afternoon, which is a claim the exhibit cannot check.
+ * Set to 0 to stop the spin.
+ */
+export const JUPITER_DAY_PERIOD_MS = 6 * 60 * 1000
+/**
+ * How much of the day map survives on Jupiter's night side.
+ *
+ * Higher than Earth's 0.22 and Mars' 0.48, because here the dark half is the
+ * SUBJECT: the belts wrap all the way round the planet and they are the whole
+ * reason for the tab. Dark enough that the terminator reads as one, bright
+ * enough that no band is lost behind it.
+ */
+export const JUPITER_NIGHT_FLOOR = 0.62
+/**
  * Grading for the Mars map. NEUTRAL by default, and that is the point.
  *
  * These exist because two rounds of them were spent chasing a map that looked

@@ -14,13 +14,10 @@
 import {
   GALILEAN,
   GALILEO_PROBE,
-  JUPITER_BOUND,
-  cruiseProgress,
   moonLongitude,
+  moonMapLon,
   moonPeriodDays,
   moonPosition,
-  monthsUntil,
-  waitLabel,
   westToRendererLon
 } from '../src/shared/jupiter'
 
@@ -112,23 +109,23 @@ assert(
 )
 assert('57분 36초 = 3,456초', GALILEO_PROBE.lastedSec === 3456)
 
-// --- the two on their way --------------------------------------------------
-console.log('\non their way')
-const now = at('2026-08-11')
-for (const v of JUPITER_BOUND) {
-  const months = monthsUntil(v.arrivesYm, now)
-  const p = cruiseProgress(v, now)
-  assert(
-    `${v.name}: ${waitLabel(months)} 남음, ${(p * 100).toFixed(0)}% 왔음`,
-    months > 0 && p > 0 && p < 1
-  )
-  assert(`${v.name} 발사가 도착보다 먼저`, Date.parse(v.launched) < Date.parse(v.arrivesYm + '-01'))
+// --- where they sit around the planet ---------------------------------------
+console.log('\nmap longitudes')
+const t0 = at('2026-08-11')
+for (const m of GALILEAN) {
+  const lon = moonMapLon(m, t0)
+  assert(`${m.name} ${lon.toFixed(1)}° in -180..180`, lon >= -180 && lon <= 180)
+  // Same angle as the orrery uses, just unwrapped for the map.
+  const raw = moonLongitude(m, t0)
+  assert(`${m.name} agrees with moonLongitude`, Math.abs(((lon + 360) % 360) - raw) < 1e-9)
 }
-assert('클리퍼가 주스보다 먼저 도착', monthsUntil('2030-04', now) < monthsUntil('2031-07', now))
-assert('도착일이 지나면 0개월', monthsUntil('2020-01', now) === 0)
-assert('waitLabel(44) = 3년 8개월', waitLabel(44) === '3년 8개월')
-assert('waitLabel(24) = 2년', waitLabel(24) === '2년')
-assert('waitLabel(7) = 7개월', waitLabel(7) === '7개월')
+// Io laps the map in under two days; Callisto takes over a fortnight. If these
+// ever came out equal the dots would be frozen relative to each other.
+const lapDays = GALILEAN.map((m) => moonPeriodDays(m))
+assert(
+  `이오 ${lapDays[0].toFixed(2)}일 < 칼리스토 ${lapDays[3].toFixed(2)}일`,
+  lapDays[0] < lapDays[1] && lapDays[1] < lapDays[2] && lapDays[2] < lapDays[3]
+)
 
 console.log(failures === 0 ? '\nall good' : `\n${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

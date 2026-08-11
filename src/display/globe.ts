@@ -34,6 +34,8 @@ import {
   MARS_NIGHT_FLOOR,
   MARS_SATURATION,
   MARS_TINT,
+  JUPITER_DAY_PERIOD_MS,
+  JUPITER_NIGHT_FLOOR,
   JUPITER_POLE_FADE_DEG,
   JUPITER_TEXTURE_URL,
   MARS_TEXTURE_URL,
@@ -69,6 +71,7 @@ import {
   plainDotTexture,
   probeTexture,
   roverTexture,
+  moonTexture,
   targetTexture,
   satelliteTexture
 } from './textures'
@@ -103,7 +106,10 @@ const READ_MS: Record<ObjectKind, number> = {
   // Telemetry sheet: four tiles and three sentences.
   satellite: 75_000,
   // A whole mission's history, or the next launch window and why it exists.
-  probe: 150_000
+  probe: 150_000,
+  // A moon's card, plus the orrery under it, which is worth standing and
+  // watching for a while — it is the only diagram in the exhibit that moves.
+  moon: 150_000
 }
 const HOME_LON = 127.5
 const HOME_LAT = 37.5
@@ -238,7 +244,7 @@ const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
  * used to read `=== 'satellite'` now reads `!== 'aircraft'`, which is what it
  * always meant.
  */
-export type ObjectKind = 'aircraft' | 'satellite' | 'probe'
+export type ObjectKind = 'aircraft' | 'satellite' | 'probe' | 'moon'
 
 /** Which world the background shader is drawing. */
 export type Planet = 'earth' | 'mars' | 'jupiter'
@@ -270,7 +276,11 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
 /* A landing site is bigger than a satellite dot on purpose: there are a dozen
    of them on an empty planet rather than thousands on a busy one, and each is
    a thing a child is meant to walk up to and press. */
-const ICON_K = { aircraft: 0.62, satellite: 0.3, probe: 0.5 } as const
+/* Bigger than a landing site, which is already bigger than a satellite dot.
+   There are four of them on an otherwise empty planet, they are the only thing
+   on this tab a visitor is meant to press, and a ball at the diamond's size
+   read as a speck rather than as a world. */
+const ICON_K = { aircraft: 0.62, satellite: 0.3, probe: 0.5, moon: 0.95 } as const
 /** Exponent below 1 = icons shrink when zoomed out. 0.7 doubles them between
  * world view and full zoom, which is enough to matter without ballooning. */
 const ICON_ZOOM_P = 0.7
@@ -293,7 +303,7 @@ const FLAG_H = 0.03 // country flag
 
 // The selection's halo: warm cabin light for an aircraft, cold instrument
 // light for a satellite. Sized as a multiple of the icon.
-const GLOW_COLOR = { aircraft: '#ffcf8a', satellite: '#9be8ff', probe: '#ffd7a8' } as const
+const GLOW_COLOR = { aircraft: '#ffcf8a', satellite: '#9be8ff', probe: '#ffd7a8', moon: '#ffe6bf' } as const
 const GLOW_SCALE = 3.4
 
 /** One full turn of the earth, compressed. At the real fifteen degrees an hour
@@ -429,6 +439,7 @@ export class Globe {
   private probeTex!: THREE.CanvasTexture
   private roverTex!: THREE.CanvasTexture
   private targetTex!: THREE.CanvasTexture
+  private moonTex!: THREE.CanvasTexture
   private probeIcon: 'rover' | 'target' = 'rover'
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
@@ -650,6 +661,19 @@ export class Globe {
        */
       uTerminator: { value: 1 },
       /*
+       * What colour the night side goes.
+       *
+       * Earth's and Mars' night is moonlit, so the surviving day map is pushed
+       * toward blue — which is what moonlight looks like and what every
+       * photograph of a night landscape shows. Jupiter has no moonlight worth
+       * the name: four moons, all of them far smaller in its sky than ours is
+       * in ours, over a planet with no ground to catch the light anyway. And a
+       * blue cast over ochre is precisely the pale smear this tab already had
+       * once, in a milder form. Neutral there — the night side is simply the
+       * day side with the sun off it.
+       */
+      uNightTint: { value: new THREE.Vector3(0.7, 0.82, 1.18) },
+      /*
        * Degrees of latitude at each pole to fade out, for maps that have no
        * data there. See JUPITER_POLE_FADE_DEG.
        */
@@ -710,7 +734,7 @@ export class Globe {
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
-        uniform float uTerminator; uniform float uPoleFade;
+        uniform float uTerminator; uniform float uPoleFade; uniform vec3 uNightTint;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
@@ -844,7 +868,7 @@ export class Globe {
           // and shifted toward blue, reads as moonlight: the continents stay
           // legible while it still plainly isn't daytime.
           float nluma = dot(day, vec3(0.299, 0.587, 0.114));
-          vec3 moonlit = mix(vec3(nluma), day, 0.6) * vec3(0.70, 0.82, 1.18) * uNightFloor;
+          vec3 moonlit = mix(vec3(nluma), day, 0.6) * uNightTint * uNightFloor;
           vec3 lights = uHasNight > 0.5 ? texture2D(uNightMap, uv).rgb * 1.6 : vec3(0.0);
           vec3 night = moonlit + lights;
           vec3 col = mix(day, night, uNight);
@@ -1053,6 +1077,7 @@ export class Globe {
     this.probeTex = this.tuneSprite(probeTexture())
     this.roverTex = this.tuneSprite(roverTexture())
     this.targetTex = this.tuneSprite(targetTexture())
+    this.moonTex = this.tuneSprite(moonTexture())
     // Unit quad: every sprite's real size lives in its instance matrix, because
     // width has to be derived from the frame aspect (see setSpriteMatrix).
     const quad = new THREE.PlaneGeometry(1, 1)
@@ -2110,6 +2135,7 @@ export class Globe {
       this.bgUniforms.uNightFloor.value = 0.22
       this.bgUniforms.uTerminator.value = 1
       this.bgUniforms.uPoleFade.value = 0
+      this.bgUniforms.uNightTint.value = new THREE.Vector3(0.7, 0.82, 1.18)
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
       this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
@@ -2133,9 +2159,20 @@ export class Globe {
        * rotation, so the picture has no single time of day to shade for.
        */
       this.bgUniforms.uHasNight.value = 0
-      this.bgUniforms.uTerminator.value = 0
+      this.bgUniforms.uTerminator.value = 1
       this.bgUniforms.uPoleFade.value = JUPITER_POLE_FADE_DEG
-      this.bgUniforms.uNightFloor.value = 1
+      this.bgUniforms.uNightTint.value = new THREE.Vector3(1, 1, 1)
+      /*
+       * Brighter at night than Mars, and much brighter than Earth.
+       *
+       * Nothing lives down there to light it and there is no ground to catch
+       * moonlight — but Jupiter's night side is the SUBJECT here, not an empty
+       * hemisphere to be got through: the belts run all the way round and are
+       * the whole reason the tab exists. A dark half would hide half of them.
+       * High enough that the bands stay legible, low enough that the boundary
+       * is unmistakably a boundary.
+       */
+      this.bgUniforms.uNightFloor.value = JUPITER_NIGHT_FLOOR
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
       this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
@@ -2187,6 +2224,7 @@ export class Globe {
     this.bgUniforms.uNightFloor.value = MARS_NIGHT_FLOOR
     this.bgUniforms.uTerminator.value = 1
     this.bgUniforms.uPoleFade.value = 0
+    this.bgUniforms.uNightTint.value = new THREE.Vector3(0.7, 0.82, 1.18)
     if (this.marsTex) {
       this.bgUniforms.uMap.value = this.marsTex
       this.bgUniforms.uHasMap.value = 1
@@ -2948,12 +2986,26 @@ export class Globe {
     this.kind = kind
     const inst = this.planes.material as THREE.MeshBasicMaterial
     const selMat = this.selectedPlane.material as THREE.MeshBasicMaterial
-    inst.map = kind === 'probe' ? this.probeTex : kind === 'satellite' ? this.dotTex : this.planeTex
+    inst.map =
+      kind === 'moon'
+        ? this.moonTex
+        : kind === 'probe'
+        ? this.probeTex
+        : kind === 'satellite'
+        ? this.dotTex
+        : this.planeTex
     // A dot has no silhouette to clip, and alphaTest would eat its soft edge.
     inst.alphaTest = kind !== 'aircraft' ? 0 : 0.35
     inst.needsUpdate = true
     this.probeIcon = 'rover'
-    selMat.map = kind === 'probe' ? this.roverTex : kind === 'satellite' ? this.satTex : this.planeTex
+    selMat.map =
+      kind === 'moon'
+        ? this.moonTex
+        : kind === 'probe'
+        ? this.roverTex
+        : kind === 'satellite'
+        ? this.satTex
+        : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
     // An aircraft's lights are out on the wingtips, a satellite's beacon is on
@@ -3889,6 +3941,37 @@ export class Globe {
      * tilt over a Mars year, and the point marches 90 degrees west each
      * quarter sol.
      */
+    /*
+     * Jupiter's, which is a PRESENTATION rather than a reading of the clock.
+     *
+     * Its real day is 9h 55m and its axis is tilted 3.1 degrees, so the
+     * subsolar point sits on the equator to within three degrees all year —
+     * that part is simply true and needs no ephemeris. The longitude is the
+     * part that would: tying the terminator to System III means tying these
+     * longitudes to the frame the rotation model is measured in, and the zero
+     * point could not be checked against a published transit (see the note in
+     * shared/jupiter.ts).
+     *
+     * Compressing the spin into six minutes settles it, and settles it
+     * honestly. At six minutes a lap nothing on screen claims to be the real
+     * longitude of noon on Jupiter this afternoon — the same bargain Mars
+     * already makes, and for the same reason: at the true rate the shadow
+     * barely creeps during a visit and half the planet is simply dark for all
+     * of it. What a child gets is the true fact, which is that Jupiter turns
+     * faster than any other planet and half of it is always night.
+     */
+    if (this.planet === 'jupiter') {
+      this.sunDecl = 0
+      this.sunLon =
+        this.nightHourOverride != null
+          ? wrapLon(360 - 15 * (this.nightHourOverride - 12))
+          : wrapLon(180 - ((Date.now() % JUPITER_DAY_PERIOD_MS) / JUPITER_DAY_PERIOD_MS) * 360)
+      this.bgUniforms.uSunLon.value = this.sunLon
+      this.bgUniforms.uSunDecl.value = this.sunDecl
+      this.sinDecl = 0
+      this.cosDecl = 1
+      return
+    }
     if (this.planet === 'mars') {
       const s = marsSubsolar(Date.now())
       this.sunDecl = s.decl

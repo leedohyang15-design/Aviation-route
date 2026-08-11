@@ -120,7 +120,13 @@ export function MapView({
     // A switch, not a boolean: the fourth mode used to inherit the aircraft
     // branch and draw landing sites as aeroplanes pointing at a heading.
     globeRef.current?.setObjectKind(
-      mode === 'satellite' ? 'satellite' : mode === 'mars' || mode === 'jupiter' ? 'probe' : 'aircraft'
+      mode === 'satellite'
+        ? 'satellite'
+        : mode === 'jupiter'
+        ? 'moon'
+        : mode === 'mars'
+        ? 'probe'
+        : 'aircraft'
     )
     globeRef.current?.setPlanet(mode === 'mars' ? 'mars' : mode === 'jupiter' ? 'jupiter' : 'earth')
     globeRef.current?.clearObjects()
@@ -149,7 +155,7 @@ export function MapView({
     // A reticle for a place and a rover for a machine. On Jupiter the only
     // marker is where the probe went IN, which is a spot on a planet rather
     // than a vehicle standing on one, so it wears the reticle too.
-    globeRef.current?.setProbeIcon(isTargetId(selected) || isJupiter ? 'target' : 'rover')
+    globeRef.current?.setProbeIcon(isTargetId(selected) ? 'target' : 'rover')
   }, [isMars, isJupiter, selected])
   /*
    * One marker, and it is the only place anything has ever been.
