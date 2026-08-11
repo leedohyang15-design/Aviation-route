@@ -19,7 +19,7 @@ import {
   targetPosition
 } from '@shared/mars-future'
 import { Globe } from './globe'
-import { panelSkin, type CalloutSkin } from './textures'
+import { panelSkin } from './textures'
 import type { OrbitClass } from '@shared/types'
 
 const ORBIT_LABEL: Record<OrbitClass, string> = {
@@ -59,12 +59,6 @@ interface Callout {
   prefix: string
   value: string
   suffix: string
-  /**
-   * What the plate is made of. Undefined means the paper tag, which is right
-   * for every tab whose background is the Earth. Mars is the exception — see
-   * panelSkin in textures.ts.
-   */
-  skin?: CalloutSkin
 }
 const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
 
@@ -156,19 +150,6 @@ export function DisplayApp(): JSX.Element {
     if (isMars) {
       void marsTick
       /*
-       * Dark glass, not the paper tag, and the rule down its edge is the colour
-       * of the dot that was tapped.
-       *
-       * The plate is a boarding-pass tag because the aircraft tab is about a
-       * journey with two ends and a cream card reads beautifully over dark
-       * ocean. Mars is the opposite background — bright ochre filling the frame
-       * — and two light surfaces argue. The control screen's Mars card already
-       * solved this by being dark glass, so the dome answers to the same
-       * design, and a visitor looking up from the touchscreen sees the same
-       * object described the same way in both places.
-       */
-      const skin = panelSkin(marsAccent(state.selected))
-      /*
        * A candidate landing region, which is the one thing on this dome that
        * has not happened yet.
        *
@@ -187,8 +168,7 @@ export function DisplayApp(): JSX.Element {
           title: `${t.name}   아직 아무도 못 가본 곳`,
           prefix: '다음에 지구를 떠날 수 있는 날까지',
           value: `${daysUntil(win.departMs, now).toLocaleString()}일`,
-          suffix: `· ${d.getFullYear()}년 ${d.getMonth() + 1}월`,
-          skin
+          suffix: `· ${d.getFullYear()}년 ${d.getMonth() + 1}월`
         }
       }
       const p = MARS_PROBES.find((x) => x.id === state.selected)
@@ -197,8 +177,7 @@ export function DisplayApp(): JSX.Element {
         return {
           ...NOTHING,
           title: '화성',
-          prefix: `사람이 보낸 로봇 ${MARS_PROBES.length}대가 여기 내려앉았고, 그중 ${alive}대는 지금도 일하고 있어요`,
-          skin
+          prefix: `사람이 보낸 로봇 ${MARS_PROBES.length}대가 여기 내려앉았고, 그중 ${alive}대는 지금도 일하고 있어요`
         }
       }
       const now = Date.now()
@@ -208,20 +187,14 @@ export function DisplayApp(): JSX.Element {
       const sol = marsLive[p.id]?.sol ?? missionSol(p, now)
       const title = `${p.name}   ${p.place}`
       if (p.status === 'lost') {
-        return {
-          ...NOTHING,
-          title,
-          prefix: `${p.landed.slice(0, 4)}년에 내렸지만 소식이 끊겼어요`,
-          skin
-        }
+        return { ...NOTHING, title, prefix: `${p.landed.slice(0, 4)}년에 내렸지만 소식이 끊겼어요` }
       }
       if (p.status === 'active') {
         return {
           title,
           prefix: `화성에 온 지`,
           value: `${sol.toLocaleString()}솔`,
-          suffix: `· 그곳은 지금 ${marsClock(p.lonEast, now)}`,
-          skin
+          suffix: `· 그곳은 지금 ${marsClock(p.lonEast, now)}`
         }
       }
       return {
@@ -437,9 +410,20 @@ export function DisplayApp(): JSX.Element {
         callout.value,
         callout.suffix,
         isSat,
-        callout.skin
+        /*
+         * Which plate, decided HERE and not in the branch that wrote the words.
+         *
+         * It started as a `skin` field on each Callout, which meant five
+         * branches each had to remember it, and the "finished mission" one did
+         * not — so seven of the twelve probes kept the cream boarding-pass tag
+         * over bright ochre while the other five got the dark glass. What the
+         * plate is made of is a property of the TAB, not of the sentence, and
+         * putting the choice at the single place the plate is drawn makes it
+         * impossible for a sixth branch to forget.
+         */
+        isMars ? panelSkin(marsAccent(state.selected)) : undefined
       ),
-    [callout, isSat]
+    [callout, isSat, isMars, state.selected]
   )
 
   return (

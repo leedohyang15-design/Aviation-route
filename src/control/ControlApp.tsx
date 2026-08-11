@@ -395,17 +395,36 @@ export function ControlApp(): JSX.Element {
   /**
    * Re-hang the card at its chosen offset from wherever the object is now.
    *
-   * No clamping to the viewport. Clamping is what made it follow the observer:
-   * pan the aircraft off the left edge and a clamped card stops at the edge and
-   * sits there, staring at you, while the thing it describes is gone. It is
-   * nailed to the object — if the object leaves the screen, so does the card.
+   * Placement runs once and picks an OFFSET; this carries the card along. Pinning
+   * the card to the screen instead meant that panning the map slid the object out
+   * from under it while the card stayed put, which from the other side of the
+   * glass reads as the card following your hand.
+   *
+   * The offset is clamped, but only WHILE THE OBJECT IS ON SCREEN — and that
+   * clause is the whole of it. Clamping unconditionally is what made the card
+   * follow the observer: drag an aircraft off the left edge and a clamped card
+   * stops at the edge and sits there staring at you, describing something that
+   * is no longer visible. Clamping not at all is what put the satellite card
+   * half off the bottom of the window: an orbit carries its object steadily
+   * across the frame, the card goes with it, and a card whose bottom half is
+   * past the edge of the screen is no more readable than one that is gone.
+   *
+   * So: while you can see the thing, its card is fully on screen. Once the
+   * thing has left, the card leaves with it.
    */
   const follow = (a: SelectionAnchor, p: Placement) => {
     const scale = cardScale(a.span) // bounded — never a ratio against the old span
     const w = SHEET_W * scale
     const h = SHEET_H * scale
-    const left = a.x + p.off.dx
-    const top = a.y + p.off.dy
+    let left = a.x + p.off.dx
+    let top = a.y + p.off.dy
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const M = 12
+    if (a.x >= 0 && a.x <= vw && a.y >= 0 && a.y <= vh) {
+      left = Math.max(M, Math.min(vw - w - M, left))
+      top = Math.max(M, Math.min(vh - h - M, top))
+    }
     // Straight to the element. No setState: see sheetRef.
     const el = sheetRef.current
     if (el) {
