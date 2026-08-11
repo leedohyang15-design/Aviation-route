@@ -23,7 +23,10 @@ import { dataPath, dataPathCandidates } from './datadir'
 import { opsLog } from './log'
 
 const CACHE_NAME = 'aviation-route-mars.json'
-const CACHE_VERSION = 1
+// 2: records carry the traverse. A version-1 file has the same sol as a fresh
+// fetch, so the change test below saw nothing new and the windows kept a record
+// with no path in it — which is what "경로가 안 찍힌다" was.
+const CACHE_VERSION = 2
 
 /** What a live rover adds on top of its entry in the static table. */
 export interface MarsLive {
@@ -278,7 +281,19 @@ async function poll(onUpdate: () => void): Promise<void> {
     if (!next) continue
     const prev = live.get(id)
     live.set(id, next)
-    if (!prev || prev.sol !== next.sol) changed = true
+    /*
+     * Everything material, not just the sol.
+     *
+     * This compared sol alone, which is true of a rover that has not moved and
+     * ALSO true of a record that gained a field since it was written. When the
+     * traverse was added, the cache on disk had the right sol and no path, so
+     * nothing was judged to have changed and nothing was broadcast — the
+     * windows sat on a pathless record with a perfectly current sol on it.
+     * A signature costs nothing and cannot be fooled that way again.
+     */
+    const sig = (r?: MarsLive): string =>
+      r ? `${r.sol}|${r.drivenKm}|${r.path.length}|${r.lon.toFixed(5)},${r.lat.toFixed(5)}` : ''
+    if (sig(prev) !== sig(next)) changed = true
   }
   if (changed) {
     saveCache()

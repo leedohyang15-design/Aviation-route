@@ -1058,6 +1058,17 @@ export class Globe {
     this.destFlag = label() // country flag above the destination marker
 
     this.tryLoadEarth()
+    /*
+     * Mars is fetched at startup, not when the tab is first pressed.
+     *
+     * A 2:1 Mars map is a big photograph and decoding one is seconds of work —
+     * and if it is wider than the GPU's maximum texture size, three.js redraws
+     * the whole thing through a canvas on the CPU first (resizeImage in
+     * WebGLTextures). Doing that when a visitor presses 화성 makes the tab
+     * appear to hang. Doing it while the exhibit is starting up costs nothing,
+     * because nobody is standing in front of it yet.
+     */
+    this.loadMars()
     this.resize()
     if (this.interactive) {
       this.attachInput()
@@ -2041,6 +2052,11 @@ export class Globe {
     // which would be a worse lie than a wireframe.
     this.bgUniforms.uHasMap.value = 0
     this.bgUniforms.uShowGrid.value = 1
+    this.loadMars()
+  }
+
+  /** Fetch the Mars map once, whether or not the tab has been opened. */
+  private loadMars(): void {
     if (this.marsTried) return
     this.marsTried = true
     this.loadFirstTexture(
@@ -2061,8 +2077,30 @@ export class Globe {
         const w = img?.width ?? 0
         const h = img?.height ?? 0
         const ratio = h ? w / h : 0
+        /*
+         * Size against what the GPU will actually take.
+         *
+         * three.js redraws any image wider than maxTextureSize through a 2D
+         * canvas before uploading it, so a map past that limit is decoded at
+         * full size, rescaled on the CPU, and then uploaded smaller — all of
+         * the cost of the big file and none of the detail. The frame is 1664px
+         * and the deepest zoom shows a tenth of the world, so about 17,000px of
+         * map is the most that can ever be resolved and 8,192 is already within
+         * a factor of two of that. Anything larger is paid for and thrown away.
+         */
+        const maxTex = this.renderer.capabilities.maxTextureSize
+        if (w > maxTex) {
+          console.warn(
+            `[mars] map is ${w}px wide but this GPU takes ${maxTex} — three.js will ` +
+              `redraw it through a canvas on the CPU every time it loads, in every ` +
+              `window. That is the pause when the tab opens. A ${maxTex}px or smaller ` +
+              `map (8192x4096 is ample: the frame is 1664px and the deepest zoom ` +
+              `shows a tenth of the world) loads in a fraction of the time and looks ` +
+              `identical.`
+          )
+        }
         console.log(
-          `[mars] loaded map ${w}x${h} (${ratio.toFixed(3)}:1) — ` +
+          `[mars] loaded map ${w}x${h} (${ratio.toFixed(3)}:1, GPU max ${maxTex}) — ` +
             (Math.abs(ratio - 2) < 0.01
               ? 'equirectangular, correct — the bands at top and bottom are the ' +
                 'polar caps, which converge to a smear in this projection'
