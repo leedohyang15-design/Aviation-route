@@ -73,12 +73,13 @@ export const EARTH_NIGHT_URL = 'earth_night.jpg'
  * The Mars map, for the fourth tab. Same rules as the earth one: a 2:1
  * equirectangular image in the renderer's `public/`, any of jpg/png/webp.
  *
- * There is no night map and there is no terminator. Mars gets flat daylight,
- * which is not a shortcut but the honest choice: this is a mosaic assembled
- * from thousands of orbital passes over years, not a photograph of one moment,
- * so drawing a shadow across it would be inventing a time of day for a picture
- * that does not have one. What time it is on Mars is answered properly
- * elsewhere — see marsClock() in shared/probes.ts.
+ * There is no night map — no cities down there to light up. There IS a
+ * terminator, drawn from Mars' own sun; the earlier note here refusing one
+ * confused two different things. A shadow baked INTO a mosaic would be a
+ * fiction, since the picture is assembled from years of passes and has no time
+ * of day. A terminator drawn OVER it says where the sun is at this instant,
+ * which is a fact — and the earth map underneath the same treatment is the
+ * same kind of composite. See marsSubsolar() in shared/probes.ts.
  */
 export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
 /**
@@ -179,6 +180,26 @@ export const MARS_POLL_MS = Number(readEnv('MARS_POLL_MS') ?? 24 * 3600_000)
  * highlands and saying nothing about it.
  */
 export const MARS_MAX_DRIFT_KM = Number(readEnv('MARS_MAX_DRIFT_KM') ?? 200)
+
+/**
+ * How fast the Martian day turns. 0 means real time, which is the default and
+ * the reason is worth stating.
+ *
+ * The earth's terminator is a six-minute loop, because at the real fifteen
+ * degrees an hour it would not visibly move during a visit and the earth tab
+ * makes no claim about what time it is anywhere. Mars does: every probe card
+ * carries the local solar time where that machine is standing, which is a
+ * number nobody can read anywhere else and one of the best things on the tab.
+ * Spinning the shadow faster than the clock would put the two in contradiction
+ * — a card reading 12:51 beside a rover sitting in the dark — and this exhibit
+ * has spent a lot of this project's time making sure two parts of it never
+ * disagree about the same fact.
+ *
+ * So Mars turns at its own rate: a quarter of a degree a minute, honest and
+ * nearly still. Set this to 360000 for the earth's six-minute spin if motion
+ * matters more, and know that the clock on the card stops agreeing with it.
+ */
+export const MARS_DAY_PERIOD_MS = Number(readEnv('MARS_DAY_PERIOD_MS') ?? 0)
 
 /**
  * Mip chain and anisotropic filtering on the world maps. On by default.

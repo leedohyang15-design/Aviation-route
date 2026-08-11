@@ -394,3 +394,94 @@ export function satelliteTexture(): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
 }
+
+/**
+ * A landing site, for the Mars tab.
+ *
+ * Not a dot. A satellite is a dot because a dot is the honest icon for a thing
+ * too far away to have a shape; a lander is on the ground and there are twelve
+ * of them on an otherwise empty planet, so they should read as marks ON a map
+ * rather than objects above one. A diamond does that at any size — it is the
+ * one silhouette that cannot be mistaken for the satellite dot even at ten
+ * pixels, which is the size these are drawn at when the whole planet is on
+ * screen.
+ *
+ * White, so the per-object colour tints it: amber for the two still working,
+ * grey-blue for the ones that finished, dim red for the ones that arrived and
+ * were never heard from.
+ */
+export function probeTexture(): THREE.CanvasTexture {
+  const s = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  const m = s / 2
+  const r = s * 0.42
+  // A hollow diamond with a solid centre: the ring survives being tinted dark
+  // against bright terrain, and the centre keeps it visible when it shrinks.
+  g.strokeStyle = 'rgba(255,255,255,1)'
+  g.lineWidth = s * 0.11
+  g.lineJoin = 'round'
+  g.beginPath()
+  g.moveTo(m, m - r)
+  g.lineTo(m + r, m)
+  g.lineTo(m, m + r)
+  g.lineTo(m - r, m)
+  g.closePath()
+  g.stroke()
+  g.fillStyle = 'rgba(255,255,255,1)'
+  g.beginPath()
+  g.arc(m, m, s * 0.13, 0, Math.PI * 2)
+  g.fill()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/**
+ * The selected probe: a rover in profile — body, mast, six wheels.
+ *
+ * Only one is ever on screen, so the detail costs nothing, and it is the same
+ * bargain the satellite icon makes: the crowd is abstract marks, the one you
+ * tapped is a picture of the thing. Half of these are landers rather than
+ * rovers and they get the same silhouette anyway; at this size the wheels read
+ * as "a machine", which is the distinction that matters to a seven-year-old.
+ */
+export function roverTexture(): THREE.CanvasTexture {
+  const s = 128
+  const c = document.createElement('canvas')
+  c.width = c.height = s
+  const g = c.getContext('2d')!
+  g.fillStyle = 'rgba(255,255,255,1)'
+  g.strokeStyle = 'rgba(255,255,255,1)'
+  g.lineCap = 'round'
+  g.lineJoin = 'round'
+  // Body
+  g.beginPath()
+  g.roundRect(s * 0.2, s * 0.42, s * 0.6, s * 0.22, s * 0.05)
+  g.fill()
+  // Mast and camera head
+  g.lineWidth = s * 0.055
+  g.beginPath()
+  g.moveTo(s * 0.32, s * 0.42)
+  g.lineTo(s * 0.32, s * 0.24)
+  g.stroke()
+  g.beginPath()
+  g.roundRect(s * 0.24, s * 0.16, s * 0.17, s * 0.1, s * 0.03)
+  g.fill()
+  // Six wheels, three a side in profile
+  for (const x of [0.27, 0.5, 0.73]) {
+    g.beginPath()
+    g.arc(s * x, s * 0.72, s * 0.085, 0, Math.PI * 2)
+    g.fill()
+  }
+  // The ground it stands on, so it never floats
+  g.lineWidth = s * 0.04
+  g.beginPath()
+  g.moveTo(s * 0.14, s * 0.83)
+  g.lineTo(s * 0.86, s * 0.83)
+  g.stroke()
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}

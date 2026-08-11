@@ -26,8 +26,10 @@ import type {
   WeatherLayer
 } from '@shared/types'
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
+import { marsSubsolar } from '@shared/probes'
 import {
   EARTH_TEXTURE_URL,
+  MARS_DAY_PERIOD_MS,
   MARS_LIFT,
   MARS_SATURATION,
   MARS_TINT,
@@ -61,6 +63,8 @@ import {
   categoryColor,
   orbitColor,
   plainDotTexture,
+  probeTexture,
+  roverTexture,
   satelliteTexture
 } from './textures'
 
@@ -223,6 +227,9 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
  * scale needs a separate site image — see the note on Phase 3.
  */
 const MARS_MIN_SPAN = 1 / 160
+/** How much of the Mars map survives the night. Lower than Earth's 0.22: there
+ *  are no cities down there, and two moons too small to light anything. */
+const MARS_NIGHT_FLOOR = 0.12
 
 // How big an object is drawn, as a fraction of the frame, at a given zoom.
 //
@@ -339,8 +346,6 @@ export class Globe {
   private routePoints: GeoPoint[] | null = null
   private lastRouteIdx = -1
   private lastRouteOffset = NaN
-  /** So the build note fires on a change rather than every frame. */
-  private lastRouteMeshes = -1
   /**
    * A dark casing under the route, for the same reason the orbit has one: the
    * remaining leg is pale yellow, which vanishes over pale ground — the steppe
@@ -396,6 +401,8 @@ export class Globe {
   private planeTex!: THREE.Texture
   private dotTex!: THREE.CanvasTexture
   private satTex!: THREE.CanvasTexture
+  private probeTex!: THREE.CanvasTexture
+  private roverTex!: THREE.CanvasTexture
   private eased = new Map<string, Eased>()
   private order: string[] = [] // stable instance ordering
   private selected: string | null = null
@@ -602,7 +609,6 @@ export class Globe {
       uSunLon: { value: 0 },
       uSunDecl: { value: 0 },
       uNightFloor: { value: 0.22 }, // how much of the day map survives at night
-      uDayOnly: { value: 0 },
       // Weather. Two Mercator mosaics, remapped to this frame in the shader.
       uCloud: { value: null },
       uHasCloud: { value: 0 },
@@ -659,9 +665,6 @@ export class Globe {
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
-        // 1 on a body whose map is a multi-year mosaic rather than a photograph
-        // of one moment — see MARS_TEXTURE_URL.
-        uniform float uDayOnly;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
@@ -752,7 +755,7 @@ export class Globe {
           float slon = uSunLon * rad;
           float cosZenith =
             sin(plat) * sin(sdecl) + cos(plat) * cos(sdecl) * cos(plon - slon);
-          float uNight = smoothstep(0.10, -0.10, cosZenith) * (1.0 - uDayOnly);
+          float uNight = smoothstep(0.10, -0.10, cosZenith);
 
           // Weather arrives as Web Mercator tiles. Mercator's x is linear in
           // longitude, so the same uv.x works (offset and seam wrap included)
@@ -982,6 +985,8 @@ export class Globe {
     this.planeTex = this.tuneSprite(planeTex)
     this.dotTex = this.tuneSprite(plainDotTexture())
     this.satTex = this.tuneSprite(satelliteTexture())
+    this.probeTex = this.tuneSprite(probeTexture())
+    this.roverTex = this.tuneSprite(roverTexture())
     // Unit quad: every sprite's real size lives in its instance matrix, because
     // width has to be derived from the frame aspect (see setSpriteMatrix).
     const quad = new THREE.PlaneGeometry(1, 1)
@@ -2035,7 +2040,7 @@ export class Globe {
       this.bgUniforms.uHasMap.value = this.earthTex ? 1 : 0
       this.bgUniforms.uHasNight.value = this.nightTex ? 1 : 0
       this.bgUniforms.uShowGrid.value = this.earthTex ? 0 : 1
-      this.bgUniforms.uDayOnly.value = 0
+      this.bgUniforms.uNightFloor.value = 0.22
       this.minSpan = MIN_SPAN
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
@@ -2063,7 +2068,20 @@ export class Globe {
     // No city lights and no terminator: see MARS_TEXTURE_URL for why the
     // shadow would be a fiction on a multi-year mosaic.
     this.bgUniforms.uHasNight.value = 0
-    this.bgUniforms.uDayOnly.value = 1
+    /*
+     * Mars gets a terminator after all, and no city lights.
+     *
+     * The earlier refusal confused two different things. A shadow BAKED INTO a
+     * mosaic would be a fiction — the picture is assembled from years of passes
+     * and has no time of day. A terminator drawn OVER it is a statement about
+     * where the sun is at this instant, which is a fact, and the earth map
+     * underneath the same treatment is the same kind of composite.
+     *
+     * The night floor is lower than Earth's because there is nothing down
+     * there: no cities, and two moons too small to light anything. Not black,
+     * though — a hemisphere of nothing is a map nobody can read.
+     */
+    this.bgUniforms.uNightFloor.value = MARS_NIGHT_FLOOR
     // Further in than the map can honestly hold; see MARS_MIN_SPAN.
     this.minSpan = MARS_MIN_SPAN
     if (this.marsTex) {
@@ -2683,11 +2701,6 @@ export class Globe {
    * `dLat/180` vertically, and the larger wins. Null when there is no route to
    * fit or it is a single point.
    */
-  /** A note tagged with which window it came from; both send them now. */
-  private note(msg: string): void {
-    this.onNote?.(`${this.interactive ? '[control]' : '[dome]'} ${msg}`)
-  }
-
   private routeSpan(): number | null {
     const pts = this.routePoints
     if (!pts || pts.length < 2) return null
@@ -2731,13 +2744,6 @@ export class Globe {
        */
       const fit = this.kind === 'probe' ? this.routeSpan() : null
       this.iSpan = fit != null ? Math.max(this.minSpan, fit) : Math.min(this.iSpan, 0.6)
-      // Which of the three numbers decided the zoom. "The line is too small" and
-      // "the camera never moved" look identical on screen and are different bugs.
-      this.note(
-        `[frame] kind=${this.kind} fit=${fit == null ? 'none' : fit.toFixed(5)} ` +
-          `min=${this.minSpan.toFixed(5)} -> span ${this.iSpan.toFixed(5)} ` +
-          `(${(1 / this.iSpan).toFixed(0)}x) at ${lat.toFixed(4)},${lon.toFixed(4)}`
-      )
       this.applyInteractiveView()
       this.emitView()
     } else {
@@ -2853,11 +2859,11 @@ export class Globe {
     this.kind = kind
     const inst = this.planes.material as THREE.MeshBasicMaterial
     const selMat = this.selectedPlane.material as THREE.MeshBasicMaterial
-    inst.map = kind !== 'aircraft' ? this.dotTex : this.planeTex
+    inst.map = kind === 'probe' ? this.probeTex : kind === 'satellite' ? this.dotTex : this.planeTex
     // A dot has no silhouette to clip, and alphaTest would eat its soft edge.
     inst.alphaTest = kind !== 'aircraft' ? 0 : 0.35
     inst.needsUpdate = true
-    selMat.map = kind !== 'aircraft' ? this.satTex : this.planeTex
+    selMat.map = kind === 'probe' ? this.roverTex : kind === 'satellite' ? this.satTex : this.planeTex
     selMat.needsUpdate = true
     ;(this.selectedGlow.material as THREE.MeshBasicMaterial).color.set(GLOW_COLOR[kind])
     // An aircraft's lights are out on the wingtips, a satellite's beacon is on
@@ -3032,7 +3038,6 @@ export class Globe {
     // One line per selection, not per frame. "The line is not drawn" has three
     // possible causes — nothing sent, nothing received, nothing rendered — and
     // only the renderer can rule out the middle one.
-    this.note(`[route] ${next ? `${next.length} points` : 'cleared'} (${this.kind})`)
     // A traverse arrives after its probe is selected, and it is what decides
     // how far in to zoom — so the framing has to be asked for again once it is
     // here. Without this the camera keeps whatever span it had when the dot was
@@ -3082,12 +3087,6 @@ export class Globe {
       if (pts.length >= 2) {
         this.addRouteLines(pts, this.orbitCasingMat, 0.18)
         this.addRouteLines(pts, this.orbitMat, 0.22)
-      }
-      if (this.kind === 'probe' && this.routeGroup.children.length !== this.lastRouteMeshes) {
-        this.lastRouteMeshes = this.routeGroup.children.length
-        // Geometry actually handed to the scene. If this says 2 and nothing is
-        // on screen, the fault is the camera; if it says 0, it is the data.
-        this.note(`[build] ${pts.length} points -> ${this.routeGroup.children.length} line meshes`)
       }
       return
     }
@@ -3758,6 +3757,42 @@ export class Globe {
    * the same wall clock, so they stay in step with no hub traffic.
    */
   private updateSun(): void {
+    /*
+     * Mars has its own sun, and none of Earth's numbers describe it.
+     *
+     * Its axis is tilted 25.19 degrees rather than 23.44 and its year is 687
+     * days, so Earth's day-of-year declination formula would put Martian summer
+     * in the wrong month AND the wrong hemisphere. Its day is 24h39m, so the
+     * subsolar meridian cannot come from a wall clock either. Both come from
+     * marsSubsolar(), which is the standard Mars24 series and is checked
+     * against three facts it must satisfy: local solar time at the subsolar
+     * meridian reads exactly 12:00, the declination sweeps exactly the axial
+     * tilt over a Mars year, and the point marches 90 degrees west each
+     * quarter sol.
+     */
+    if (this.planet === 'mars') {
+      const s = marsSubsolar(Date.now())
+      this.sunDecl = s.decl
+      // Real Mars time by default, so the shadow and the clock on the card are
+      // the same fact told twice; see MARS_DAY_PERIOD_MS. The operator's slider,
+      // when there is one, means the hour on Mars rather than in Korea.
+      const spun =
+        MARS_DAY_PERIOD_MS > 0
+          ? wrapLon(180 - ((Date.now() % MARS_DAY_PERIOD_MS) / MARS_DAY_PERIOD_MS) * 360)
+          : s.lon
+      this.sunLon =
+        this.nightHourOverride != null
+          ? wrapLon(360 - 15 * (this.nightHourOverride - 12))
+          : spun
+      this.bgUniforms.uSunLon.value = this.sunLon
+      this.bgUniforms.uSunDecl.value = this.sunDecl
+      const d0 = (this.sunDecl * Math.PI) / 180
+      this.sinDecl = Math.sin(d0)
+      this.cosDecl = Math.cos(d0)
+      this.sunLonRad = (this.sunLon * Math.PI) / 180
+      this.pulse = 0.5 - 0.5 * Math.cos((2 * Math.PI * (Date.now() % PULSE_MS)) / PULSE_MS)
+      return
+    }
     const now = new Date()
     const start = Date.UTC(now.getUTCFullYear(), 0, 0)
     const dayOfYear = (now.getTime() - start) / 86_400_000

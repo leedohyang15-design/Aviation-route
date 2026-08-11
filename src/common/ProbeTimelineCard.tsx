@@ -5,7 +5,6 @@ import {
   type MarsProbe
 } from '@shared/probes'
 import type { MarsLiveWire } from '@shared/types'
-import { TraverseMap } from './TraverseMap'
 
 /**
  * A lander's life, as a timeline rather than a path.
@@ -19,6 +18,12 @@ import { TraverseMap } from './TraverseMap'
  * Everything here is settled history from shared/probes.ts. Nothing on this
  * card can fail to load, which is why the tab works with the building's
  * internet unplugged.
+ *
+ * The traverse itself is NOT here. It was, drawn small in its own frame, and
+ * two drawings of one path is one drawing too many: the map beside this card
+ * shows the same track at a size worth looking at, and a thumbnail of it here
+ * only split the attention of somebody deciding where to look. The card keeps
+ * the figures the map cannot say.
  */
 export function ProbeTimelineCard({
   probe,
@@ -47,6 +52,10 @@ export function ProbeTimelineCard({
 
   return (
     <div className={'probe-card ' + probe.status}>
+      {/* A rule in the status colour down the whole card. On a screen where
+          three tabs already use a card, the first thing to establish is which
+          exhibit this belongs to, and colour does that before any word is read. */}
+      <div className="probe-edge" />
       <div className="probe-head">
         <div className="probe-name">
           {probe.name}
@@ -54,12 +63,12 @@ export function ProbeTimelineCard({
         </div>
         <div className="probe-state">{PROBE_STATE_LABEL[probe.status]}</div>
       </div>
+      <div className="probe-where">
+        <b>{probe.place}</b>
+        <span>{probe.agency} · {probe.kind === 'rover' ? '탐사차' : '착륙선'}</span>
+      </div>
 
       <div className="probe-facts">
-        <div>
-          <b>{probe.place}</b>
-          <span>{probe.agency}</span>
-        </div>
         {/* Sols, not days. Every one of these missions counts its own life in
             Martian mornings, and "4,900번째 아침" is a truer thing to hand a
             child than a number of Earth days would be. */}
@@ -91,12 +100,6 @@ export function ProbeTimelineCard({
           <span>그곳의 지금 시각</span>
         </div>
       </div>
-
-      {/* The path, at its own scale. Only the two that are still driving have
-          one — the rest either never moved or predate anybody publishing it. */}
-      {live && live.path?.length > 1 && (
-        <TraverseMap path={live.path} drivenKm={drivenKm} />
-      )}
 
       <ol className="probe-timeline">
         <li className="landing">

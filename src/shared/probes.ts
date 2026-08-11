@@ -389,6 +389,54 @@ export function marsClock(lonEast: number, nowMs: number): string {
 }
 
 /**
+ * Where the sun is directly overhead on Mars, right now.
+ *
+ * The exhibit already draws a terminator on Earth, and it is worth being clear
+ * that this is not the same objection as the one that kept the Mars map flat
+ * lit. A shadow BAKED INTO a mosaic would be a fiction — the picture is
+ * assembled from years of passes and has no time of day. A terminator drawn
+ * OVER it is a statement about where the sun is at this instant, which is a
+ * fact, and the earth map is the same kind of cloud-free composite underneath
+ * the same treatment.
+ *
+ * Two numbers, and neither is Earth's. The longitude comes from Coordinated
+ * Mars Time: local solar noon is where LMST reads 12, and LMST is MTC minus
+ * west longitude over fifteen, so the subsolar meridian is
+ * `360 - 15*(MTC - 12)`. The declination needs Mars' seasons — its axis is
+ * tilted 25.19 degrees against Earth's 23.44, and its year is 687 days, so
+ * borrowing Earth's day-of-year formula would put Martian summer in the wrong
+ * month and the wrong hemisphere.
+ *
+ * Ls, the areocentric solar longitude, is the standard Mars24 series: a mean
+ * sun angle linear in time plus an equation of centre. The perturbation terms
+ * are left out, which costs under a tenth of a degree — far below anything a
+ * terminator on a dome can show.
+ */
+export function marsSubsolar(nowMs: number): { lon: number; decl: number } {
+  const jdTt = nowMs / 86400000 + 2440587.5 + 69.184 / 86400
+  const dj = jdTt - 2451545.0
+  const rad = Math.PI / 180
+  // Mars mean anomaly and the fictitious mean sun, degrees.
+  const m = (19.3871 + 0.52402073 * dj) * rad
+  const alphaFms = 270.3871 + 0.524038496 * dj
+  // Equation of centre: the difference between the real sun and the mean one.
+  const eoc =
+    10.691 * Math.sin(m) +
+    0.623 * Math.sin(2 * m) +
+    0.05 * Math.sin(3 * m) +
+    0.005 * Math.sin(4 * m) +
+    0.0005 * Math.sin(5 * m)
+  const ls = (((alphaFms + eoc) % 360) + 360) % 360
+  // 25.19 degrees of axial tilt, against Earth's 23.44.
+  const decl = Math.asin(Math.sin(25.19 * rad) * Math.sin(ls * rad)) / rad
+
+  const msd = marsSolDate(nowMs)
+  const mtc = (msd - Math.floor(msd)) * 24
+  const east = (((360 - 15 * (mtc - 12)) % 360) + 360) % 360
+  return { lon: eastToRendererLon(east), decl }
+}
+
+/**
  * Which sol of its own mission a probe is on, counting the landing day as 0.
  *
  * Sols rather than days because that is how every one of these missions counts,

@@ -7,11 +7,26 @@ import { FlightDetailCard } from '../common/FlightDetailCard'
 import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
 import { ProbeTimelineCard } from '../common/ProbeTimelineCard'
 import { MARS_PROBES, PROBE_COLOR, PROBE_STATE_LABEL } from '@shared/probes'
-import type { Aircraft, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
+import type { Aircraft, ExhibitMode, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
 import { SatelliteSearch } from './SatelliteSearch'
 import { FlightSearch } from './FlightSearch'
+
+/**
+ * The heading, which is about whatever tab is open.
+ *
+ * It read "실시간 항공 경로 / Real-time Global Air Traffic" on every tab,
+ * including the one showing rain and the one showing Mars. The title block is
+ * the first thing anybody reads and it was describing a different exhibit from
+ * the one on screen three times out of four.
+ */
+const TITLES: Record<ExhibitMode, [string, string]> = {
+  flight: ['실시간 항공 경로', 'Real-time Global Air Traffic'],
+  satellite: ['지구를 도는 위성', 'Satellites in Orbit'],
+  weather: ['지금 지구의 하늘', "Earth's Weather Right Now"],
+  mars: ['화성에 간 로봇들', 'Robots on Mars']
+}
 
 /** Card footprint, matched to .sheet in control.css — used to keep the card
  * inside the window when it is anchored to a tapped object. */
@@ -542,7 +557,6 @@ export function ControlApp(): JSX.Element {
         marsLive={marsLive}
         onWeatherTime={setShownAt}
         onLocalSky={setRainHere}
-        onNote={(text) => send({ type: 'note', text })}
         pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}
@@ -553,8 +567,8 @@ export function ControlApp(): JSX.Element {
 
       {/* Info overlay (top-left) — moved off the projected sphere. */}
       <div className="ctrl-info">
-        <h1>실시간 항공 경로</h1>
-        <div className="sub">Real-time Global Air Traffic</div>
+        <h1>{TITLES[mode][0]}</h1>
+        <div className="sub">{TITLES[mode][1]}</div>
         <div className="count">
           {isWeather ? (
             <>

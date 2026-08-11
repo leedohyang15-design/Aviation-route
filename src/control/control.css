@@ -658,37 +658,57 @@ body,
 }
 
 .probe-card {
+  position: relative;
   min-width: 300px;
-  max-width: 400px;
-  padding: 16px 18px 14px;
+  max-width: 380px;
+  padding: 16px 18px 15px 22px;
   color: #eaf2ff;
 }
+/* The status rule. Colour answers "which of these is still alive" before any
+   word on the card is read, and it is the question every visitor asks first. */
+.probe-edge {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: #9fb6cf;
+}
+.probe-card.active .probe-edge {
+  background: #ffd166;
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.45);
+}
+.probe-card.lost .probe-edge {
+  background: #d2735f;
+}
+
 .probe-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 .probe-name {
-  font-size: 1.35rem;
+  font-size: 1.42rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
 }
 .probe-name .probe-sub {
   display: block;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 600;
-  opacity: 0.5;
-  letter-spacing: 0;
-  margin-top: 1px;
+  opacity: 0.45;
+  letter-spacing: 0.01em;
+  margin-top: 3px;
 }
-/* The state is the first thing to read: whether this machine is still alive is
-   the question every child asks before any other. */
 .probe-state {
   flex: none;
+  margin-top: 3px;
   padding: 3px 9px;
   border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
   white-space: nowrap;
   background: rgba(159, 182, 207, 0.16);
@@ -703,40 +723,63 @@ body,
   color: #ffab95;
 }
 
+/* Where it is, on its own line: it is a place name, not a statistic, and it
+   was being squeezed into a row of numbers where it wrapped. */
+.probe-where {
+  margin-top: 11px;
+  font-size: 0.95rem;
+}
+.probe-where b {
+  font-weight: 700;
+}
+.probe-where span {
+  font-size: 0.7rem;
+  opacity: 0.5;
+  margin-left: 7px;
+}
+
+/* The figures, as a grid rather than a wrapping row. Three or four cells of
+   very different widths in a flex row left ragged gaps that read as a mistake. */
 .probe-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 20px;
-  margin: 12px 0 4px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 14px;
+  margin: 13px 0 0;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
 }
 .probe-facts > div {
   display: flex;
   flex-direction: column;
 }
 .probe-facts b {
-  font-size: 1.05rem;
+  font-size: 1.14rem;
   font-weight: 800;
   color: #ffd7a8;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
 }
 .probe-facts span {
-  font-size: 0.68rem;
-  opacity: 0.6;
-  margin-top: 1px;
+  font-size: 0.66rem;
+  opacity: 0.55;
+  margin-top: 2px;
 }
 
-/* The timeline itself: a rule down the left with a bead at every chapter, which
-   is the one layout that reads as "this happened, then this". */
+/* The timeline: a rule down the left with a bead at every chapter, which is the
+   one layout that reads as "this happened, then this". */
 .probe-timeline {
   list-style: none;
-  margin: 12px 0 0;
+  margin: 13px 0 0;
   padding: 0 0 0 15px;
-  border-left: 2px solid rgba(255, 255, 255, 0.14);
+  border-left: 2px solid rgba(255, 255, 255, 0.13);
 }
 .probe-timeline li {
   position: relative;
-  padding: 0 0 11px;
+  padding: 0 0 12px;
+}
+.probe-timeline li:last-child {
+  padding-bottom: 0;
 }
 .probe-timeline li::before {
   content: '';
@@ -764,85 +807,17 @@ body,
 }
 .probe-timeline .when {
   display: block;
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 700;
-  opacity: 0.55;
+  opacity: 0.5;
   letter-spacing: 0.02em;
 }
 .probe-timeline .what {
   display: block;
-  font-size: 0.86rem;
-  line-height: 1.45;
+  font-size: 0.87rem;
+  line-height: 1.5;
   margin-top: 1px;
 }
 
 
-/* The traverse. No basemap on purpose — at this scale the SHAPE of the path is
-   the information, and a photograph behind it would be 26 screen pixels per
-   texel of mush. Every published traverse map is drawn this way. */
-.traverse {
-  margin: 12px 0 0;
-  padding: 10px 0 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-.traverse svg {
-  display: block;
-  background: rgba(8, 12, 22, 0.55);
-  border-radius: 8px;
-}
-.traverse .track {
-  fill: none;
-  stroke: #ffd7a8;
-  stroke-width: 1.6;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  opacity: 0.9;
-}
-.traverse .start {
-  fill: none;
-  stroke: #9fb6cf;
-  stroke-width: 1.6;
-}
-/* The living end of the line is the one that should catch the eye. */
-.traverse .now {
-  fill: #ffd166;
-  stroke: rgba(255, 209, 102, 0.3);
-  stroke-width: 5;
-}
-.traverse .bar line {
-  stroke: rgba(255, 255, 255, 0.45);
-  stroke-width: 1;
-}
-.traverse .bar text {
-  fill: rgba(255, 255, 255, 0.6);
-  font-size: 9px;
-  text-anchor: middle;
-}
-.traverse figcaption {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 7px;
-  font-size: 0.68rem;
-  opacity: 0.75;
-}
-.traverse figcaption .k::before {
-  content: '';
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-right: 5px;
-  vertical-align: 1px;
-}
-.traverse figcaption .k.start::before {
-  border: 1.5px solid #9fb6cf;
-}
-.traverse figcaption .k.now::before {
-  background: #ffd166;
-}
-.traverse figcaption .total {
-  margin-left: auto;
-  color: #ffd7a8;
-  font-weight: 700;
-}
+
