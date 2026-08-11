@@ -66,12 +66,29 @@ function lapsNote(d: SatelliteDetail): string | null {
  *  inside of, which is what makes it the right zero point. */
 const KTX_KM_S = 300 / 3600
 
-/** The SPEED tile says "7.7 km/s", which is not a speed anybody can picture —
- *  there is nothing in a child's life measured in kilometres per second. This
- *  is a per-object number too: a low satellite comes out near 90x and a
- *  geostationary one near 37x, because the higher the orbit the slower it goes. */
+/**
+ * The SPEED tile says "7.7 km/s", which is not a speed anybody can picture —
+ * there is nothing in a child's life measured in kilometres per second. This is
+ * a per-object number too: a low satellite comes out near 90x and a
+ * geostationary one near 37x, because the higher the orbit the slower it goes.
+ *
+ * Against the STARS, not against the ground. Both numbers are real, and for a
+ * geostationary satellite the ground one is zero — that is the whole definition
+ * of geostationary — which this line was faithfully reporting as "KTX보다 0배
+ * 빨라요". Nonsense as a sentence, and it sat directly under a glossary entry
+ * saying the thing moves at the same speed as the Earth. So the figure is the
+ * speed it is really travelling at, and where the two disagree the sentence
+ * says so, because THAT is the interesting fact about a geostationary
+ * satellite rather than a footnote to it.
+ */
 function speedNote(d: SatelliteDetail): string {
-  return `KTX보다 ${Math.round(d.speedKmS / KTX_KM_S).toLocaleString()}배 빨라요`
+  const x = Math.round(d.orbitSpeedKmS / KTX_KM_S).toLocaleString()
+  // Not `orbit === 'geo'`: anything keeping pace with the ground beneath it
+  // reads the same way, whatever bucket its altitude fell into.
+  if (d.speedKmS < 0.2) {
+    return `KTX보다 ${x}배 빠른데, 지구가 도는 속도와 똑같아서 하늘에서는 멈춰 보여요`
+  }
+  return `KTX보다 ${x}배 빨라요`
 }
 
 // Four notes, not six. Orbit shape and the inclination sentence used to be here
@@ -196,7 +213,9 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
 
         <div className="sat-tiles">
           <Tile label="ALTITUDE" value={Math.round(d.altKm).toLocaleString()} unit="km" />
-          <Tile label="SPEED" value={d.speedKmS.toFixed(1)} unit="km/s" />
+          {/* The speed against the stars — see speedNote. The ground-relative
+              one put "0.0 km/s" on a geostationary satellite. */}
+          <Tile label="SPEED" value={d.orbitSpeedKmS.toFixed(1)} unit="km/s" />
           <Tile label="PERIOD" value={String(Math.round(d.periodMin))} unit="min" />
           <Tile label="INCLINATION" value={String(Math.round(d.inclinationDeg))} unit="°" />
         </div>

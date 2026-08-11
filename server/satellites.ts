@@ -84,6 +84,16 @@ interface Fix {
   altKm: number
   /** Ground speed of the sub-satellite point, km/s. */
   groundSpeed: number
+  /**
+   * How fast it is actually going, km/s — measured against the stars rather
+   * than against the ground under it.
+   *
+   * The two are nearly the same for a low satellite and could not be more
+   * different for a geostationary one, which is going three kilometres a second
+   * and standing perfectly still over one spot at the same time. Both numbers
+   * are true; the ground speed is what you SEE, and this is what it IS.
+   */
+  orbitSpeed: number
   /** Direction of travel over the ground, degrees clockwise from north. */
   heading: number
 }
@@ -131,6 +141,8 @@ function fixAt(rec: sat.SatRec, when: Date): Fix | null {
     lat,
     altKm: gd.height,
     groundSpeed: Math.hypot(east, north),
+    // The inertial vector, untouched — no rotation subtracted.
+    orbitSpeed: Math.hypot(pv.velocity.x, pv.velocity.y, pv.velocity.z),
     heading: ((Math.atan2(east, north) * DEG) % 360 + 360) % 360
   }
 }
@@ -408,11 +420,21 @@ export function getDetail(id: string, withPass = true): SatelliteDetail | null {
   if (!e) return null
   const s = latest.find((x) => x.id === id)
   const pass = withPass ? nextPass(id) : null
+  /*
+   * One extra propagation, for the speed against the stars.
+   *
+   * It is not in the per-tick payload on purpose: eleven thousand objects go
+   * over the wire twice a second and the map has no use for it. Here there is
+   * exactly one object and the pass calculation next door already propagates a
+   * whole day, so this is free by comparison.
+   */
+  const fix = fixAt(e.rec, new Date())
   return {
     id: e.id,
     name: e.name,
     altKm: s?.altKm ?? 0,
     speedKmS: s?.speedKmS ?? 0,
+    orbitSpeedKmS: fix?.orbitSpeed ?? s?.speedKmS ?? 0,
     periodMin: e.periodMin,
     inclinationDeg: e.inclination,
     orbit: s?.orbit ?? 'leo',

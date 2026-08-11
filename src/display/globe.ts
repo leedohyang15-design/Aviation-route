@@ -302,10 +302,6 @@ function iconScaleFor(kind: ObjectKind, span: number): number {
 // is projected onto a dome, which throws away a lot of effective resolution, so
 // anything carrying text is deliberately generous — text that reads fine on a
 // monitor disappears there.
-/** The downscale the polar-padding scan reads: 32 columns is plenty to tell a
- *  black row from a planet, 512 rows resolve the edge to a fifth of a degree. */
-const BAND_W = 32
-const BAND_H = 512
 /** How long the windows wait behind the loading curtain before giving up on a
  *  map that has answered neither way. See the constructor. */
 const BOOT_GIVE_UP_MS = 12_000
@@ -521,16 +517,6 @@ export class Globe {
   /** So a missing Mars map is looked for once, not on every tab press. */
   private marsTried = false
   private jupiterTried = false
-  /**
-   * Each map's data band, by planet.
-   *
-   * The uniforms are one set shared by the background shader, but the padding
-   * belongs to the FILE — Jupiter's map stops at 60 degrees and Earth's does
-   * not. Measured once per map at load and re-applied on every planet change,
-   * because storing it in the uniform alone would mean whichever map finished
-   * loading last decided where every planet's data ended.
-   */
-  private bands = new Map<string, { top: number; bot: number }>()
   private nightHourOverride: number | null = null // null = live time
 
   // Interactive (control) mode: the operator drives the camera locally with
@@ -817,26 +803,6 @@ export class Globe {
        * data there. See JUPITER_POLE_FADE_DEG.
        */
       uPoleFade: { value: 0 },
-      /*
-       * Where the map's real data stops, in frame v (1 = north).
-       *
-       * A latitude-limited map padded to 2:1 with black is geometrically
-       * correct and visually awful: the black-to-planet seam is the worst edge
-       * you can hand a JPEG encoder, its ringing is saturated, and the sampler
-       * smears that along the row into coloured streaks. Measured on load (see
-       * measureDataBand) rather than configured, so any map dropped into
-       * public/ is handled whatever latitude it stops at.
-       *
-       * These say where the photograph ENDS, not where the planet does. Past
-       * them the shader carries the boundary band on and shades it toward the
-       * pole; it does not stop drawing. Blanking the padding was the first fix
-       * and it was wrong — the top of this frame is the north pole of a sphere,
-       * so a blank there is a hole in the planet, which is a bigger lie than a
-       * soft cap over a region nobody has photographed.
-       */
-      uDataTop: { value: 1 },
-      uDataBot: { value: 0 },
-      uHasBand: { value: 0 },
       // Weather. Two Mercator mosaics, remapped to this frame in the shader.
       uCloud: { value: null },
       uHasCloud: { value: 0 },
@@ -894,7 +860,6 @@ export class Globe {
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
         uniform float uTerminator; uniform float uPoleFade; uniform vec3 uNightTint;
-        uniform float uDataTop; uniform float uDataBot; uniform float uHasBand;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
@@ -943,33 +908,20 @@ export class Globe {
           // huge UV derivative at the wrap, which picks the wrong mip level and
           // draws a vertical seam when the map wraps around.
           /*
-           * How far past the map's real data this row is: 0 at the edge of the
-           * data, 1 at the pole. Zero everywhere for a map that reaches both
-           * poles, which is Earth and Mars.
-           */
-          float over = 0.0;
-          if (uHasBand > 0.5) {
-            if (vUv.y > uDataTop) over = (vUv.y - uDataTop) / max(1e-4, 1.0 - uDataTop);
-            else if (vUv.y < uDataBot) over = (uDataBot - vUv.y) / max(1e-4, uDataBot);
-            over = clamp(over, 0.0, 1.0);
-          }
-          /*
-           * Past the data, keep sampling the last row that HAS data.
+           * The map, as it is in the file.
            *
-           * Not the file's own pixels up there — those are black padding with
-           * compression ringing along its edge, and that ringing is the band of
-           * coloured streaks. But not nothing either: a planet with its top cut
-           * off is a worse lie than a soft cap, and on the dome the top of the
-           * frame IS the north pole, so blanking it punches a hole in the
-           * planet. Jupiter has poles. They are simply not in this photograph.
-           *
-           * The mip bias grows with the distance past the edge, which averages
-           * the boundary row along its length — so the cap is the colour that
-           * band actually is, rather than one row of it smeared north.
+           * Nothing is done about the coloured streaks along Jupiter's top and
+           * bottom edges, and that is a decision rather than an omission. That
+           * map stops at 60 degrees and is padded to 2:1 with black; the seam's
+           * JPEG ringing is what the streaks are. Two fixes were tried here and
+           * both looked worse on the real file than the artefact did — blanking
+           * the padding punched the planet's poles out, and carrying the
+           * boundary row up into them smeared it into vertical streaking across
+           * the whole cap. The honest fix is not in this shader at all, it is a
+           * Jupiter map that reaches the poles or is not padded with black.
            */
-          float mapV = uHasBand > 0.5 ? clamp(vUv.y, uDataBot, uDataTop) : vUv.y;
-          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, mapV);
-          vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv, over * 5.0).rgb : vec3(0.05, 0.12, 0.22);
+          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, vUv.y);
+          vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
           // Brightness + saturation grade on the daytime image.
           float luma = dot(day, vec3(0.299, 0.587, 0.114));
           day = mix(vec3(luma), day, uSaturation) * uBrightness * uTint;
@@ -1239,21 +1191,6 @@ export class Globe {
            * Zero for Earth and Mars, which are mapped from orbit pole to pole
            * and have honest polar data.
            */
-          /*
-           * And shade that cap, so it does not claim to be a photograph.
-           *
-           * It carries the boundary band's own colour (see the sampling above),
-           * dimmed and drained of colour toward the pole. Two things at once:
-           * it stops the extended band from reading as real cloud structure at
-           * a latitude nothing has ever photographed, and it happens to be what
-           * a gas giant's poles do look like from a spacecraft — dusky and
-           * grey, not banded. No hard edge anywhere, because it ramps from
-           * nothing at the boundary.
-           */
-          if (over > 0.0) {
-            float polarLuma = dot(col, vec3(0.299, 0.587, 0.114));
-            col = mix(col, vec3(polarLuma), 0.5 * over) * (1.0 - 0.4 * over);
-          }
           if (uPoleFade > 0.0) {
             float fromPole = 90.0 - abs(vUv.y * 180.0 - 90.0);
             float k = smoothstep(0.0, uPoleFade, fromPole);
@@ -2361,10 +2298,6 @@ export class Globe {
          * against the GPU's limit; the planet that is on screen by default was
          * the one nobody could check.
          */
-        // Same check the other two get: an earth map dropped in padded would
-        // have the same seam, and there is no reason this planet should be the
-        // one that has to be diagnosed by eye.
-        this.measureDataBand('earth', tex)
         const img = tex.image as { width?: number; height?: number } | undefined
         const w = img?.width ?? 0
         const h = img?.height ?? 0
@@ -2418,7 +2351,6 @@ export class Globe {
   setPlanet(planet: Planet): void {
     if (planet === this.planet) return
     this.planet = planet
-    this.applyBand(planet)
     if (planet === 'earth') {
       this.bgUniforms.uMap.value = this.earthTex
       this.bgUniforms.uHasMap.value = this.earthTex ? 1 : 0
@@ -2556,131 +2488,6 @@ export class Globe {
    * through a 2D canvas on the CPU, and doing that when a visitor presses a tab
    * makes the tab appear to hang.
    */
-  /**
-   * Find where the map's real data starts and stops, and report what is at its
-   * edges.
-   *
-   * A band of coloured streaks appears along the top of Jupiter, and I was
-   * wrong about it twice before asking the file. The file answered: its top and
-   * bottom rows are PURE BLACK. That is a latitude-limited map — most published
-   * Jupiter maps stop around 60 degrees, because the planet is only ever
-   * photographed from near its own equatorial plane — padded out to 2:1 with
-   * black so the projection stays correct. The geometry is right. What is wrong
-   * is the seam: a hard black-to-cream edge is the worst thing you can hand a
-   * JPEG encoder, and the ringing it leaves there is saturated, which is
-   * exactly the rainbow. Mipmapping and 16x anisotropy then smear that ringing
-   * along the row, which is the streaking.
-   *
-   * (My first pass scored these rows for SATURATION and called them clean,
-   * because black has none. It also called Mars's south polar terrain
-   * "garbage" for being brown. The verdict is gone; the numbers stay, and the
-   * band below is what actually gets used.)
-   *
-   * So the padding is measured and the shader is told to stop there — see
-   * uDataTop/uDataBot. Measured rather than configured, because it costs one
-   * downscaled read and then any map dropped into public/ is handled, whatever
-   * latitude it happens to stop at.
-   *
-   * That read is done through createImageBitmap where it exists, which resizes
-   * on a worker thread. Doing it with drawImage instead means resampling the
-   * whole map on the main thread — a quarter of a billion pixels for Mars, at
-   * startup, in both windows, on top of the upload that already costs two
-   * seconds there. The synchronous path is kept as a fallback and says so in
-   * the log, so a slow startup can always be attributed.
-   */
-  private measureDataBand(tag: string, tex: THREE.Texture): void {
-    const img = tex.image as CanvasImageSource & { width?: number; height?: number }
-    if (!(img?.width ?? 0) || !(img?.height ?? 0)) return
-    const t0 = performance.now()
-    if (typeof createImageBitmap === 'function') {
-      createImageBitmap(img, {
-        resizeWidth: BAND_W,
-        resizeHeight: BAND_H,
-        resizeQuality: 'low'
-      })
-        .then((bm) => {
-          this.analyseBand(tag, bm, t0, 'off-thread')
-          bm.close()
-        })
-        .catch(() => this.analyseBand(tag, img, t0, 'on the main thread (no ImageBitmap)'))
-      return
-    }
-    this.analyseBand(tag, img, t0, 'on the main thread (no ImageBitmap)')
-  }
-
-  /** The pixel half of measureDataBand: scan a already-downscaled copy of the
-   *  map in from both edges and store what it finds. */
-  private analyseBand(tag: string, src: CanvasImageSource, t0: number, how: string): void {
-    try {
-      // 32 columns is plenty to tell a black row from a planet, and 512 rows
-      // resolves the edge to a fifth of a degree of latitude.
-      const W = BAND_W
-      const H = BAND_H
-      const c = document.createElement('canvas')
-      c.width = W
-      c.height = H
-      const g = c.getContext('2d', { willReadFrequently: true })
-      if (!g) return
-      g.drawImage(src, 0, 0, W, H)
-      const px = g.getImageData(0, 0, W, H).data
-      const rowLuma = (row: number): number => {
-        let sum = 0
-        for (let x = 0; x < W; x++) {
-          const i = (row * W + x) * 4
-          sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
-        }
-        return sum / W
-      }
-      // Padding is black, not merely dark: a real polar row on any of these
-      // maps is far brighter than this even at night, since the night side is
-      // shaded by the shader and not baked into the file.
-      const DARK = 6
-      let top = 0
-      while (top < H && rowLuma(top) < DARK) top++
-      let bot = H - 1
-      while (bot > top && rowLuma(bot) < DARK) bot--
-      const topPad = top / H
-      const botPad = (H - 1 - bot) / H
-      const took = `measured ${how} in ${(performance.now() - t0).toFixed(0)}ms`
-      if (topPad < 0.002 && botPad < 0.002) {
-        this.note(`[${tag}] data runs edge to edge — no polar padding (${took})`)
-        return
-      }
-      /*
-       * Step in past the ringing.
-       *
-       * The compression artefacts do not stop at the first non-black row, they
-       * bleed a few blocks into the picture. A percent of the height is about
-       * two degrees of latitude on a map that already has no data within
-       * thirty, so nothing real is lost and the seam goes with it.
-       */
-      const MARGIN = 0.01
-      const dataTop = 1 - (topPad + MARGIN)
-      const dataBot = botPad + MARGIN
-      this.bands.set(tag, { top: dataTop, bot: dataBot })
-      if (this.planet === tag) this.applyBand(tag)
-      this.note(
-        `[${tag}] black padding: top ${(topPad * 100).toFixed(1)}% (to ${(90 - topPad * 180).toFixed(0)}°N), ` +
-          `bottom ${(botPad * 100).toFixed(1)}% (to ${(90 - botPad * 180).toFixed(0)}°S) — ` +
-          `a latitude-limited map. The last real row past there (plus ` +
-          `${(MARGIN * 100).toFixed(0)}% for the compression ringing along the seam, which is ` +
-          `what the coloured streaks are), dimmed toward the pole — the planet keeps its ` +
-          `top, it just is not a photograph up there ` +
-          `(${took})`
-      )
-    } catch (err) {
-      this.note(`[${tag}] could not measure the data band: ${(err as Error).message}`)
-    }
-  }
-
-  /** Point the shader at this planet's measured data band, or at none. */
-  private applyBand(tag: string): void {
-    const b = this.bands.get(tag)
-    this.bgUniforms.uHasBand.value = b ? 1 : 0
-    this.bgUniforms.uDataTop.value = b ? b.top : 1
-    this.bgUniforms.uDataBot.value = b ? b.bot : 0
-  }
-
   private loadPlanetMap(tag: string, url: string, keep: (tex: THREE.Texture) => void): void {
     this.mapExpected()
     this.loadFirstTexture(
@@ -2713,7 +2520,6 @@ export class Globe {
          * map is the most that can ever be resolved and 8,192 is already within
          * a factor of two of that. Anything larger is paid for and thrown away.
          */
-        this.measureDataBand(tag, tex)
         const maxTex = this.renderer.capabilities.maxTextureSize
         if (w > maxTex) {
           this.note(

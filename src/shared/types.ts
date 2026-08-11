@@ -166,7 +166,11 @@ export interface SatelliteDetail {
   id: string
   name: string
   altKm: number
+  /** Speed over the ground under it, km/s — what you see it do. Essentially
+   *  zero for a geostationary satellite, which is the point of one. */
   speedKmS: number
+  /** Speed against the stars, km/s — what it is actually doing. Never zero. */
+  orbitSpeedKmS: number
   /** Time for one orbit, minutes. */
   periodMin: number
   inclinationDeg: number
