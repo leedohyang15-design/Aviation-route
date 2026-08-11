@@ -8,7 +8,7 @@ import { SatelliteDetailCard } from '../common/SatelliteDetailCard'
 import { ProbeTimelineCard } from '../common/ProbeTimelineCard'
 import { MarsFutureCard } from '../common/MarsFutureCard'
 import { MARS_PROBES, PROBE_COLOR, PROBE_STATE_LABEL } from '@shared/probes'
-import { MARS_TARGETS, TARGET_COLOR } from '@shared/mars-future'
+import { MARS_PLAN, MARS_TARGETS, TARGET_COLOR } from '@shared/mars-future'
 import type { Aircraft, ExhibitMode, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
@@ -762,7 +762,7 @@ export function ControlApp(): JSX.Element {
                 <button
                   key={t.id}
                   className={'leg probe target' + (state.selected === t.id ? ' on' : '')}
-                  title="아직 아무도 못 가본 곳"
+                  title={`아직 아무도 못 가본 곳 — 빠르면 ${MARS_PLAN.earliest}`}
                   onClick={() => {
                     poke()
                     send({ type: 'select', icao24: state.selected === t.id ? null : t.id })
@@ -770,7 +770,10 @@ export function ControlApp(): JSX.Element {
                 >
                   <i style={{ background: TARGET_COLOR }} />
                   {t.name}
-                  <em>아직</em>
+                  {/* Where a probe chip carries the year it landed, this one
+                      carries the soonest anyone could go — so the whole row
+                      reads as one timeline running past the present. */}
+                  <em>{MARS_PLAN.earliest}</em>
                 </button>
               ))}
             </div>

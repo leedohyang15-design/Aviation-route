@@ -307,5 +307,17 @@ export const MARS_PLAN = {
   who: '스페이스X',
   what:
     '다섯 대를 2026년 말에 보내려 했지만, 달 착륙선을 먼저 만들기로 하고 화성행을 5~7년 미뤘어요.',
-  why: '우주에서 연료를 옮겨 담는 기술이 아직 남아 있거든요.'
+  why: '우주에서 연료를 옮겨 담는 기술이 아직 남아 있거든요.',
+  /*
+   * The one word the chips wear, where a probe wears its landing year.
+   *
+   * A DECADE, and not the computed launch window, which would say 2026 — true
+   * about the planets and a lie about the rockets, and a child reading a chip
+   * has no way to tell those apart. Not a bare year either: no year between
+   * here and the 2030s is more defensible than its neighbours, and printing
+   * one would invent a precision nobody has. This is the coarsest honest
+   * answer, it lives beside the date it was said on, and when it changes,
+   * exactly one string changes.
+   */
+  earliest: '2030년대'
 } as const
