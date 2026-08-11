@@ -119,7 +119,9 @@ export function MapView({
   useEffect(() => {
     // A switch, not a boolean: the fourth mode used to inherit the aircraft
     // branch and draw landing sites as aeroplanes pointing at a heading.
-    globeRef.current?.setObjectKind(
+    const g = globeRef.current
+    g?.timeStep('setObjectKind', () =>
+      g.setObjectKind(
       mode === 'satellite'
         ? 'satellite'
         : mode === 'jupiter'
@@ -128,8 +130,11 @@ export function MapView({
         ? 'probe'
         : 'aircraft'
     )
-    globeRef.current?.setPlanet(mode === 'mars' ? 'mars' : mode === 'jupiter' ? 'jupiter' : 'earth')
-    globeRef.current?.clearObjects()
+    )
+    g?.timeStep('setPlanet', () =>
+      g.setPlanet(mode === 'mars' ? 'mars' : mode === 'jupiter' ? 'jupiter' : 'earth')
+    )
+    g?.timeStep('clearObjects', () => g.clearObjects())
   }, [mode])
   const isMars = mode === 'mars'
   const isJupiter = mode === 'jupiter'

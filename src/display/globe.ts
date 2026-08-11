@@ -340,6 +340,7 @@ interface Eased {
 const M_PER_DEG = 111_320 // metres per degree of latitude
 
 export class Globe {
+  private static built = 0
   private renderer: THREE.WebGLRenderer
   private scene = new THREE.Scene()
   private camera = new THREE.OrthographicCamera(0, 1, 1, 0, -10, 10)
@@ -529,6 +530,9 @@ export class Globe {
    * upload — would be the two that are lost, every single time.
    */
   private noteQueue: string[] = []
+  /** Which Globe this is, counting from the start of the process. Two lines
+   *  from the same window with different numbers means it was built twice. */
+  private readonly instanceId: number
 
   get onNote(): ((text: string) => void) | null {
     return this._onNote
@@ -541,9 +545,17 @@ export class Globe {
     for (const line of held) fn(line)
   }
 
-  /** Say it in the log AND in the console — the console is for a developer at
-   *  a desk, the log is for the exhibit machine. */
+  /**
+   * Say it in the log AND in the console — the console is for a developer at a
+   * desk, the log is for the exhibit machine.
+   *
+   * Tagged with which renderer said it. Every map line arrived in the log
+   * twice and there was no way to tell whether that was the two windows, a
+   * double mount, or the same file being fetched twice — three very different
+   * problems with identical symptoms. Now it says.
+   */
   private note(text: string): void {
+    text = `${text}  <${this.interactive ? 'control' : 'dome'}#${this.instanceId}>`
     console.log(text)
     if (this._onNote) this._onNote(text)
     else if (this.noteQueue.length < 50) this.noteQueue.push(text)
@@ -669,6 +681,7 @@ export class Globe {
     private canvas: HTMLCanvasElement,
     opts: { interactive?: boolean; sphere?: boolean; fixedSize?: { w: number; h: number } } = {}
   ) {
+    this.instanceId = ++Globe.built
     this.interactive = !!opts.interactive
     this.sphereIcons = !!opts.sphere
     this.fixedSize = opts.fixedSize ?? null
@@ -3069,6 +3082,23 @@ export class Globe {
    * textures, and gates the aircraft-only furniture (endpoint markers, place
    * names, flags, flown/remaining split) that makes no sense for an orbit.
    */
+  /**
+   * Run a step of the layer switch and report it if it cost a visible frame.
+   *
+   * Tab changes felt heavy and every explanation for it so far has been a
+   * guess — the map turned out to be a clean 2:1 that uploads in 83ms, which
+   * ruled out the one I was most sure of. This measures each step instead, and
+   * only says anything when there is something to say, so the log stays quiet
+   * on a machine where the tabs are fine.
+   */
+  timeStep<T>(label: string, fn: () => T): T {
+    const t0 = performance.now()
+    const out = fn()
+    const ms = performance.now() - t0
+    if (ms > 16) this.note(`[switch] ${label} took ${ms.toFixed(0)}ms`)
+    return out
+  }
+
   setObjectKind(kind: ObjectKind): void {
     if (kind === this.kind) return
     this.kind = kind

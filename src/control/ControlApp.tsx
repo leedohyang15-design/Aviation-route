@@ -312,10 +312,20 @@ export function ControlApp(): JSX.Element {
    * time, with nothing having changed on any of those passes.
    */
   const orbitsKey = hiddenOrbits.join(',')
-  const satVisible = useMemo(
-    () => satellites.filter((s) => !orbitsKey.split(',').includes(s.orbit)),
-    [satellites, orbitsKey]
-  )
+  /*
+   * The split is hoisted OUT of the filter.
+   *
+   * `orbitsKey.split(',').includes(...)` inside the callback allocated a fresh
+   * array and rescanned it once per satellite — eleven thousand times per
+   * recompute, and this recomputes on every snapshot, which is every two
+   * seconds all day. A Set built once answers the same question in constant
+   * time. Nothing about the result changes; it was simply paying for the same
+   * answer eleven thousand times.
+   */
+  const satVisible = useMemo(() => {
+    const hidden = new Set(orbitsKey ? orbitsKey.split(',') : [])
+    return hidden.size ? satellites.filter((x) => !hidden.has(x.orbit)) : satellites
+  }, [satellites, orbitsKey])
   const perOrbit = useMemo(() => {
     const c: Record<OrbitClass, number> = { leo: 0, starlink: 0, meo: 0, geo: 0 }
     for (const s of satellites) c[s.orbit]++

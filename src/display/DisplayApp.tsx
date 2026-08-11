@@ -130,10 +130,20 @@ export function DisplayApp(): JSX.Element {
    */
   const orbitsKey = (state.hiddenOrbits ?? []).join(',')
   const filterKey = JSON.stringify(state.filter ?? null)
-  const satVisible = useMemo(
-    () => satellites.filter((x) => !orbitsKey.split(',').includes(x.orbit)),
-    [satellites, orbitsKey]
-  )
+  /*
+   * The split is hoisted OUT of the filter.
+   *
+   * `orbitsKey.split(',').includes(...)` inside the callback allocated a fresh
+   * array and rescanned it once per satellite — eleven thousand times per
+   * recompute, and this recomputes on every snapshot, which is every two
+   * seconds all day. A Set built once answers the same question in constant
+   * time. Nothing about the result changes; it was simply paying for the same
+   * answer eleven thousand times.
+   */
+  const satVisible = useMemo(() => {
+    const hidden = new Set(orbitsKey ? orbitsKey.split(',') : [])
+    return hidden.size ? satellites.filter((x) => !hidden.has(x.orbit)) : satellites
+  }, [satellites, orbitsKey])
 
   const visible = useMemo(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- filterKey IS state.filter, by value
@@ -350,11 +360,16 @@ export function DisplayApp(): JSX.Element {
     // A switch on the mode, not a boolean. `isSat ? 'satellite' : 'aircraft'`
     // quietly gave the fourth tab aeroplane silhouettes pointing at headings
     // that landers do not have.
-    globeRef.current?.setObjectKind(
+    const g = globeRef.current
+    g?.timeStep('setObjectKind', () =>
+      g.setObjectKind(
       isSat ? 'satellite' : isJupiter ? 'moon' : isMars ? 'probe' : 'aircraft'
     )
-    globeRef.current?.setPlanet(isMars ? 'mars' : isJupiter ? 'jupiter' : 'earth')
-    globeRef.current?.clearObjects()
+    )
+    g?.timeStep('setPlanet', () =>
+      g.setPlanet(isMars ? 'mars' : isJupiter ? 'jupiter' : 'earth')
+    )
+    g?.timeStep('clearObjects', () => g.clearObjects())
   }, [mode, isSat, isMars, isJupiter])
   useEffect(() => {
     if (!isMars) return
