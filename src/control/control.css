@@ -683,27 +683,46 @@ body,
   box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.35);
 }
 
+/*
+ * The probe card, which is a CARD.
+ *
+ * It had no background at all. The flight card paints its own white panel and
+ * the satellite card its own dark one — `.sheet-card` only handles the entrance
+ * animation — so this one was small dark text lying directly on the surface of
+ * Mars, which is the worst possible ground for it. Everything below is the
+ * panel that was missing, plus type in absolute sizes rather than rem, because
+ * the size that matters is the size at arm's length on the exhibit's screen and
+ * not a multiple of whatever the root ends up being.
+ */
 .probe-card {
   position: relative;
-  min-width: 300px;
-  max-width: 380px;
-  padding: 16px 18px 15px 22px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(72vh, 680px);
+  padding: 18px 20px 16px 24px;
+  border-radius: 18px;
+  background: rgba(10, 15, 27, 0.92);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
   color: #eaf2ff;
+  font-family: 'Pretendard', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow: hidden;
 }
-/* The status rule. Colour answers "which of these is still alive" before any
-   word on the card is read, and it is the question every visitor asks first. */
+/* The status rule. Colour answers "is this one still alive" before any word on
+   the card is read, and it is the question every visitor asks first. */
 .probe-edge {
   position: absolute;
   left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 4px;
-  border-radius: 0 3px 3px 0;
+  top: 14px;
+  bottom: 14px;
+  width: 5px;
+  border-radius: 0 4px 4px 0;
   background: #9fb6cf;
 }
 .probe-card.active .probe-edge {
   background: #ffd166;
-  box-shadow: 0 0 14px rgba(255, 209, 102, 0.45);
+  box-shadow: 0 0 16px rgba(255, 209, 102, 0.5);
 }
 .probe-card.lost .probe-edge {
   background: #d2735f;
@@ -716,25 +735,25 @@ body,
   gap: 10px;
 }
 .probe-name {
-  font-size: 1.42rem;
+  font-size: 25px;
   font-weight: 800;
   letter-spacing: -0.025em;
-  line-height: 1.1;
+  line-height: 1.12;
 }
 .probe-name .probe-sub {
   display: block;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 600;
   opacity: 0.45;
   letter-spacing: 0.01em;
-  margin-top: 3px;
+  margin-top: 4px;
 }
 .probe-state {
   flex: none;
-  margin-top: 3px;
-  padding: 3px 9px;
+  margin-top: 4px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
   background: rgba(159, 182, 207, 0.16);
@@ -749,60 +768,64 @@ body,
   color: #ffab95;
 }
 
-/* Where it is, on its own line: it is a place name, not a statistic, and it
-   was being squeezed into a row of numbers where it wrapped. */
+/* Where it is, on its own line: a place name is not a statistic, and squeezed
+   into the row of figures it wrapped and read as one. */
 .probe-where {
-  margin-top: 11px;
-  font-size: 0.95rem;
+  margin-top: 12px;
+  font-size: 16px;
 }
 .probe-where b {
   font-weight: 700;
 }
 .probe-where span {
-  font-size: 0.7rem;
+  font-size: 12px;
   opacity: 0.5;
-  margin-left: 7px;
+  margin-left: 8px;
 }
 
-/* The figures, as a grid rather than a wrapping row. Three or four cells of
-   very different widths in a flex row left ragged gaps that read as a mistake. */
+/* The figures, as a grid rather than a wrapping row: cells of very different
+   widths in a flex row left ragged gaps that read as a mistake. */
 .probe-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 14px;
-  margin: 13px 0 0;
-  padding: 12px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  gap: 10px 16px;
+  margin: 14px 0 0;
+  padding: 13px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 .probe-facts > div {
   display: flex;
   flex-direction: column;
 }
 .probe-facts b {
-  font-size: 1.14rem;
+  font-size: 20px;
   font-weight: 800;
   color: #ffd7a8;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
 }
 .probe-facts span {
-  font-size: 0.66rem;
+  font-size: 11px;
   opacity: 0.55;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
-/* The timeline: a rule down the left with a bead at every chapter, which is the
-   one layout that reads as "this happened, then this". */
+/* The timeline is the part that grows, so it is the part that scrolls — the
+   card stays a fixed shape on screen whichever probe is tapped, instead of
+   running off the bottom of the window for the ones with more history. */
 .probe-timeline {
   list-style: none;
-  margin: 13px 0 0;
-  padding: 0 0 0 15px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 14px 0 0;
+  padding: 0 0 0 16px;
   border-left: 2px solid rgba(255, 255, 255, 0.13);
 }
 .probe-timeline li {
   position: relative;
-  padding: 0 0 12px;
+  padding: 0 0 13px;
 }
 .probe-timeline li:last-child {
   padding-bottom: 0;
@@ -810,10 +833,10 @@ body,
 .probe-timeline li::before {
   content: '';
   position: absolute;
-  left: -21px;
+  left: -22px;
   top: 5px;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: #9fb6cf;
 }
@@ -828,22 +851,23 @@ body,
 .probe-timeline li.end::before {
   background: transparent;
   border: 2px solid rgba(255, 255, 255, 0.35);
-  left: -22px;
+  left: -23px;
   top: 4px;
 }
 .probe-timeline .when {
   display: block;
-  font-size: 0.66rem;
+  font-size: 11px;
   font-weight: 700;
   opacity: 0.5;
   letter-spacing: 0.02em;
 }
 .probe-timeline .what {
   display: block;
-  font-size: 0.87rem;
+  font-size: 14px;
   line-height: 1.5;
-  margin-top: 1px;
+  margin-top: 2px;
 }
+
 
 
 
