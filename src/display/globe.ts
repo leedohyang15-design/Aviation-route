@@ -2380,6 +2380,73 @@ export class Globe {
    * through a 2D canvas on the CPU, and doing that when a visitor presses a tab
    * makes the tab appear to hang.
    */
+  /**
+   * Read the map's own top and bottom rows and say what is in them.
+   *
+   * A band of coloured noise appears along the top of Jupiter, and I have now
+   * been wrong about it twice — first blaming polar extrapolation, then the
+   * image's aspect ratio, both ruled out by measurement. The remaining question
+   * is the only one that matters and it is not a matter of opinion: are those
+   * colours IN THE FILE, or is the renderer making them?
+   *
+   * So the file gets asked. The top and bottom four rows are drawn into a small
+   * canvas and scored for saturation — cloud tops and ice are pale, and nothing
+   * on a real planet map is a saturated primary. A high count means the file
+   * has garbage in its edge rows and the fix is the file; near zero means the
+   * file is clean and the fault is downstream, in the sampler or the shader.
+   * Either way it stops being something to squint at a screenshot about.
+   */
+  private reportEdges(tag: string, tex: THREE.Texture): void {
+    const img = tex.image as CanvasImageSource & { width?: number; height?: number }
+    const w = img?.width ?? 0
+    const h = img?.height ?? 0
+    if (!w || !h) return
+    try {
+      // Downsampled horizontally: 256 columns is plenty to catch a band, and
+      // reading 23,040 pixels back from a canvas is not.
+      const S = 256
+      const ROWS = 4
+      const c = document.createElement('canvas')
+      c.width = S
+      c.height = ROWS * 2
+      const g = c.getContext('2d', { willReadFrequently: true })
+      if (!g) return
+      g.drawImage(img, 0, 0, w, ROWS, 0, 0, S, ROWS)
+      g.drawImage(img, 0, h - ROWS, w, ROWS, 0, ROWS, S, ROWS)
+      const px = g.getImageData(0, 0, S, ROWS * 2).data
+      const score = (from: number, to: number): { hot: number; peak: string } => {
+        let hot = 0
+        let best = -1
+        let peak = ''
+        for (let i = from; i < to; i += 4) {
+          const r = px[i], gr = px[i + 1], b = px[i + 2]
+          const mx = Math.max(r, gr, b)
+          const mn = Math.min(r, gr, b)
+          const sat = mx ? (mx - mn) / mx : 0
+          if (sat > 0.5) hot++
+          if (sat > best) {
+            best = sat
+            peak = `rgb(${r},${gr},${b}) sat ${sat.toFixed(2)}`
+          }
+        }
+        return { hot, peak }
+      }
+      const half = S * ROWS * 4
+      const top = score(0, half)
+      const bottom = score(half, half * 2)
+      const n = S * ROWS
+      this.note(
+        `[${tag}] edge rows — top ${top.hot}/${n} saturated (worst ${top.peak}), ` +
+          `bottom ${bottom.hot}/${n} (worst ${bottom.peak}) — ` +
+          (top.hot + bottom.hot > n * 0.02
+            ? 'THE FILE has coloured garbage in its edge rows'
+            : 'the file is clean at both edges, so a band on screen is ours')
+      )
+    } catch (err) {
+      this.note(`[${tag}] could not read edge rows: ${(err as Error).message}`)
+    }
+  }
+
   private loadPlanetMap(tag: string, url: string, keep: (tex: THREE.Texture) => void): void {
     this.loadFirstTexture(
       this.textureCandidates(url),
@@ -2411,6 +2478,7 @@ export class Globe {
          * map is the most that can ever be resolved and 8,192 is already within
          * a factor of two of that. Anything larger is paid for and thrown away.
          */
+        this.reportEdges(tag, tex)
         const maxTex = this.renderer.capabilities.maxTextureSize
         if (w > maxTex) {
           this.note(
@@ -2422,6 +2490,11 @@ export class Globe {
               `identical.`
           )
         }
+        this.note(
+          `[${tag}] mipmaps ${tex.generateMipmaps ? 'on' : 'off'}, anisotropy ${tex.anisotropy}/` +
+            `${this.renderer.capabilities.getMaxAnisotropy()} — the sampler settings, since a band ` +
+            `of streaks the file does not contain has to come from one of them`
+        )
         this.note(
           `[${tag}] loaded map ${w}x${h} (${ratio.toFixed(3)}:1, GPU max ${maxTex}) — ` +
             (Math.abs(ratio - 2) < 0.01
