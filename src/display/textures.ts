@@ -186,6 +186,52 @@ const PAPER = '#f7f5f0'
 const INK = '#14120f'
 const ACCENT = '#e8590c'
 
+/**
+ * What the plate is made of.
+ *
+ * There are two, and they exist for the same reason the control screen has
+ * three different cards: the plate should look like the thing it belongs to.
+ * Flight is a boarding pass, so the dome plate is a paper tag with an orange
+ * rule — that is the whole visual argument of the aircraft tab and it works
+ * over dark ocean.
+ *
+ * Mars does not work that way. The planet fills the frame in bright ochre, and
+ * a cream card on it is two light surfaces arguing; the control screen's own
+ * Mars card is dark glass for exactly this reason, so the dome now matches it.
+ * The accent travels with the object rather than being fixed, so the rule down
+ * the edge is the same colour as the dot the visitor just tapped.
+ */
+export interface CalloutSkin {
+  /** Plate fill. Alpha is allowed — the label material is transparent. */
+  paper: string
+  /** Text colour for the title and the words around the figure. */
+  ink: string
+  /** The edge rule, and the figure itself. */
+  accent: string
+  /** Hairline under the title. */
+  rule: string
+  /** Outline, or none. Dark plates need one; the paper tag does not. */
+  border?: string
+}
+
+const PAPER_SKIN: CalloutSkin = {
+  paper: PAPER,
+  ink: INK,
+  accent: ACCENT,
+  rule: 'rgba(20,18,15,0.16)'
+}
+
+/** The dark-glass plate, matching .probe-card on the control screen. */
+export function panelSkin(accent: string): CalloutSkin {
+  return {
+    paper: 'rgba(10,15,27,0.92)',
+    ink: '#eaf2ff',
+    accent,
+    rule: 'rgba(255,255,255,0.16)',
+    border: 'rgba(255,255,255,0.16)'
+  }
+}
+
 const MONO = `'Consolas','SFMono-Regular',ui-monospace,monospace`
 const SANS = `'Pretendard',system-ui,-apple-system,'Segoe UI',sans-serif`
 
@@ -220,7 +266,8 @@ export function calloutTexture(
   /** Draw it smaller. A satellite's countdown runs to "12시간 1분" and reads as
    * shouting at the size the flight ETA needs; the aircraft plate is the one
    * people read across the room, so only this one shrinks. */
-  compact = false
+  compact = false,
+  skin: CalloutSkin = PAPER_SKIN
 ): { tex: THREE.CanvasTexture; aspect: number; screenH: number } {
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
   const valueFont = `700 ${27 * SS}px ${MONO}`
@@ -255,22 +302,30 @@ export function calloutTexture(
   g.arcTo(0, c.height, 0, 0, r)
   g.arcTo(0, 0, c.width, 0, r)
   g.closePath()
-  g.fillStyle = PAPER
+  g.fillStyle = skin.paper
   g.fill()
   g.save()
   g.clip()
-  g.fillStyle = ACCENT
+  g.fillStyle = skin.accent
   g.fillRect(0, 0, EDGE_W * SS, c.height)
   g.restore()
+  // The outline goes on after the bar so the bar butts into it rather than
+  // over it. A translucent plate needs it: without one, a dark card over the
+  // night side of Mars has no edge at all and reads as a hole in the planet.
+  if (skin.border) {
+    g.strokeStyle = skin.border
+    g.lineWidth = SS
+    g.stroke()
+  }
 
   const left = (EDGE_W + CALLOUT_PAD) * SS
   if (title) {
     g.font = titleFont
-    g.fillStyle = INK
+    g.fillStyle = skin.ink
     g.fillText(title, left, 20 * SS)
     if (hasLine) {
       // Hairline between the name and the figure, inset from the accent bar.
-      g.fillStyle = 'rgba(20,18,15,0.16)'
+      g.fillStyle = skin.rule
       g.fillRect(left, titleH * SS - SS, c.width - left - CALLOUT_PAD * SS, SS)
     }
   }
@@ -278,19 +333,19 @@ export function calloutTexture(
   const baseline = (titleH + 33.5) * SS
   if (prefix) {
     g.font = wordFont
-    g.fillStyle = INK
+    g.fillStyle = skin.ink
     g.fillText(prefix, x, baseline)
     x += (preW + gap) * SS
   }
   if (value) {
     g.font = valueFont
-    g.fillStyle = ACCENT
+    g.fillStyle = skin.accent
     g.fillText(value, x, baseline)
     x += (valW + gap) * SS
   }
   if (suffix) {
     g.font = wordFont
-    g.fillStyle = INK
+    g.fillStyle = skin.ink
     g.fillText(suffix, x, baseline)
   }
 

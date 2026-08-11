@@ -19,6 +19,7 @@ import {
   targetPosition
 } from '@shared/mars-future'
 import { Globe } from './globe'
+import { panelSkin, type CalloutSkin } from './textures'
 import type { OrbitClass } from '@shared/types'
 
 const ORBIT_LABEL: Record<OrbitClass, string> = {
@@ -32,6 +33,20 @@ const ORBIT_LABEL: Record<OrbitClass, string> = {
 // top-left; the rest of the output stays black.
 const FRAME = { w: 1664, h: 838 }
 
+/**
+ * The rule down the edge of the Mars plate: the colour of the thing selected.
+ *
+ * Same table the map and the control chips read, so the dot, the chip and the
+ * plate cannot disagree about whether a machine is still working. With nothing
+ * selected the plate is about the planet rather than about any one object, so
+ * it takes the amber of the two that are still alive — the tab's own colour.
+ */
+function marsAccent(selected: string | null): string {
+  if (isTargetId(selected)) return TARGET_COLOR
+  const p = MARS_PROBES.find((x) => x.id === selected)
+  return p ? PROBE_COLOR[p.status] : PROBE_COLOR.active
+}
+
 /** A duration as the figure that goes in the callout's accent slot. */
 function hhmm(sec: number): string {
   const m = Math.max(0, Math.round(sec / 60))
@@ -44,6 +59,12 @@ interface Callout {
   prefix: string
   value: string
   suffix: string
+  /**
+   * What the plate is made of. Undefined means the paper tag, which is right
+   * for every tab whose background is the Earth. Mars is the exception — see
+   * panelSkin in textures.ts.
+   */
+  skin?: CalloutSkin
 }
 const NOTHING: Callout = { title: '', prefix: '', value: '', suffix: '' }
 
@@ -135,6 +156,19 @@ export function DisplayApp(): JSX.Element {
     if (isMars) {
       void marsTick
       /*
+       * Dark glass, not the paper tag, and the rule down its edge is the colour
+       * of the dot that was tapped.
+       *
+       * The plate is a boarding-pass tag because the aircraft tab is about a
+       * journey with two ends and a cream card reads beautifully over dark
+       * ocean. Mars is the opposite background — bright ochre filling the frame
+       * — and two light surfaces argue. The control screen's Mars card already
+       * solved this by being dark glass, so the dome answers to the same
+       * design, and a visitor looking up from the touchscreen sees the same
+       * object described the same way in both places.
+       */
+      const skin = panelSkin(marsAccent(state.selected))
+      /*
        * A candidate landing region, which is the one thing on this dome that
        * has not happened yet.
        *
@@ -153,7 +187,8 @@ export function DisplayApp(): JSX.Element {
           title: `${t.name}   아직 아무도 못 가본 곳`,
           prefix: '다음에 지구를 떠날 수 있는 날까지',
           value: `${daysUntil(win.departMs, now).toLocaleString()}일`,
-          suffix: `· ${d.getFullYear()}년 ${d.getMonth() + 1}월`
+          suffix: `· ${d.getFullYear()}년 ${d.getMonth() + 1}월`,
+          skin
         }
       }
       const p = MARS_PROBES.find((x) => x.id === state.selected)
@@ -162,7 +197,8 @@ export function DisplayApp(): JSX.Element {
         return {
           ...NOTHING,
           title: '화성',
-          prefix: `사람이 보낸 로봇 ${MARS_PROBES.length}대가 여기 내려앉았고, 그중 ${alive}대는 지금도 일하고 있어요`
+          prefix: `사람이 보낸 로봇 ${MARS_PROBES.length}대가 여기 내려앉았고, 그중 ${alive}대는 지금도 일하고 있어요`,
+          skin
         }
       }
       const now = Date.now()
@@ -172,14 +208,20 @@ export function DisplayApp(): JSX.Element {
       const sol = marsLive[p.id]?.sol ?? missionSol(p, now)
       const title = `${p.name}   ${p.place}`
       if (p.status === 'lost') {
-        return { ...NOTHING, title, prefix: `${p.landed.slice(0, 4)}년에 내렸지만 소식이 끊겼어요` }
+        return {
+          ...NOTHING,
+          title,
+          prefix: `${p.landed.slice(0, 4)}년에 내렸지만 소식이 끊겼어요`,
+          skin
+        }
       }
       if (p.status === 'active') {
         return {
           title,
           prefix: `화성에 온 지`,
           value: `${sol.toLocaleString()}솔`,
-          suffix: `· 그곳은 지금 ${marsClock(p.lonEast, now)}`
+          suffix: `· 그곳은 지금 ${marsClock(p.lonEast, now)}`,
+          skin
         }
       }
       return {
@@ -394,7 +436,8 @@ export function DisplayApp(): JSX.Element {
         callout.prefix,
         callout.value,
         callout.suffix,
-        isSat
+        isSat,
+        callout.skin
       ),
     [callout, isSat]
   )

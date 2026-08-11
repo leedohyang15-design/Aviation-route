@@ -61,6 +61,7 @@ import {
   LIGHT_QUAD_SCALE,
   LIGHT_SPOTS,
   calloutTexture,
+  type CalloutSkin,
   categoryColor,
   orbitColor,
   plainDotTexture,
@@ -3001,11 +3002,19 @@ export class Globe {
 
   /** The plate the dome carries: what the object is, and how long until it
    * lands or passes overhead. All-empty clears it. */
-  setCallout(title: string, prefix: string, value: string, suffix: string, compact = false): void {
+  setCallout(
+    title: string,
+    prefix: string,
+    value: string,
+    suffix: string,
+    compact = false,
+    /** Paper tag by default; pass panelSkin(colour) for the dark-glass plate. */
+    skin?: CalloutSkin
+  ): void {
     const mat = this.infoLabel.material as THREE.MeshBasicMaterial
     mat.map?.dispose()
     if (title || prefix || value || suffix) {
-      const { tex, aspect, screenH } = calloutTexture(title, prefix, value, suffix, compact)
+      const { tex, aspect, screenH } = calloutTexture(title, prefix, value, suffix, compact, skin)
       mat.map = this.tuneSprite(tex)
       mat.needsUpdate = true
       this.infoLabel.userData.aspect = aspect
