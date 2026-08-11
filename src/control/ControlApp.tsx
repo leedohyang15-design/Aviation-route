@@ -539,6 +539,7 @@ export function ControlApp(): JSX.Element {
         onView={(view) => send({ type: 'setView', view })}
         onAttract={setAttract}
         onAnchor={anchorSink}
+        marsLive={marsLive}
         onWeatherTime={setShownAt}
         onLocalSky={setRainHere}
         onNote={(text) => send({ type: 'note', text })}
