@@ -11,6 +11,8 @@
 // are arithmetic, the histories are settled, and the two spacecraft on their
 // way have departure dates that already happened.
 
+import { JUPITER_MAP_LAT_LIMIT } from './config'
+
 /* ------------------------------------------------------------------ *
  * The planet
  * ------------------------------------------------------------------ */
@@ -239,6 +241,24 @@ export const GALILEO_PROBE = {
 export function westToRendererLon(lonWest: number): number {
   const e = ((360 - (lonWest % 360)) % 360 + 360) % 360
   return e > 180 ? e - 360 : e
+}
+
+/**
+ * A real Jupiter latitude, onto the latitude scale this tab's frame uses.
+ *
+ * Jupiter's map has no picture past about 60 degrees, so the frame carries
+ * only the range the file actually has — see JUPITER_MAP_LAT_LIMIT. That means
+ * the background is on its own latitude scale, and anything plotted on top of
+ * it has to be on the same one or it drifts off the cloud band it belongs to.
+ * Everything here is at or near the equator, so the shift is a few pixels; it
+ * is done anyway, because a marker whose position is only nearly right is the
+ * kind of thing that stays wrong for years.
+ *
+ * The number a card SHOWS is untouched. The probe went in at 6.5 degrees north
+ * of Jupiter's equator, and that is true whatever this frame's scale is.
+ */
+export function toMapLat(lat: number): number {
+  return (lat * 90) / JUPITER_MAP_LAT_LIMIT
 }
 
 /*

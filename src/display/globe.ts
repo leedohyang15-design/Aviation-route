@@ -35,6 +35,7 @@ import {
   MARS_SATURATION,
   MARS_TINT,
   JUPITER_DAY_PERIOD_MS,
+  JUPITER_MAP_LAT_LIMIT,
   JUPITER_NIGHT_FLOOR,
   JUPITER_POLE_FADE_DEG,
   JUPITER_TEXTURE_URL,
@@ -803,6 +804,17 @@ export class Globe {
        * data there. See JUPITER_POLE_FADE_DEG.
        */
       uPoleFade: { value: 0 },
+      /*
+       * How many degrees of latitude the frame's full height covers, for the
+       * MAP sample only. 90 is the normal thing: an image that runs pole to
+       * pole, drawn pole to pole.
+       *
+       * Jupiter's map does not run pole to pole — see JUPITER_MAP_LAT_LIMIT —
+       * so its frame carries the range the file actually has a picture of,
+       * which fills the frame with the file's own pixels rather than with its
+       * black padding.
+       */
+      uLatSpan: { value: 90 },
       // Weather. Two Mercator mosaics, remapped to this frame in the shader.
       uCloud: { value: null },
       uHasCloud: { value: 0 },
@@ -860,6 +872,7 @@ export class Globe {
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
         uniform float uTerminator; uniform float uPoleFade; uniform vec3 uNightTint;
+        uniform float uLatSpan;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
@@ -908,19 +921,18 @@ export class Globe {
           // huge UV derivative at the wrap, which picks the wrong mip level and
           // draws a vertical seam when the map wraps around.
           /*
-           * The map, as it is in the file.
+           * The frame's height covers uLatSpan degrees each way, not always 90.
            *
-           * Nothing is done about the coloured streaks along Jupiter's top and
-           * bottom edges, and that is a decision rather than an omission. That
-           * map stops at 60 degrees and is padded to 2:1 with black; the seam's
-           * JPEG ringing is what the streaks are. Two fixes were tried here and
-           * both looked worse on the real file than the artefact did — blanking
-           * the padding punched the planet's poles out, and carrying the
-           * boundary row up into them smeared it into vertical streaking across
-           * the whole cap. The honest fix is not in this shader at all, it is a
-           * Jupiter map that reaches the poles or is not padded with black.
+           * For a map that runs pole to pole this is exactly vUv.y and costs
+           * nothing. For Jupiter's, which stops around 60 degrees and is padded
+           * out to 2:1 with black, it is what puts the file's own picture edge
+           * to edge in the frame — no black cap, no seam, and none of it
+           * invented. Two attempts at repairing that padding in this shader
+           * both came out worse than the artefact they were fixing; not drawing
+           * the padding at all is the one that works.
            */
-          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, vUv.y);
+          float mapV = 0.5 + (vUv.y - 0.5) * (uLatSpan / 90.0);
+          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, mapV);
           vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
           // Brightness + saturation grade on the daytime image.
           float luma = dot(day, vec3(0.299, 0.587, 0.114));
@@ -2351,6 +2363,12 @@ export class Globe {
   setPlanet(planet: Planet): void {
     if (planet === this.planet) return
     this.planet = planet
+    /*
+     * How much latitude this planet's frame covers. See JUPITER_MAP_LAT_LIMIT:
+     * Jupiter's map has no picture past about 60 degrees, so its frame carries
+     * the range the file actually has rather than a black cap over the rest.
+     */
+    this.bgUniforms.uLatSpan.value = planet === 'jupiter' ? JUPITER_MAP_LAT_LIMIT : 90
     if (planet === 'earth') {
       this.bgUniforms.uMap.value = this.earthTex
       this.bgUniforms.uHasMap.value = this.earthTex ? 1 : 0

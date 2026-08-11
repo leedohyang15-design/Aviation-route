@@ -24,6 +24,7 @@ import {
   GALILEO_PROBE,
   moonMapLon,
   moonPeriodDays,
+  toMapLat,
   westToRendererLon
 } from '@shared/jupiter'
 import { Globe } from './globe'
@@ -414,7 +415,8 @@ export function DisplayApp(): JSX.Element {
       {
         id: GALILEO_PROBE.id,
         lon: westToRendererLon(GALILEO_PROBE.lonWest),
-        lat: GALILEO_PROBE.lat,
+        // On the frame's own latitude scale — see toMapLat.
+        lat: toMapLat(GALILEO_PROBE.lat),
         color: new THREE.Color(GALILEO_PROBE.color)
       }
     ])

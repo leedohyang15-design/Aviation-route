@@ -15,7 +15,7 @@ import type {
 import * as THREE from 'three'
 import { MARS_PROBES, PROBE_COLOR, probePosition } from '@shared/probes'
 import { MARS_TARGETS, TARGET_COLOR, isTargetId, targetPosition } from '@shared/mars-future'
-import { GALILEAN, GALILEO_PROBE, moonMapLon, westToRendererLon } from '@shared/jupiter'
+import { GALILEAN, GALILEO_PROBE, moonMapLon, toMapLat, westToRendererLon } from '@shared/jupiter'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -191,7 +191,8 @@ export function MapView({
       {
         id: GALILEO_PROBE.id,
         lon: westToRendererLon(GALILEO_PROBE.lonWest),
-        lat: GALILEO_PROBE.lat,
+        // On the frame's own latitude scale — see toMapLat.
+        lat: toMapLat(GALILEO_PROBE.lat),
         color: new THREE.Color(GALILEO_PROBE.color)
       }
     ])

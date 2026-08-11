@@ -111,6 +111,31 @@ export const JUPITER_TEXTURE_URL = 'jupiter_equirect.jpg'
  */
 export const JUPITER_POLE_FADE_DEG = 0
 /**
+ * How far north and south this Jupiter map's real picture goes.
+ *
+ * Jupiter is only ever photographed from near its own equatorial plane, so
+ * published maps of it stop around 60 degrees — and this one is padded out to
+ * 2:1 with BLACK so the file stays a valid plate carree. Drawn honestly, that
+ * padding is a black cap over the top and bottom of the planet, and along the
+ * seam where the black meets the clouds is the JPEG ringing that shows up as a
+ * band of coloured streaks.
+ *
+ * So Jupiter's frame carries this range instead of the full 90. The map's own
+ * picture fills the frame edge to edge: no black, no seam, nothing invented.
+ * The trade is that this tab's latitudes are on their own scale — 58 degrees
+ * of Jupiter sits where 90 degrees of Earth would — which costs nothing here,
+ * because the only things plotted on Jupiter are four moons at the equator and
+ * one entry point at 6.5N, and the marker positions are put on the same scale
+ * so they stay on the right cloud bands.
+ *
+ * A degree or two INSIDE where the data actually stops, on purpose: the
+ * compression ringing bleeds a few blocks past the seam, and this leaves it
+ * off the frame instead of on its topmost row. Read the real limit off the
+ * file — the black rows are unmistakable in any image editor — and set this a
+ * little under it. 90 means a map that genuinely reaches both poles.
+ */
+export const JUPITER_MAP_LAT_LIMIT = 58
+/**
  * How long one Jupiter day takes on screen. Six minutes, matching Mars.
  *
  * The real one is 9h 55m, which is the fastest day of any planet and still far
