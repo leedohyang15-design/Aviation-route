@@ -21,6 +21,7 @@ import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
 import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
+import { tleFetchedAt } from './tle'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
 import { opsLog } from './log'
@@ -238,7 +239,7 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   let lastOrbitAt = 0
   const onSatellites = () => {
     if (state.mode !== 'satellite') return
-    broadcast({ type: 'satellites', data: satSnapshot(), serverTime: Date.now() })
+    broadcast({ type: 'satellites', data: satSnapshot(), serverTime: Date.now(), tleAt: tleFetchedAt() })
     if (!state.selected) return
     const d = satDetail(state.selected)
     broadcast({ type: 'satDetail', detail: d })
@@ -451,7 +452,7 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
       for (const frame of currentWeatherFrames()) send(ws, { type: 'weather', frame })
     } else if (state.mode === 'satellite') {
       const sats = satSnapshot()
-      send(ws, { type: 'satellites', data: sats, serverTime: Date.now() })
+      send(ws, { type: 'satellites', data: sats, serverTime: Date.now(), tleAt: tleFetchedAt() })
       if (state.selected) {
         const d = satDetail(state.selected)
         send(ws, { type: 'satDetail', detail: d })

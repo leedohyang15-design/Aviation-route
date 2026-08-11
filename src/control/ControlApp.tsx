@@ -36,6 +36,36 @@ const TITLES: Record<ExhibitMode, [string, string]> = {
 /** The ten that are no longer working — everything but the two still driving. */
 const PAST_PROBES = MARS_PROBES.filter((p) => p.status !== 'active')
 
+/**
+ * Past this, the element set is old enough to say so — one day plus a couple of
+ * hours of slack, since the download runs daily and a kiosk that opened the tab
+ * ten minutes before the refresh should not flash a warning at nobody.
+ *
+ * It matters more than it looks. SGP4 propagates from a snapshot of an orbit,
+ * and the error grows: a low satellite drifts roughly a kilometre a day along
+ * its track, so a week-old set still draws a plausible dot in a slightly wrong
+ * place. There is nothing on screen to give that away, which is exactly why the
+ * badge has to.
+ */
+const TLE_STALE_MS = 26 * 3600_000
+
+/**
+ * The satellite attribution, which now says how old the data is.
+ *
+ * "실시간 계산" was true and was doing two jobs. The arithmetic IS to the
+ * second — every dot is propagated here, twice a second, from orbital elements.
+ * The ELEMENTS are up to a day old, because Celestrak regenerates them about
+ * daily and asks that nobody re-fetch faster than that. A visitor reading
+ * "실시간" had no way to tell those apart, and neither did an operator trying to
+ * work out why a pass time looked off.
+ */
+function satSourceText(tleAt: number | null): string {
+  if (tleAt == null) return 'Celestrak · 궤도 정보 불러오는 중'
+  const hours = Math.floor((Date.now() - tleAt) / 3600_000)
+  const age = hours < 1 ? '방금' : hours < 24 ? `${hours}시간 전` : `${Math.floor(hours / 24)}일 전`
+  return `Celestrak 궤도 정보 ${age} · 위치는 실시간 계산`
+}
+
 /** Card footprint, matched to .sheet in control.css — used to keep the card
  * inside the window when it is anchored to a tapped object. */
 const SHEET_W = 360
@@ -246,6 +276,7 @@ export function ControlApp(): JSX.Element {
     route,
     detail,
     satellites,
+    tleAt,
     satDetail,
     weather,
     weatherAt,
@@ -658,7 +689,11 @@ export function ControlApp(): JSX.Element {
               ? weatherAt == null
                 ? 'pending'
                 : 'ok'
-              : isJupiter || isMars || isSat || live
+              : isSat
+              ? tleAt != null && Date.now() - tleAt < TLE_STALE_MS
+                ? 'ok'
+                : 'warn'
+              : isJupiter || isMars || live
               ? 'ok'
               : 'pending')
           }
@@ -672,7 +707,7 @@ export function ControlApp(): JSX.Element {
             : isMars
             ? 'NASA · ESA · 소련 · 중국 — 착륙 기록'
             : isSat
-            ? '위성 궤도 · 실시간 계산'
+            ? satSourceText(tleAt)
             : statusText}
         </div>
         </div>

@@ -34,6 +34,8 @@ export interface HubView {
   route: { icao24: string; points: GeoPoint[] | null }
   detail: FlightDetail | null
   satellites: Satellite[]
+  /** When the element set behind those positions was downloaded, epoch ms. */
+  tleAt: number | null
   satDetail: SatelliteDetail | null
   /** The newest animation series for each weather layer, in loop order. */
   weather: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
@@ -85,6 +87,7 @@ export function useHub(role: 'control' | 'display'): HubView {
   })
   const [detail, setDetail] = useState<FlightDetail | null>(null)
   const [satellites, setSatellites] = useState<Satellite[]>([])
+  const [tleAt, setTleAt] = useState<number | null>(null)
   const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
   /** Live rover positions, keyed by probe id. Empty until the daily check lands. */
   const [marsLive, setMarsLive] = useState<Record<string, MarsLiveWire>>({})
@@ -118,6 +121,10 @@ export function useHub(role: 'control' | 'display'): HubView {
           break
         case 'satellites':
           setSatellites(msg.data)
+          // Only on a change: this arrives every couple of seconds and the
+          // value moves once a day, so setting it unconditionally would
+          // re-render the whole control window for nothing.
+          setTleAt((prev) => (prev === msg.tleAt ? prev : msg.tleAt))
           break
         case 'satDetail':
           setSatDetail(msg.detail)
@@ -161,6 +168,7 @@ export function useHub(role: 'control' | 'display'): HubView {
     route,
     detail,
     satellites,
+    tleAt,
     satDetail,
     marsLive,
     weather,

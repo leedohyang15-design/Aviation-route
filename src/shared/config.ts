@@ -90,20 +90,26 @@ export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
  */
 export const JUPITER_TEXTURE_URL = 'jupiter_equirect.jpg'
 /**
- * Degrees of latitude to fade out at each of Jupiter's poles.
+ * Degrees of latitude to fade out at each of Jupiter's poles. OFF by default.
  *
- * Jupiter is only ever photographed from near its own equatorial plane, so no
- * cylindrical map of it has real data at the top and bottom — what is printed
- * there is extrapolated, and where the extrapolation meets the real data there
- * is a seam. Equirectangular projection stretches that seam across the entire
- * width of the frame, and on a dome that is the loudest place an artefact can
- * possibly sit.
+ * This was 14, on a diagnosis that turned out to be wrong. A band of noise
+ * appeared along the top of the planet and I explained it as extrapolated
+ * polar data — every picture of Jupiter is taken from near its equatorial
+ * plane, so a cylindrical map of one has nothing real at the top, and where
+ * the extrapolation meets the data there would be a seam. That story is true
+ * about gas-giant maps in general and was NOT true of this one: the source
+ * file is clean up to its own top edge. So the fade was hiding real pixels to
+ * cover a fault somewhere else, which is worse than the fault.
  *
- * Raise it if a band of noise is still visible along the top or bottom of the
- * planet; drop it to 0 to see the map exactly as the file has it. Earth and
- * Mars are mapped from orbit pole to pole and get none of this.
+ * The knob stays because some maps genuinely do have ragged poles, but nothing
+ * uses it unless somebody sets it, and it should not be reached for before the
+ * `[jupiter] loaded map WxH (R:1)` line in the log has been read. That line
+ * says what the file actually is, and the likeliest cause is in it: the shader
+ * assumes the image spans pole to pole and is therefore exactly 2:1. A map
+ * that stops at +/-60 degrees, as most published Jupiter maps do, has its
+ * topmost ROW of pixels smeared by the projection across the whole polar band.
  */
-export const JUPITER_POLE_FADE_DEG = 14
+export const JUPITER_POLE_FADE_DEG = 0
 /**
  * How long one Jupiter day takes on screen. Six minutes, matching Mars.
  *

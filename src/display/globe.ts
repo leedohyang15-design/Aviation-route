@@ -1339,6 +1339,37 @@ export class Globe {
    * tint — was authored as a display value and written straight out. It works
    * in display space, so its textures should arrive in display space too.
    */
+  /**
+   * Put a texture on the GPU NOW, rather than on the frame that first uses it.
+   *
+   * Loading an image only decodes it; three.js uploads it the first time it is
+   * bound, and for a map wider than the GPU's limit it also redraws the whole
+   * thing through a 2D canvas on the CPU first. Both of those were happening on
+   * the first frame after a visitor pressed a tab — which is the one moment in
+   * the exhibit when somebody is definitely watching, and it is why the tabs
+   * felt heavy. The maps are already fetched during startup for exactly this
+   * reason; this is the half of it that was missing.
+   *
+   * Timed and logged, because on a 23,040px map this is not a small cost, it is
+   * just a cost paid where nobody is standing.
+   */
+  private uploadNow(tag: string, tex: THREE.Texture): void {
+    const t0 = performance.now()
+    try {
+      this.renderer.initTexture(tex)
+    } catch (err) {
+      // Never fatal: a failed pre-upload only means it happens later, the way
+      // it always used to.
+      console.warn(`[${tag}] pre-upload failed: ${(err as Error).message}`)
+      return
+    }
+    const ms = performance.now() - t0
+    console.log(
+      `[${tag}] uploaded to GPU in ${ms.toFixed(0)}ms` +
+        (ms > 250 ? ' — this is the pause the tab used to make' : '')
+    )
+  }
+
   private tuneTexture(tex: THREE.Texture, passThrough = false): void {
     tex.colorSpace = passThrough ? THREE.NoColorSpace : THREE.SRGBColorSpace
     tex.wrapS = THREE.RepeatWrapping
@@ -2098,6 +2129,7 @@ export class Globe {
       (tex) => {
         this.tuneTexture(tex)
         this.earthTex = tex
+        this.uploadNow('earth', tex)
         this.bgUniforms.uMap.value = tex
         this.bgUniforms.uHasMap.value = 1
         // Photographic maps carry their own graticule — drop the procedural grid.
@@ -2119,6 +2151,7 @@ export class Globe {
       (tex) => {
         this.tuneTexture(tex)
         this.nightTex = tex
+        this.uploadNow('night', tex)
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
         console.log(`[earth] loaded night texture`)
@@ -2284,6 +2317,7 @@ export class Globe {
       (tex) => {
         this.tuneTexture(tex, true)
         keep(tex)
+        this.uploadNow(tag, tex)
         /*
          * The dimensions, not just "loaded".
          *

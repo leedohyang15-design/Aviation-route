@@ -25,6 +25,19 @@ export interface TleRecord {
 const CACHE_NAME = 'aviation-route-tle.txt'
 const CACHE_PATH = dataPath(CACHE_NAME)
 
+/**
+ * When the element set on screen was downloaded, epoch ms — or null before
+ * anything has loaded.
+ *
+ * An absolute instant rather than an age, because the windows are told once
+ * and then run for months: an age would be right for a second and quietly
+ * wrong for the rest of the day. Each window subtracts it from its own clock.
+ */
+let fetchedAt: number | null = null
+export function tleFetchedAt(): number | null {
+  return fetchedAt
+}
+
 function findCache(explicit?: string): { path: string; data: { text: string; age: number } } | null {
   for (const p of explicit ? [explicit] : dataPathCandidates(CACHE_NAME)) {
     const data = readCache(p)
@@ -81,6 +94,7 @@ export async function loadTles(explicitPath?: string): Promise<TleRecord[]> {
   const path = explicitPath ?? hit?.path ?? CACHE_PATH
   if (cached && cached.age < TLE_MAX_AGE_MS) {
     const recs = parseTle(cached.text)
+    fetchedAt = Date.now() - cached.age
     opsLog(`[tle] ${recs.length} satellites from cache (${Math.round(cached.age / 3600_000)}h old)`)
     return recs
   }
@@ -98,6 +112,7 @@ export async function loadTles(explicitPath?: string): Promise<TleRecord[]> {
     } catch (err) {
       opsLog(`[tle] could not cache to disk: ${(err as Error).message}`)
     }
+    fetchedAt = Date.now()
     opsLog(`[tle] downloaded ${recs.length} satellites from Celestrak`)
     return recs
   } catch (err) {
@@ -105,6 +120,7 @@ export async function loadTles(explicitPath?: string): Promise<TleRecord[]> {
     opsLog(`[tle] download failed: ${(err as Error).message}`)
     if (cached) {
       const recs = parseTle(cached.text)
+      fetchedAt = Date.now() - cached.age
       opsLog(`[tle] falling back to cached set (${Math.round(cached.age / 3600_000)}h old, ${recs.length} satellites)`)
       return recs
     }

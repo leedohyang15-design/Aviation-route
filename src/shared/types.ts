@@ -347,7 +347,20 @@ export type ServerMessage =
   | { type: 'state'; state: PresentationState }
   | { type: 'route'; icao24: string; points: GeoPoint[] | null }
   | { type: 'detail'; detail: FlightDetail | null }
-  | { type: 'satellites'; data: Satellite[]; serverTime: number }
+  | {
+      type: 'satellites'
+      data: Satellite[]
+      serverTime: number
+      /**
+       * When the element set these positions come from was downloaded, epoch
+       * ms. The exhibit computes every dot itself from a file that is fetched
+       * once a day, so "live" is doing two different jobs here and only one of
+       * them is honest without this: the ARITHMETIC is to the second, and the
+       * ELEMENTS are up to a day old. Absolute rather than an age so it stays
+       * right between messages.
+       */
+      tleAt: number | null
+    }
   | { type: 'satDetail'; detail: SatelliteDetail | null }
   | { type: 'weather'; frame: WeatherFrame }
   /**
