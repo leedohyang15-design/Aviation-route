@@ -3714,9 +3714,11 @@ export class Globe {
     if (this.planet === 'mars') {
       const s = marsSubsolar(Date.now())
       this.sunDecl = s.decl
-      // Real Mars time by default, so the shadow and the clock on the card are
-      // the same fact told twice; see MARS_DAY_PERIOD_MS. The operator's slider,
-      // when there is one, means the hour on Mars rather than in Korea.
+      // A compressed Martian day, like the earth's — at Mars' real quarter of a
+      // degree a minute the shadow does not visibly move during a visit and half
+      // the planet stays dark for all of it. See MARS_DAY_PERIOD_MS for what
+      // that costs. The operator's slider, when there is one, means the hour on
+      // Mars rather than in Korea.
       const spun =
         MARS_DAY_PERIOD_MS > 0
           ? wrapLon(180 - ((Date.now() % MARS_DAY_PERIOD_MS) / MARS_DAY_PERIOD_MS) * 360)

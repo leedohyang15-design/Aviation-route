@@ -195,11 +195,15 @@ export const MARS_MAX_DRIFT_KM = Number(readEnv('MARS_MAX_DRIFT_KM') ?? 200)
  * has spent a lot of this project's time making sure two parts of it never
  * disagree about the same fact.
  *
- * So Mars turns at its own rate: a quarter of a degree a minute, honest and
- * nearly still. Set this to 360000 for the earth's six-minute spin if motion
- * matters more, and know that the clock on the card stops agreeing with it.
+ * Real time was tried and it is a quarter of a degree a minute: honest, and
+ * indistinguishable from a still picture over the length of a visit, with half
+ * the planet dark for the whole of it. Motion won, and the cost is named rather
+ * than hidden — the shadow is a demonstration of a Martian day going by, the
+ * clock on the card is the real local time where that machine is standing, and
+ * on a six-minute loop nobody is going to read the second off the first. Set
+ * this to 0 for real time if the agreement matters more than the motion.
  */
-export const MARS_DAY_PERIOD_MS = Number(readEnv('MARS_DAY_PERIOD_MS') ?? 0)
+export const MARS_DAY_PERIOD_MS = Number(readEnv('MARS_DAY_PERIOD_MS') ?? 6 * 60 * 1000)
 
 /**
  * How much of the Mars map survives the night.
