@@ -541,6 +541,7 @@ export function ControlApp(): JSX.Element {
         onAnchor={anchorSink}
         onWeatherTime={setShownAt}
         onLocalSky={setRainHere}
+        onNote={(text) => send({ type: 'note', text })}
         pokeRef={pokeRef}
         dayNightHour={state.dayNightHour}
         originCity={d?.origin?.city ?? null}

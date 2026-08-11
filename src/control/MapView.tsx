@@ -40,6 +40,8 @@ interface Props {
   onWeatherTime?: (t: number | null) => void
   /** Which band the rain over the exhibit falls into; null for nothing to say. */
   onLocalSky?: (rain: number | null) => void
+  /** A line for the exe's log. The dome cannot report on a camera it does not have. */
+  onNote?: (text: string) => void
   /** Filled with a function that re-arms the attract countdown, so taps on the
    * overlay UI (search, chips, tabs) count as operator activity too. */
   pokeRef?: React.MutableRefObject<(() => void) | null>
@@ -66,6 +68,7 @@ export function MapView({
   onAnchor,
   onWeatherTime,
   onLocalSky,
+  onNote,
   pokeRef,
   dayNightHour = null,
   originCity = null,
@@ -87,6 +90,8 @@ export function MapView({
   onWeatherTimeRef.current = onWeatherTime
   const onLocalSkyRef = useRef(onLocalSky)
   onLocalSkyRef.current = onLocalSky
+  const onNoteRef = useRef(onNote)
+  onNoteRef.current = onNote
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -99,6 +104,10 @@ export function MapView({
     if (pokeRef) pokeRef.current = () => globe.pokeActivity()
     globe.onWeatherTime = (t) => onWeatherTimeRef.current?.(t)
     globe.onLocalSky = (r) => onLocalSkyRef.current?.(r)
+    // The control window reports too. It used to be silent because the dome
+    // measured the same pixels and two copies of every line is noise — but the
+    // dome does not zoom, so anything about the camera can only be seen here.
+    globe.onNote = (t) => onNoteRef.current?.(t)
     globeRef.current = globe
     globe.start()
     // Refit/recenter whenever the map area changes size (also fixes the initial

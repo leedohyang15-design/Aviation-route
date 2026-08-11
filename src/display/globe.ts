@@ -339,6 +339,8 @@ export class Globe {
   private routePoints: GeoPoint[] | null = null
   private lastRouteIdx = -1
   private lastRouteOffset = NaN
+  /** So the build note fires on a change rather than every frame. */
+  private lastRouteMeshes = -1
   /**
    * A dark casing under the route, for the same reason the orbit has one: the
    * remaining leg is pale yellow, which vanishes over pale ground — the steppe
@@ -2681,6 +2683,11 @@ export class Globe {
    * `dLat/180` vertically, and the larger wins. Null when there is no route to
    * fit or it is a single point.
    */
+  /** A note tagged with which window it came from; both send them now. */
+  private note(msg: string): void {
+    this.onNote?.(`${this.interactive ? '[control]' : '[dome]'} ${msg}`)
+  }
+
   private routeSpan(): number | null {
     const pts = this.routePoints
     if (!pts || pts.length < 2) return null
@@ -2724,6 +2731,13 @@ export class Globe {
        */
       const fit = this.kind === 'probe' ? this.routeSpan() : null
       this.iSpan = fit != null ? Math.max(this.minSpan, fit) : Math.min(this.iSpan, 0.6)
+      // Which of the three numbers decided the zoom. "The line is too small" and
+      // "the camera never moved" look identical on screen and are different bugs.
+      this.note(
+        `[frame] kind=${this.kind} fit=${fit == null ? 'none' : fit.toFixed(5)} ` +
+          `min=${this.minSpan.toFixed(5)} -> span ${this.iSpan.toFixed(5)} ` +
+          `(${(1 / this.iSpan).toFixed(0)}x) at ${lat.toFixed(4)},${lon.toFixed(4)}`
+      )
       this.applyInteractiveView()
       this.emitView()
     } else {
@@ -3018,7 +3032,7 @@ export class Globe {
     // One line per selection, not per frame. "The line is not drawn" has three
     // possible causes — nothing sent, nothing received, nothing rendered — and
     // only the renderer can rule out the middle one.
-    this.onNote?.(`[route] ${next ? `${next.length} points` : 'cleared'} (${this.kind})`)
+    this.note(`[route] ${next ? `${next.length} points` : 'cleared'} (${this.kind})`)
     // A traverse arrives after its probe is selected, and it is what decides
     // how far in to zoom — so the framing has to be asked for again once it is
     // here. Without this the camera keeps whatever span it had when the dot was
@@ -3068,6 +3082,12 @@ export class Globe {
       if (pts.length >= 2) {
         this.addRouteLines(pts, this.orbitCasingMat, 0.18)
         this.addRouteLines(pts, this.orbitMat, 0.22)
+      }
+      if (this.kind === 'probe' && this.routeGroup.children.length !== this.lastRouteMeshes) {
+        this.lastRouteMeshes = this.routeGroup.children.length
+        // Geometry actually handed to the scene. If this says 2 and nothing is
+        // on screen, the fault is the camera; if it says 0, it is the data.
+        this.note(`[build] ${pts.length} points -> ${this.routeGroup.children.length} line meshes`)
       }
       return
     }
