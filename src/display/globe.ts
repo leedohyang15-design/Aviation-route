@@ -76,6 +76,32 @@ const STORY_ALT_M = 6000
 /** Quiet time before the exhibit lets go of whatever the last visitor left
  * selected and returns to the whole world. */
 const IDLE_RELEASE_MS = 90_000
+/*
+ * How long a card gets to be READ before the attract cycle may replace it.
+ *
+ * The demo cycles every 30 seconds, which is right when nobody is there and
+ * wrong the moment somebody is: 30s was throwing away the selection of a child
+ * halfway through a card. The cards were measured — the longest probe card is
+ * 333 Korean characters and the future one is 417 — and a primary-school
+ * visitor reading standing up in a noisy room manages something like 200 to
+ * 300 characters a minute, so those want 100 to 125 seconds and were getting
+ * one interval.
+ *
+ * Only a real touch buys this. The attract cycle's own picks still reschedule
+ * at 30s, so a passer-by still sees the exhibit demonstrating itself; the long
+ * window opens when a hand arrives and closes 30 seconds after the demo
+ * resumes. The cost is that somebody who taps and walks away leaves a static
+ * card up for a while, which is a far cheaper mistake than the one it fixes.
+ */
+const READ_MS: Record<ObjectKind, number> = {
+  // A boarding pass is a short card, and the aeroplane on it is moving — a
+  // fresh one is a new thing to look at rather than an interruption.
+  aircraft: 45_000,
+  // Telemetry sheet: four tiles and three sentences.
+  satellite: 75_000,
+  // A whole mission's history, or the next launch window and why it exists.
+  probe: 150_000
+}
 const HOME_LON = 127.5
 const HOME_LAT = 37.5
 /** Where the selected object is on screen, and what the card needs to know to
@@ -2250,10 +2276,15 @@ export class Globe {
     this.onSelectChange?.(null)
   }
 
-  /** (Re)start the 30s attract countdown. Any operator input calls this. */
-  private startAttractTimer(): void {
+  /**
+   * (Re)start the attract countdown.
+   *
+   * Default is the short cycle the demo runs on its own. A REAL touch asks for
+   * the layer's reading time instead — see READ_MS.
+   */
+  private startAttractTimer(ms = this.idleMs): void {
     if (this.idleTimer) clearTimeout(this.idleTimer)
-    this.idleTimer = setTimeout(() => this.autoPick(), this.idleMs)
+    this.idleTimer = setTimeout(() => this.autoPick(), ms)
   }
 
   /** Auto-select a random flight, then keep cycling every 30s until a real
@@ -2290,7 +2321,9 @@ export class Globe {
     this.lastActivity = Date.now()
     this.released = false
     this.onAttractChange?.(false)
-    this.startAttractTimer()
+    // Somebody is at the machine, so give them time to finish reading before
+    // the demo takes the screen back.
+    this.startAttractTimer(READ_MS[this.kind])
   }
 
   /** Any operator activity (incl. the reset button) resets the attract countdown. */

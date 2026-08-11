@@ -47,7 +47,13 @@ export function MarsFutureCard({ target }: { target: MarsTarget }): JSX.Element 
       what: '지구와 화성이 가장 가까워지는 날. 이날 밤하늘의 화성이 제일 크고 밝아요.',
       cls: ''
     },
-    { at: win.arriveMs, what: `${travel}일을 날아가면 도착해요.`, cls: 'live' }
+    {
+      at: win.arriveMs,
+      // Months, because 265 days is not a length of time a child has a feel
+      // for and one school year is.
+      what: `${travel}일을 날아가면 도착해요. 학교 한 학년만큼 우주선 안에 있는 거예요.`,
+      cls: 'live'
+    }
   ].sort((a, b) => a.at - b.at)
 
   return (
@@ -77,7 +83,7 @@ export function MarsFutureCard({ target }: { target: MarsTarget }): JSX.Element 
         </div>
         <div>
           <b>{travel}일</b>
-          <span>가는 데 걸리는 시간</span>
+          <span>가는 데 걸리는 시간 · 약 {Math.round(travel / 30.44)}개월</span>
         </div>
         <div>
           <b>{monthsLabel(waitDays)}</b>

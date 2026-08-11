@@ -161,14 +161,25 @@ body,
   max-width: 560px;
   pointer-events: auto; /* clickable even though the rest of the overlay isn't */
 }
+/*
+ * 44px, the same as the tabs.
+ *
+ * These were 28: 12px type with 5px of padding. The tabs were raised to 44 for
+ * a finger and the probe chips to 34, which left the layer everybody actually
+ * uses — the four aircraft categories, the four orbits, the weather toggles —
+ * as the smallest targets on a touchscreen aimed at children, whose aim is
+ * worse than an adult's and who are pressing at arm's length, standing. One
+ * number for all of them, and it is the bigger one.
+ */
 .ctrl-info .legend .leg {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
   width: auto;
-  padding: 5px 9px;
-  font-size: 12px;
+  min-height: 44px;
+  padding: 0 13px;
+  font-size: 13px;
   font-weight: 600;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -492,6 +503,15 @@ body,
 .sat-class {
   color: var(--muted);
 }
+/* The plain-Korean gloss under the orbit class. Sits at the visitor's reading
+   size rather than the telemetry sheet's 11px, because it is the one line on
+   this panel written to be read rather than scanned. */
+.sat-gloss {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.72;
+}
 .sat-rule {
   flex: 1;
   height: 1px;
@@ -693,7 +713,11 @@ body,
    readable — without it the order is arbitrary to anyone who does not already
    know when Viking landed. */
 .ctrl-info .leg.probe {
-  min-height: 34px;
+  min-height: 44px;
+  /* Type and side padding stay where they were on purpose: the twelve chips
+     were measured at ~1,640px, which is what the 820px width below splits into
+     two even rows, and widening them would push it to three. Height is free
+     here — width is not. */
   padding: 0 12px;
   font-size: 14px;
 }

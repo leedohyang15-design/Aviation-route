@@ -5,7 +5,21 @@ import {
   type MarsProbe
 } from '@shared/probes'
 import type { MarsLiveWire } from '@shared/types'
+import { SOL_MS } from '@shared/probes'
 import { TraverseMap } from './TraverseMap'
+
+/**
+ * Sols as a length of time on Earth.
+ *
+ * A Martian day is 2.7% longer than ours, so this is not the same number with
+ * a different label — 5,111 sols is 14.4 Earth years, not 14.0. Rounded to a
+ * half year, because the point is the scale and not the precision.
+ */
+function earthYears(sol: number): string {
+  const years = (sol * SOL_MS) / (365.2425 * 86400000)
+  if (years < 1) return `${Math.round(years * 12)}개월`
+  return `${(Math.round(years * 2) / 2).toFixed(1).replace('.0', '')}년`
+}
 
 /**
  * A lander's life, as a timeline rather than a path.
@@ -76,13 +90,26 @@ export function ProbeTimelineCard({
         {probe.status !== 'lost' && (
           <div>
             <b>{sol.toLocaleString()}솔</b>
-            <span>{probe.status === 'active' ? '화성에서 맞은 아침' : '일한 날'}</span>
+            {/* A sol count with no yardstick is just a big number. "5,111" and
+                "14년" are the same fact, and only one of them is a length of
+                time a nine-year-old has actually lived through. */}
+            <span>
+              {probe.status === 'active' ? '화성에서 맞은 아침' : '일한 날'} · 지구로{' '}
+              {earthYears(sol)}
+            </span>
           </div>
         )}
         {drivenKm > 0 && (
           <div>
             <b>{drivenKm < 1 ? `${Math.round(drivenKm * 1000)} m` : `${drivenKm.toFixed(1)} km`}</b>
-            <span>{drivenLabel ? `달린 거리 · ${drivenLabel}` : '달린 거리'}</span>
+            {/* Laps of a running track, because that is the only unit of
+                distance every child in the building has personally walked.
+                Under a kilometre it is left alone — "100 m" is already the
+                length of a race they have run. */}
+            <span>
+              {drivenLabel ? `달린 거리 · ${drivenLabel}` : '달린 거리'}
+              {drivenKm >= 1 && ` · 운동장 ${Math.round(drivenKm / 0.4).toLocaleString()}바퀴`}
+            </span>
           </div>
         )}
         {/* Distance from the landing site, which is not the same number as the

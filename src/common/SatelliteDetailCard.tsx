@@ -16,6 +16,22 @@ const ORBIT_LABEL: Record<OrbitClass, string> = {
   geo: '정지궤도'
 }
 
+/*
+ * What those four words mean, for somebody who has never met them.
+ *
+ * "정지궤도" is the one that matters: it is the only term here a child cannot
+ * guess at, it names the least intuitive fact in the tab — a satellite that is
+ * moving at three kilometres a second and appears not to move at all — and it
+ * was printed on this card with no explanation at all. A term nobody defines
+ * teaches a visitor that this exhibit is not for them.
+ */
+const ORBIT_GLOSS: Record<OrbitClass, string> = {
+  leo: '지구에서 가장 가까운 길. 하늘을 빠르게 가로질러 지나가요.',
+  starlink: '인터넷을 뿌려 주는 위성 무리. 낮게 떼로 몰려 다녀요.',
+  meo: '길 찾기(GPS) 위성들이 도는 중간 높이예요.',
+  geo: '지구가 도는 속도와 똑같이 돌아서, 하늘 한자리에 멈춘 것처럼 보여요.'
+}
+
 // The notes below have to actually differ between satellites. An earlier set
 // bucketed altitude into four bands, and since most of the catalogue sits
 // between 400 and 900 km, nearly every object showed the identical sentence —
@@ -46,12 +62,24 @@ function lapsNote(d: SatelliteDetail): string | null {
   return `지금까지 지구를 ${d.revNumber.toLocaleString()}바퀴 돌았어요`
 }
 
-// Three notes, not six. Orbit shape, distance and the inclination sentence used
-// to be here too, but the shape and the distance are already on the dome card
-// (as 원궤도/타원궤도 and the RANGE tile), and the inclination line was the last
-// of the bucketed ones — the number itself is right there in the INCLINATION
-// tile, which says it better than a sentence that reads the same for every
-// polar-orbiting satellite.
+/** KTX at its top speed, in km/s. The fastest thing most visitors have been
+ *  inside of, which is what makes it the right zero point. */
+const KTX_KM_S = 300 / 3600
+
+/** The SPEED tile says "7.7 km/s", which is not a speed anybody can picture —
+ *  there is nothing in a child's life measured in kilometres per second. This
+ *  is a per-object number too: a low satellite comes out near 90x and a
+ *  geostationary one near 37x, because the higher the orbit the slower it goes. */
+function speedNote(d: SatelliteDetail): string {
+  return `KTX보다 ${Math.round(d.speedKmS / KTX_KM_S).toLocaleString()}배 빨라요`
+}
+
+// Four notes, not six. Orbit shape and the inclination sentence used to be here
+// too, but the shape is already on the dome card (as 원궤도/타원궤도) and the
+// inclination line was the last of the bucketed ones — the number itself is
+// right there in the INCLINATION tile, which says it better than a sentence
+// that reads the same for every polar-orbiting satellite. Every line that
+// remains is derived from a figure that genuinely differs per object.
 
 interface Pass {
   big: string
@@ -134,7 +162,7 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
     )
   }
   const pass = passReadout(d)
-  const notes = [launchNote(d), altitudeNote(d.altKm), lapsNote(d)].filter(
+  const notes = [launchNote(d), altitudeNote(d.altKm), speedNote(d), lapsNote(d)].filter(
     (n): n is string => n != null
   )
   return (
@@ -153,6 +181,7 @@ export function SatelliteDetailCard({ detail: d }: { detail: SatelliteDetail | n
             <span className="sat-rule" />
             <span className="sat-status">▲ TRACKING</span>
           </div>
+          <div className="sat-gloss">{ORBIT_GLOSS[d.orbit]}</div>
         </div>
 
         <div className={'sat-section sat-pass' + (pass.soon ? ' soon' : '')}>
