@@ -2973,6 +2973,10 @@ export class Globe {
     this.routePoints = next
     this.lastRouteIdx = -1
     this.lastRouteOffset = NaN // force a rebuild next frame
+    // One line per selection, not per frame. "The line is not drawn" has three
+    // possible causes — nothing sent, nothing received, nothing rendered — and
+    // only the renderer can rule out the middle one.
+    this.onNote?.(`[route] ${next ? `${next.length} points` : 'cleared'} (${this.kind})`)
     this.disposeRouteGroup()
     const on = !!this.routePoints
     this.originMarker.visible = on
@@ -3888,10 +3892,18 @@ export class Globe {
           )
           placeInfoChip(au, ay, au + lw + 0.02 < 1 ? 1 : -1, 0)
         }
-        // Reposition origin/destination markers (they move with the pan offset).
-        // Orbits have no endpoints — an orbit is a loop, so a "from" marker and a
-        // place name would both be fiction. Skipped entirely for satellites.
-        if (this.routePoints && this.kind === 'satellite') {
+        /*
+         * Reposition origin/destination markers (they move with the pan offset).
+         *
+         * Neither an orbit nor a rover's track has endpoints in the sense this
+         * furniture means. An orbit is a loop, so a "from" marker and a place
+         * name are both fiction; a traverse has a landing site and a today, and
+         * neither is an airport with a flag. The test used to name satellites
+         * specifically, so a probe fell into the aircraft branch below and got
+         * a departure pin, an arrival pin and two place labels hung on its
+         * fourteen kilometres of driving.
+         */
+        if (this.routePoints && this.kind !== 'aircraft') {
           for (const m of [
             this.originMarker,
             this.destMarker,
