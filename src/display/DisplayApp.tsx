@@ -319,7 +319,22 @@ export function DisplayApp(): JSX.Element {
   useEffect(() => globeRef.current?.setView(state.view), [state.view])
   useEffect(() => globeRef.current?.setOverlays(state.overlays), [state.overlays])
   useEffect(() => globeRef.current?.setSelected(state.selected), [state.selected])
-  useEffect(() => globeRef.current?.setRoute(route.points), [route])
+  useEffect(() => {
+    /*
+     * On Mars the "route" is the traverse.
+     *
+     * The globe already knows how to draw a polyline on a sphere and to frame
+     * it when it is selected, so a rover's track needs no new machinery — it
+     * needs the existing one pointed at different points. The hub sends no
+     * route in this mode, so nothing is being overridden.
+     */
+    if (isMars) {
+      const p = state.selected ? marsLive[state.selected] : null
+      globeRef.current?.setRoute(p?.path?.length ? p.path.map(([lon, lat]) => ({ lon, lat })) : null)
+      return
+    }
+    globeRef.current?.setRoute(route.points)
+  }, [isMars, marsLive, state.selected, route])
   useEffect(() => globeRef.current?.setNightHour(state.dayNightHour), [state.dayNightHour])
   useEffect(() => {
     // Satellites have no origin or destination, so never carry the aviation

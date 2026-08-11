@@ -25,7 +25,7 @@ interface Props {
   weather?: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   hiddenWeather?: WeatherLayer[]
   /** Today's rover positions by probe id, so the dots sit where they are now. */
-  marsLive?: Record<string, { lon: number; lat: number }>
+  marsLive?: Record<string, { lon: number; lat: number; path?: [number, number][] }>
   aircraft: Aircraft[]
   selected: string | null
   route: GeoPoint[] | null
@@ -163,7 +163,17 @@ export function MapView({
     globeRef.current?.setWindVisible(showWind)
   }, [showWind, weather?.wind])
   useEffect(() => globeRef.current?.setSelected(selected), [selected])
-  useEffect(() => globeRef.current?.setRoute(route), [route])
+  useEffect(() => {
+    // On Mars the "route" is the traverse; the globe's polyline is the same
+    // machinery, pointed at different points. See DisplayApp for the note.
+    if (isMars) {
+      const p = selected ? marsLive?.[selected] : null
+      const path = (p as { path?: [number, number][] } | undefined)?.path
+      globeRef.current?.setRoute(path?.length ? path.map(([lon, lat]) => ({ lon, lat })) : null)
+      return
+    }
+    globeRef.current?.setRoute(route)
+  }, [isMars, marsLive, selected, route])
   useEffect(
     () => globeRef.current?.autoAdvanceOnNoRoute(noRouteForSelected),
     [noRouteForSelected, selected]

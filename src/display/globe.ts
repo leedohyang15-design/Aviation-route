@@ -206,6 +206,23 @@ const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
 export type ObjectKind = 'aircraft' | 'satellite' | 'probe'
 
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
+/**
+ * How far Mars may be zoomed, which is further than the map can honestly hold.
+ *
+ * On Earth the limit is set by the map: at 10x a 16,384px world map is drawn at
+ * about one texel per pixel, so going deeper buys blur and nothing else. Mars
+ * has the same map and a subject that is a hundred times smaller — Curiosity's
+ * wanderings span 21km, which is sixteen pixels at that limit. There is nothing
+ * to look at unless the limit moves.
+ *
+ * So it moves, and the ground goes soft: at 80x each texel of the map covers
+ * about eight screen pixels. That is a deliberate trade, not an oversight. The
+ * traverse is the subject and it is real data drawn at full precision; the
+ * blurred terrain behind it is context, and a visitor zooming in that far has
+ * plainly asked to see the path rather than the rocks. Sharp ground at this
+ * scale needs a separate site image — see the note on Phase 3.
+ */
+const MARS_MIN_SPAN = 1 / 80
 
 // How big an object is drawn, as a fraction of the frame, at a given zoom.
 //
@@ -410,6 +427,8 @@ export class Globe {
   private routeCenterLon: number | null = null
   private pendingRecenter = false // center on the route once, on selection only
   private hasEarthTexture = false
+  /** How far in this body may be zoomed; see MARS_MIN_SPAN. */
+  private minSpan = MIN_SPAN
   private planet: 'earth' | 'mars' = 'earth'
   private earthTex: THREE.Texture | null = null
   private nightTex: THREE.Texture | null = null
@@ -2015,6 +2034,7 @@ export class Globe {
       this.bgUniforms.uHasNight.value = this.nightTex ? 1 : 0
       this.bgUniforms.uShowGrid.value = this.earthTex ? 0 : 1
       this.bgUniforms.uDayOnly.value = 0
+      this.minSpan = MIN_SPAN
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
       this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
@@ -2042,6 +2062,8 @@ export class Globe {
     // shadow would be a fiction on a multi-year mosaic.
     this.bgUniforms.uHasNight.value = 0
     this.bgUniforms.uDayOnly.value = 1
+    // Further in than the map can honestly hold; see MARS_MIN_SPAN.
+    this.minSpan = MARS_MIN_SPAN
     if (this.marsTex) {
       this.bgUniforms.uMap.value = this.marsTex
       this.bgUniforms.uHasMap.value = 1
@@ -2191,7 +2213,7 @@ export class Globe {
    * Horizontal via lonOffset (wraps); vertical + zoom via the camera y-rect,
    * clamped so the rect never leaves the [0,1] background plane. */
   private applyInteractiveView(): void {
-    const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
+    const s = Math.max(this.minSpan, Math.min(1, this.iSpan))
     this.targetLonOffset = -this.iCenterLon
     let vCenter = (this.iCenterLat + 90) / 180
     vCenter = Math.max(s / 2, Math.min(1 - s / 2, vCenter))
@@ -2281,7 +2303,7 @@ export class Globe {
 
   /** Programmatic zoom for the on-screen +/− buttons (factor <1 zooms in). */
   zoomBy(factor: number): void {
-    this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * factor))
+    this.iSpan = Math.max(this.minSpan, Math.min(1, this.iSpan * factor))
     this.applyInteractiveView()
     this.emitView()
     this.resetAttract()
@@ -2480,7 +2502,7 @@ export class Globe {
         // Pinch: span scales with the inverse of the finger-distance change.
         const [a, b] = [...this.pointers.values()]
         const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
-        this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
+        this.iSpan = Math.max(this.minSpan, Math.min(1, this.pinchStartSpan * (this.pinchStartDist / dist)))
         this.movedDuringDrag = true
         this.applyInteractiveView()
         this.emitView()
@@ -2530,7 +2552,7 @@ export class Globe {
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
       this.resetAttract() // operator is here — postpone the auto-demo
-      this.iSpan = Math.max(MIN_SPAN, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
+      this.iSpan = Math.max(this.minSpan, Math.min(1, this.iSpan * Math.exp(ev.deltaY * 0.0015)))
       this.applyInteractiveView()
       this.emitView()
     }
@@ -2545,7 +2567,7 @@ export class Globe {
         this.resetAttract() // operator is here — postpone the auto-demo
         // Step proportionally to the zoom so one press moves the same fraction
         // of the screen however far in the operator is.
-        const s = Math.max(MIN_SPAN, Math.min(1, this.iSpan))
+        const s = Math.max(this.minSpan, Math.min(1, this.iSpan))
         if (panX) this.iCenterLon = wrapLon(this.iCenterLon + panX * 20 * s)
         if (panY) this.iCenterLat += panY * 10 * s
         this.applyInteractiveView() // clamps latitude to keep the view on the map
