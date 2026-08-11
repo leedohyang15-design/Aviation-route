@@ -280,7 +280,16 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
    There are four of them on an otherwise empty planet, they are the only thing
    on this tab a visitor is meant to press, and a ball at the diamond's size
    read as a speck rather than as a world. */
-const ICON_K = { aircraft: 0.62, satellite: 0.3, probe: 0.5, moon: 0.95 } as const
+/* Both of those were still too small, and this is measured rather than argued
+   about: rendered at the dome's real 1664x838, a landing site came out TEN
+   pixels across and a moon fourteen. Ten pixels is a speck on a monitor and
+   nothing at all on a projected dome three metres away — which is what "where
+   did the icons go" means. At 1.2 and 1.6 they are 25 and 34 pixels, which is
+   a thing a child can see from across the room and put a finger on. The
+   aircraft and the satellites are left alone: those are swarms of hundreds
+   where the density IS the picture, and they are read as a crowd, not tapped
+   one by one. */
+const ICON_K = { aircraft: 0.62, satellite: 0.3, probe: 1.2, moon: 1.6 } as const
 /** Exponent below 1 = icons shrink when zoomed out. 0.7 doubles them between
  * world view and full zoom, which is enough to matter without ballooning. */
 const ICON_ZOOM_P = 0.7
@@ -293,6 +302,31 @@ function iconScaleFor(kind: ObjectKind, span: number): number {
 // is projected onto a dome, which throws away a lot of effective resolution, so
 // anything carrying text is deliberately generous — text that reads fine on a
 // monitor disappears there.
+/** The downscale the polar-padding scan reads: 32 columns is plenty to tell a
+ *  black row from a planet, 512 rows resolve the edge to a fifth of a degree. */
+const BAND_W = 32
+const BAND_H = 512
+/** How long the windows wait behind the loading curtain before giving up on a
+ *  map that has answered neither way. See the constructor. */
+const BOOT_GIVE_UP_MS = 12_000
+/**
+ * A frame gap worth writing down.
+ *
+ * The tab-switch work is timed where it is called, which only catches a stall
+ * in the code I thought to wrap — and the lag that is left is evidently
+ * somewhere I did not think to wrap. This catches it wherever it lives:
+ * anything that blocks the main thread, mine or React's or the driver's, shows
+ * up as a gap between two animation frames. 120ms is four dropped frames, well
+ * past what a person notices and well past ordinary jitter.
+ */
+const STALL_GAP_MS = 120
+/** And this is the renderer's own share of it: a draw that takes longer than
+ *  three frames is the renderer being slow, not something else blocking it. */
+const STALL_DRAW_MS = 50
+/** Never more than one stall line every two seconds — a machine that is
+ *  genuinely struggling must not fill the log with the evidence. */
+const STALL_QUIET_MS = 2_000
+
 const ICON_H = 0.025 // unselected aircraft icon / satellite dot
 const SEL_H = 0.05 // the selected object
 const MARKER_H = 0.022 // origin dot
@@ -554,6 +588,48 @@ export class Globe {
     this.noteQueue = []
     for (const line of held) fn(line)
   }
+
+  /**
+   * Told once, when every planet map has finished arriving — or given up.
+   *
+   * The four maps are fetched from the constructor and each one blocks the main
+   * thread while it uploads: on the exhibit machine that is two seconds for
+   * Mars alone, and the window is unresponsive for the whole of it. Nothing can
+   * make that work cheaper here — it is a quarter of a billion pixels going
+   * through a canvas — but it can be made INVISIBLE, because it happens while
+   * the exhibit is starting and nobody is standing in front of it yet. So the
+   * windows put a curtain up until this fires. Same set/flush shape as onNote:
+   * a window that wires this up late still hears about it.
+   */
+  private _onMapsReady: (() => void) | null = null
+  private mapsPending = 0
+  private mapsReady = false
+  get onMapsReady(): (() => void) | null {
+    return this._onMapsReady
+  }
+  set onMapsReady(fn: (() => void) | null) {
+    this._onMapsReady = fn
+    if (fn && this.mapsReady) fn()
+  }
+  /** One more map is on its way; hold the curtain. */
+  private mapExpected(): void {
+    this.mapsPending++
+  }
+  /** That map arrived, or it never will. Either way it is no longer a reason
+   *  to hold the exhibit back. */
+  private mapSettled(): void {
+    if (this.mapsReady) return
+    this.mapsPending--
+    if (this.mapsPending > 0) return
+    this.mapsReady = true
+    this.note(`[boot] maps settled in ${(performance.now() - this.bootAt).toFixed(0)}ms`)
+    this._onMapsReady?.()
+  }
+  private readonly bootAt = performance.now()
+  /** Stall bookkeeping — see STALL_GAP_MS and the frame loop. */
+  private lastStallNote = 0
+  private stallsHidden = 0
+  private lastDrawMs = 0
 
   /**
    * Say it in the log AND in the console — the console is for a developer at a
@@ -1290,6 +1366,23 @@ export class Globe {
      */
     this.loadMars()
     this.loadJupiter()
+    /*
+     * The curtain comes down after this whatever happens.
+     *
+     * A texture load that neither succeeds nor fails — a half-written file, a
+     * drive that went away — would otherwise hold the exhibit behind a
+     * "준비 중" card forever, which is a far worse failure than an ugly first
+     * frame. Twelve seconds is longer than the slowest startup measured
+     * (about three) by a wide margin, so it only ever fires when something is
+     * genuinely stuck.
+     */
+    setTimeout(() => {
+      if (this.mapsReady) return
+      this.note(`[boot] ${this.mapsPending} map(s) never answered — starting anyway`)
+      this.mapsPending = 0
+      this.mapsReady = true
+      this._onMapsReady?.()
+    }, BOOT_GIVE_UP_MS)
     this.resize()
     if (this.interactive) {
       this.attachInput()
@@ -2212,6 +2305,8 @@ export class Globe {
   }
 
   private tryLoadEarth(): void {
+    this.mapExpected()
+    this.mapExpected()
     this.loadFirstTexture(
       this.textureCandidates(EARTH_TEXTURE_URL),
       (tex) => {
@@ -2246,6 +2341,7 @@ export class Globe {
               ? ` — WIDER THAN THE GPU TAKES: three.js rescales it on the CPU at load, in every window`
               : '')
         )
+        this.mapSettled()
       },
       () => {
         this.note(
@@ -2253,6 +2349,7 @@ export class Globe {
             `Put a 2:1 image at public/${EARTH_TEXTURE_URL} (or .png). ` +
             `Check the file name has no hidden double extension.`
         )
+        this.mapSettled()
       }
     )
     // Optional night-lights texture (city lights) for the KST night effect.
@@ -2265,9 +2362,11 @@ export class Globe {
         this.bgUniforms.uNightMap.value = tex
         this.bgUniforms.uHasNight.value = 1
         this.note(`[earth] loaded night texture`)
+        this.mapSettled()
       },
       () => {
         /* no night texture — night side just dims globally */
+        this.mapSettled()
       }
     )
   }
@@ -2447,23 +2546,48 @@ export class Globe {
    * uDataTop/uDataBot. Measured rather than configured, because it costs one
    * downscaled read and then any map dropped into public/ is handled, whatever
    * latitude it happens to stop at.
+   *
+   * That read is done through createImageBitmap where it exists, which resizes
+   * on a worker thread. Doing it with drawImage instead means resampling the
+   * whole map on the main thread — a quarter of a billion pixels for Mars, at
+   * startup, in both windows, on top of the upload that already costs two
+   * seconds there. The synchronous path is kept as a fallback and says so in
+   * the log, so a slow startup can always be attributed.
    */
   private measureDataBand(tag: string, tex: THREE.Texture): void {
     const img = tex.image as CanvasImageSource & { width?: number; height?: number }
-    const w = img?.width ?? 0
-    const h = img?.height ?? 0
-    if (!w || !h) return
+    if (!(img?.width ?? 0) || !(img?.height ?? 0)) return
+    const t0 = performance.now()
+    if (typeof createImageBitmap === 'function') {
+      createImageBitmap(img, {
+        resizeWidth: BAND_W,
+        resizeHeight: BAND_H,
+        resizeQuality: 'low'
+      })
+        .then((bm) => {
+          this.analyseBand(tag, bm, t0, 'off-thread')
+          bm.close()
+        })
+        .catch(() => this.analyseBand(tag, img, t0, 'on the main thread (no ImageBitmap)'))
+      return
+    }
+    this.analyseBand(tag, img, t0, 'on the main thread (no ImageBitmap)')
+  }
+
+  /** The pixel half of measureDataBand: scan a already-downscaled copy of the
+   *  map in from both edges and store what it finds. */
+  private analyseBand(tag: string, src: CanvasImageSource, t0: number, how: string): void {
     try {
       // 32 columns is plenty to tell a black row from a planet, and 512 rows
       // resolves the edge to a fifth of a degree of latitude.
-      const W = 32
-      const H = 512
+      const W = BAND_W
+      const H = BAND_H
       const c = document.createElement('canvas')
       c.width = W
       c.height = H
       const g = c.getContext('2d', { willReadFrequently: true })
       if (!g) return
-      g.drawImage(img, 0, 0, w, h, 0, 0, W, H)
+      g.drawImage(src, 0, 0, W, H)
       const px = g.getImageData(0, 0, W, H).data
       const rowLuma = (row: number): number => {
         let sum = 0
@@ -2483,8 +2607,9 @@ export class Globe {
       while (bot > top && rowLuma(bot) < DARK) bot--
       const topPad = top / H
       const botPad = (H - 1 - bot) / H
+      const took = `measured ${how} in ${(performance.now() - t0).toFixed(0)}ms`
       if (topPad < 0.002 && botPad < 0.002) {
-        this.note(`[${tag}] data runs edge to edge — no polar padding`)
+        this.note(`[${tag}] data runs edge to edge — no polar padding (${took})`)
         return
       }
       /*
@@ -2504,7 +2629,8 @@ export class Globe {
         `[${tag}] black padding: top ${(topPad * 100).toFixed(1)}% (to ${(90 - topPad * 180).toFixed(0)}°N), ` +
           `bottom ${(botPad * 100).toFixed(1)}% (to ${(90 - botPad * 180).toFixed(0)}°S) — ` +
           `a latitude-limited map. Cutting there plus ${(MARGIN * 100).toFixed(0)}% for the ` +
-          `compression ringing along the seam, which is what the coloured streaks are`
+          `compression ringing along the seam, which is what the coloured streaks are ` +
+          `(${took})`
       )
     } catch (err) {
       this.note(`[${tag}] could not measure the data band: ${(err as Error).message}`)
@@ -2520,6 +2646,7 @@ export class Globe {
   }
 
   private loadPlanetMap(tag: string, url: string, keep: (tex: THREE.Texture) => void): void {
+    this.mapExpected()
     this.loadFirstTexture(
       this.textureCandidates(url),
       (tex) => {
@@ -2579,6 +2706,7 @@ export class Globe {
           this.bgUniforms.uHasMap.value = 1
           this.bgUniforms.uShowGrid.value = 0
         }
+        this.mapSettled()
       },
       () => {
         this.note(
@@ -2586,6 +2714,7 @@ export class Globe {
             `Put a 2:1 image at public/${url} (or .png). ` +
             `Check the file name has no hidden double extension.`
         )
+        this.mapSettled()
       }
     )
   }
@@ -4335,8 +4464,34 @@ export class Globe {
   }
 
   private frame = (now: number): void => {
+    /*
+     * How long since the last frame, and was that a stall?
+     *
+     * The gap is the honest measure of lag: whatever blocks the main thread —
+     * a texture upload, a React render, a garbage collection, a driver — shows
+     * up here as frames that did not happen, no matter whose code it was in.
+     * Timing individual calls only ever finds the stalls I already suspected,
+     * which is how the tab switch came back clean while the exhibit still felt
+     * heavy.
+     */
+    const gap = this.lastFrame ? now - this.lastFrame : 0
+    if (gap > STALL_GAP_MS) {
+      if (now - this.lastStallNote > STALL_QUIET_MS) {
+        this.lastStallNote = now
+        this.note(
+          `[stall] ${gap.toFixed(0)}ms with no frame` +
+            (this.stallsHidden ? ` (+${this.stallsHidden} more since the last line)` : '') +
+            ` — last draw ${this.lastDrawMs.toFixed(0)}ms, ${this.order.length} objects, ` +
+            `${this.planet}/${this.kind}`
+        )
+        this.stallsHidden = 0
+      } else {
+        this.stallsHidden++
+      }
+    }
+    const drawStart = now
     // Time step (seconds), capped so a backgrounded tab doesn't teleport planes.
-    const dt = this.lastFrame ? Math.min(0.5, (now - this.lastFrame) / 1000) : 0
+    const dt = this.lastFrame ? Math.min(0.5, gap / 1000) : 0
     this.lastFrame = now
 
     // Selection furniture holds a constant on-screen size; the icons shrink at
@@ -4759,6 +4914,16 @@ export class Globe {
     // once and never again, so nothing ever moved off its starting point.
     if (this.windLines?.visible) this.stepWind()
     this.renderer.render(this.scene, this.camera)
+    // What THIS frame cost, separately from what was done to it. A big gap with
+    // a small draw is somebody else blocking the thread; a big draw is us.
+    this.lastDrawMs = performance.now() - drawStart
+    if (this.lastDrawMs > STALL_DRAW_MS && performance.now() - this.lastStallNote > STALL_QUIET_MS) {
+      this.lastStallNote = performance.now()
+      this.note(
+        `[stall] the renderer itself took ${this.lastDrawMs.toFixed(0)}ms to draw one frame — ` +
+          `${this.order.length} objects, ${this.planet}/${this.kind}`
+      )
+    }
     this.raf = requestAnimationFrame(this.frame)
   }
 

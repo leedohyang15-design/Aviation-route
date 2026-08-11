@@ -16,6 +16,7 @@ import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
 import { SatelliteSearch } from './SatelliteSearch'
 import { FlightSearch } from './FlightSearch'
+import { BootCurtain } from '../common/BootCurtain'
 
 /**
  * The heading, which is about whatever tab is open.
@@ -381,6 +382,8 @@ export function ControlApp(): JSX.Element {
   // True while the exhibit is auto-cycling (attract) — used to keep the touch
   // invite visible even though a plane is auto-selected.
   const [attract, setAttract] = useState(false)
+  // False until every planet map has landed; see BootCurtain.
+  const [mapsReady, setMapsReady] = useState(false)
   /** Whether the ten finished missions are showing. Collapses again on a tab
    *  change, so the next visitor meets the short row the first one did. */
   const [showPast, setShowPast] = useState(false)
@@ -620,6 +623,7 @@ export function ControlApp(): JSX.Element {
 
   return (
     <div className="control-root">
+      <BootCurtain ready={mapsReady} />
       <MapView
         mode={state.mode}
         satellites={satVisible}
@@ -633,6 +637,7 @@ export function ControlApp(): JSX.Element {
         onView={(view) => send({ type: 'setView', view })}
         onAttract={setAttract}
         onAnchor={anchorSink}
+        onMapsReady={() => setMapsReady(true)}
         marsLive={marsLive}
         onWeatherTime={setShownAt}
         onLocalSky={setRainHere}

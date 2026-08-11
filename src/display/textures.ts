@@ -619,22 +619,30 @@ export function moonTexture(): THREE.CanvasTexture {
   const g = c.getContext('2d')!
   const m = s / 2
   // A soft halo first, so a pale moon still separates from a pale cloud band.
-  const halo = g.createRadialGradient(m, m, s * 0.26, m, m, s * 0.5)
+  const halo = g.createRadialGradient(m, m, s * 0.36, m, m, s * 0.5)
   halo.addColorStop(0, 'rgba(255,255,255,0.5)')
   halo.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = halo
   g.beginPath()
   g.arc(m, m, s * 0.5, 0, Math.PI * 2)
   g.fill()
-  // The body. Lit from the upper left, which is the direction every drawing of
-  // a sphere has been lit since before anybody drew a planet.
-  const body = g.createRadialGradient(m - s * 0.09, m - s * 0.09, s * 0.03, m, m, s * 0.29)
+  /*
+   * The body. Lit from the upper left, which is the direction every drawing of
+   * a sphere has been lit since before anybody drew a planet.
+   *
+   * Four tenths of the canvas, not under three. At the old radius well over
+   * half of the quad was halo, so making the icon bigger mostly made its glow
+   * bigger — a moon drawn 33 pixels wide put a 19-pixel ball on the dome. The
+   * halo still has room to do its job, which is to separate a pale moon from a
+   * pale cloud band, without being most of the picture.
+   */
+  const body = g.createRadialGradient(m - s * 0.12, m - s * 0.12, s * 0.04, m, m, s * 0.4)
   body.addColorStop(0, 'rgba(255,255,255,1)')
   body.addColorStop(0.65, 'rgba(255,255,255,0.94)')
   body.addColorStop(1, 'rgba(255,255,255,0.72)')
   g.fillStyle = body
   g.beginPath()
-  g.arc(m, m, s * 0.29, 0, Math.PI * 2)
+  g.arc(m, m, s * 0.4, 0, Math.PI * 2)
   g.fill()
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace

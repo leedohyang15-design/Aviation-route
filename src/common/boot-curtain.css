@@ -1,0 +1,75 @@
+/* See BootCurtain.tsx: a still card over a window that is about to freeze for a
+   few seconds while a quarter of a billion pixels go to the GPU. */
+.boot-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: #05070c;
+  opacity: 1;
+  transition: opacity 0.55s ease;
+}
+.boot-curtain.done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-card {
+  text-align: center;
+  padding: 0 24px;
+}
+
+.boot-title {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #eaf2ff;
+}
+.boot-sub {
+  margin-top: 10px;
+  font-size: 16px;
+  color: #7f93ad;
+}
+
+/* A bar that fills once, over roughly the time the maps take, rather than a
+   spinner: the thread stops during the uploads and a stalled spinner reads as
+   a crash. If the load finishes first the curtain fades and the bar goes with
+   it; if it takes longer the bar simply rests full. */
+.boot-bar {
+  margin: 22px auto 0;
+  width: 260px;
+  height: 4px;
+  border-radius: 999px;
+  background: #16202e;
+  overflow: hidden;
+}
+.boot-bar span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f6fb5, #66b3ff);
+  transform-origin: left center;
+  animation: boot-fill 3.2s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+@keyframes boot-fill {
+  from {
+    transform: scaleX(0.04);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* The dome is a projected frame read from across the room. */
+.boot-curtain.dome .boot-title {
+  font-size: 46px;
+}
+.boot-curtain.dome .boot-sub {
+  font-size: 22px;
+}
+.boot-curtain.dome .boot-bar {
+  width: 380px;
+  height: 6px;
+}

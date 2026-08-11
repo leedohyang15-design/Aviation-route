@@ -37,6 +37,9 @@ interface Props {
   onAttract?: (active: boolean) => void
   /** Where the selected object is on screen, so the card can sit beside it. */
   onAnchor?: (p: SelectionAnchor | null) => void
+  /** Told once, when every planet map has landed — the window keeps a curtain
+   * up until then, because the uploads freeze the thread. See BootCurtain. */
+  onMapsReady?: () => void
   /** The moment the weather picture on screen is of. The renderer owns the
    * animation, so it is the only thing that knows which step is being drawn. */
   onWeatherTime?: (t: number | null) => void
@@ -66,6 +69,7 @@ export function MapView({
   onView,
   onAttract,
   onAnchor,
+  onMapsReady,
   onWeatherTime,
   onLocalSky,
   pokeRef,
@@ -85,6 +89,8 @@ export function MapView({
   onAttractRef.current = onAttract
   const onAnchorRef = useRef(onAnchor)
   onAnchorRef.current = onAnchor
+  const onMapsReadyRef = useRef(onMapsReady)
+  onMapsReadyRef.current = onMapsReady
   const onWeatherTimeRef = useRef(onWeatherTime)
   onWeatherTimeRef.current = onWeatherTime
   const onLocalSkyRef = useRef(onLocalSky)
@@ -98,6 +104,7 @@ export function MapView({
     globe.onSelectChange = (s) => onSelectRef.current(s)
     globe.onAttractChange = (a) => onAttractRef.current?.(a)
     globe.onSelectedAnchor = (p) => onAnchorRef.current?.(p)
+    globe.onMapsReady = () => onMapsReadyRef.current?.()
     if (pokeRef) pokeRef.current = () => globe.pokeActivity()
     globe.onWeatherTime = (t) => onWeatherTimeRef.current?.(t)
     globe.onLocalSky = (r) => onLocalSkyRef.current?.(r)

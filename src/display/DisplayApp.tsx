@@ -27,6 +27,7 @@ import {
   westToRendererLon
 } from '@shared/jupiter'
 import { Globe } from './globe'
+import { BootCurtain } from '../common/BootCurtain'
 import { panelSkin, telemetrySkin } from './textures'
 import type { OrbitClass } from '@shared/types'
 
@@ -109,6 +110,8 @@ export function DisplayApp(): JSX.Element {
    * no timer at all.
    */
   const [marsTick, setMarsTick] = useState(0)
+  // False until every planet map has landed; see BootCurtain.
+  const [mapsReady, setMapsReady] = useState(false)
   useEffect(() => {
     if (!isMars && !isJupiter) return
     const t = setInterval(() => setMarsTick((n) => n + 1), 20_000)
@@ -346,6 +349,7 @@ export function DisplayApp(): JSX.Element {
     // corrected for the curvature that squashes them toward the poles.
     const globe = new Globe(canvasRef.current, { fixedSize: FRAME, sphere: true })
     globeRef.current = globe
+    globe.onMapsReady = () => setMapsReady(true)
     globe.start()
     const onResize = () => globe.resize()
     window.addEventListener('resize', onResize)
@@ -530,6 +534,7 @@ export function DisplayApp(): JSX.Element {
       <div className="stage">
         <canvas ref={canvasRef} />
       </div>
+      <BootCurtain ready={mapsReady} variant="dome" />
     </div>
   )
 }
