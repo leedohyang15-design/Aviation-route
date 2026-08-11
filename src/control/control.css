@@ -133,7 +133,9 @@ body,
   display: flex;
   flex-wrap: wrap; /* the satellite search takes a row of its own below the chips */
   gap: 8px;
-  margin-top: 10px;
+  /* Clear air under the tabs. Butted against them the two rows read as one
+     block of pills and neither says what it is. */
+  margin-top: 14px;
   max-width: 560px;
   pointer-events: auto; /* clickable even though the rest of the overlay isn't */
 }
@@ -164,34 +166,56 @@ body,
 }
 /* Data source tabs (실시간 / 시뮬레이션) — a segmented control under the status
    line. Live is the default; simulation is for demos and credit outages. */
+/*
+ * The tabs, sized for a finger and for a room.
+ *
+ * They were 12px type in a 28px pill — two thirds of the smallest touch target
+ * anybody recommends — and identical in size and shape to the filter chips
+ * sitting directly underneath them. A visitor could not tell which row moved
+ * them between exhibits and which row turned things on and off, because the two
+ * rows looked like one. These are the primary navigation of the whole exhibit,
+ * so they are now unmistakably the largest thing in the overlay, and the row
+ * below is separated from them rather than butted against them.
+ */
 .ctrl-info .feed-tabs {
   display: inline-flex;
-  gap: 2px;
-  margin-top: 8px;
-  padding: 2px;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 4px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(16, 24, 43, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 16, 30, 0.82);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
   pointer-events: auto; /* clickable even though the rest of the overlay isn't */
 }
 .ctrl-info .feed-tab {
   margin: 0;
   width: auto;
-  padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 600;
+  min-height: 44px;
+  padding: 0 20px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: #eaf2ff;
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: pointer;
+  transition: background 140ms ease, opacity 140ms ease, color 140ms ease;
 }
+.ctrl-info .feed-tab:not(.on):hover {
+  opacity: 0.85;
+  background: rgba(255, 255, 255, 0.07);
+}
+/* The selected one has to be readable from across a room, not just different. */
 .ctrl-info .feed-tab.on {
-  background: rgba(127, 212, 255, 0.9);
+  background: linear-gradient(180deg, #9fdcff, #7fd4ff);
   color: #04121f;
   opacity: 1;
+  box-shadow: 0 2px 10px rgba(127, 212, 255, 0.35);
 }
+
 
 /* Satellite name search. Sits with the orbit chips and takes a full row of its
    own, because a search box the width of a chip is unusable on a touchscreen. */
@@ -650,7 +674,9 @@ body,
   max-width: 46vw;
 }
 .ctrl-info .leg.probe {
-  font-size: 0.82rem;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.86rem;
 }
 .ctrl-info .leg.probe.on {
   border-color: rgba(255, 209, 102, 0.85);
