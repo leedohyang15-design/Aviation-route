@@ -567,8 +567,11 @@ export function ControlApp(): JSX.Element {
 
       {/* Info overlay (top-left) — moved off the projected sphere. */}
       <div className="ctrl-info">
-        <h1>{TITLES[mode][0]}</h1>
-        <div className="sub">{TITLES[mode][1]}</div>
+        <div className="title">
+          <h1>{TITLES[mode][0]}</h1>
+          <div className="sub">{TITLES[mode][1]}</div>
+        </div>
+        <div className="headline">
         <div className="count">
           {isWeather ? (
             <>
@@ -625,6 +628,7 @@ export function ControlApp(): JSX.Element {
             : isSat
             ? '위성 궤도 · 실시간 계산'
             : statusText}
+        </div>
         </div>
 
         {/* Layer tabs — aircraft or satellites. */}
@@ -737,6 +741,7 @@ export function ControlApp(): JSX.Element {
               >
                 <i style={{ background: PROBE_COLOR[p.status] }} />
                 {p.name}
+                <em>{p.landed.slice(0, 4)}</em>
               </button>
             ))}
           </div>

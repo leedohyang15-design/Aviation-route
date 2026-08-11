@@ -53,6 +53,22 @@ body,
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
   line-height: 1.35;
 }
+/*
+ * Four rows where there were six.
+ *
+ * The corner carried a title, an English subtitle, a count, a source badge, the
+ * tabs and the chips — six stacked rows of small text that read as clutter
+ * rather than as a hierarchy. The two halves of the title belong on one line
+ * (which is how museum signage sets a bilingual heading anyway), and the count
+ * and its attribution belong on another. What is left is: what this is, what it
+ * says, where to go, what to touch.
+ */
+.ctrl-info .title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .ctrl-info h1 {
   font-size: clamp(20px, 2vw, 30px);
   font-weight: 800;
@@ -60,24 +76,30 @@ body,
 }
 .ctrl-info .sub {
   font-size: 12px;
-  opacity: 0.7;
+  opacity: 0.6;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  margin-bottom: 8px;
+}
+.ctrl-info .headline {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 6px;
 }
 .ctrl-info .count {
   font-size: clamp(16px, 1.5vw, 24px);
-  margin-top: 2px;
 }
 .ctrl-info .count b {
   font-size: 1.7em;
   color: #7fd4ff;
 }
-/* Connection source — deliberately small/subtle (visitors don't care). */
+/* Attribution and connection state. Small on purpose — a visitor does not care
+   which service drew the map, and the credit still has to be on screen. It sits
+   beside the count rather than under it, which is one row back. */
 .ctrl-info .src {
   font-size: 11px;
-  opacity: 0.55;
-  margin-top: 2px;
+  opacity: 0.5;
 }
 .ctrl-info .ok {
   color: #9fe6a0;
@@ -673,10 +695,33 @@ body,
 .ctrl-info .probe-list {
   max-width: 46vw;
 }
+/* The probe chips run oldest to newest, and the year is what makes that
+   readable — without it the order is arbitrary to anyone who does not already
+   know when Viking landed. */
 .ctrl-info .leg.probe {
   min-height: 34px;
   padding: 0 12px;
-  font-size: 0.86rem;
+  font-size: 14px;
+}
+.ctrl-info .leg.probe em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * Two rows, deliberately — not one and not four.
+ *
+ * The chips run oldest to newest, so the row is a timeline and wants to be read
+ * along. One row across half the window (which is what 46vw bought) is too far
+ * for the eye to track; narrowing it to the 560px the other legends use breaks
+ * it into four short rows and the chronology stops being visible at all. The
+ * twelve chips measure about 1,640px with their years on, so 820 is the width
+ * that splits them evenly in two.
+ */
+.ctrl-info .probe-list {
+  max-width: 820px;
 }
 .ctrl-info .leg.probe.on {
   border-color: rgba(255, 209, 102, 0.85);
