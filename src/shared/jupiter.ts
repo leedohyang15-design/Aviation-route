@@ -171,6 +171,30 @@ export function moonPosition(m: JupiterMoon, ms: number): { x: number; y: number
   return { x: m.radiusRj * Math.cos(a), y: -m.radiusRj * Math.sin(a) }
 }
 
+/**
+ * Where a moon sits AROUND Jupiter, as a renderer longitude (-180..180).
+ *
+ * The map's horizontal axis is being used as "angle around the planet", which
+ * is what it is: an equirectangular map is Jupiter unrolled, and one lap of it
+ * is one lap of the planet. The four dots therefore say which side of Jupiter
+ * each moon is on and how they are arranged relative to each other — which is
+ * the part the Laplace resonance pins down, and the part somebody asks about.
+ *
+ * It is NOT a claim that the moon is directly above that patch of cloud. That
+ * would need System III to be tied to the frame these longitudes are measured
+ * in, and the zero point could not be checked against a published event (see
+ * the note on GALILEAN). Getting it wrong by a constant would put every moon
+ * over the wrong belt while looking entirely convincing, so the exhibit does
+ * not say it: the plate says "둘레 어디쯤", not "바로 위".
+ *
+ * Latitude is zero to within half a degree for all four — their orbits sit in
+ * Jupiter's equatorial plane, which is the one place a moon can be and stay.
+ */
+export function moonMapLon(m: JupiterMoon, ms: number): number {
+  const l = moonLongitude(m, ms)
+  return l > 180 ? l - 360 : l
+}
+
 /** How far through its orbit, 0..1 — for a progress ring on the card. */
 export function moonPhase(m: JupiterMoon, ms: number): number {
   return moonLongitude(m, ms) / 360

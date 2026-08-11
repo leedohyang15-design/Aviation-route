@@ -34,6 +34,7 @@ import {
   MARS_NIGHT_FLOOR,
   MARS_SATURATION,
   MARS_TINT,
+  JUPITER_POLE_FADE_DEG,
   JUPITER_TEXTURE_URL,
   MARS_TEXTURE_URL,
   EARTH_NIGHT_URL,
@@ -636,6 +637,23 @@ export class Globe {
       uSunLon: { value: 0 },
       uSunDecl: { value: 0 },
       uNightFloor: { value: 0.22 }, // how much of the day map survives at night
+      /*
+       * Whether this world has a day and a night at all.
+       *
+       * uHasNight only ever controlled the CITY LIGHTS. The terminator itself
+       * had no switch — `mix(day, night, uNight)` ran unconditionally — so
+       * turning Jupiter's "night" off left the whole shaded hemisphere still
+       * being drawn, as the day map desaturated and pushed toward blue. On a
+       * planet whose map is all warm ochre that came out as an enormous pale
+       * wash across the middle of the frame, which is exactly what it looked
+       * like: not a terminator, a smear.
+       */
+      uTerminator: { value: 1 },
+      /*
+       * Degrees of latitude at each pole to fade out, for maps that have no
+       * data there. See JUPITER_POLE_FADE_DEG.
+       */
+      uPoleFade: { value: 0 },
       // Weather. Two Mercator mosaics, remapped to this frame in the shader.
       uCloud: { value: null },
       uHasCloud: { value: 0 },
@@ -692,6 +710,7 @@ export class Globe {
         uniform sampler2D uMap; uniform float uHasMap; uniform float uLonOffset;
         uniform sampler2D uNightMap; uniform float uHasNight;
         uniform float uSunLon; uniform float uSunDecl; uniform float uNightFloor;
+        uniform float uTerminator; uniform float uPoleFade;
         uniform sampler2D uCloud; uniform float uHasCloud; uniform float uCloudMerc;
         uniform float uCloudAmt;
         uniform sampler2D uRain; uniform float uHasRain; uniform float uRainMerc;
@@ -782,7 +801,7 @@ export class Globe {
           float slon = uSunLon * rad;
           float cosZenith =
             sin(plat) * sin(sdecl) + cos(plat) * cos(sdecl) * cos(plon - slon);
-          float uNight = smoothstep(0.10, -0.10, cosZenith);
+          float uNight = uTerminator * smoothstep(0.10, -0.10, cosZenith);
 
           // Weather arrives as Web Mercator tiles. Mercator's x is linear in
           // longitude, so the same uv.x works (offset and seam wrap included)
@@ -997,6 +1016,25 @@ export class Globe {
             float t = clamp(smoothstep(0.04, 0.40, r.a), 0.0, 1.0);
             float a = clamp(r.a * 2.2, 0.0, 1.0);
             col = mix(col, rainRamp(t), a * (uRainMerc > 0.5 ? inMerc : 1.0));
+          }
+          /*
+           * Fade the poles out, for maps that have nothing there.
+           *
+           * Every picture of a gas giant is taken from near its equatorial
+           * plane, so a cylindrical map of one has no real data in the top and
+           * bottom rows — what is printed there is extrapolation, and where the
+           * extrapolation meets the real data there is a seam. Equirectangular
+           * projection then stretches that seam across the full width of the
+           * frame, which is the loudest place on a dome to put an artefact.
+           * Zero for Earth and Mars, which are mapped from orbit pole to pole
+           * and have honest polar data.
+           */
+          if (uPoleFade > 0.0) {
+            float fromPole = 90.0 - abs(vUv.y * 180.0 - 90.0);
+            float k = smoothstep(0.0, uPoleFade, fromPole);
+            // Toward the planet's own darker tone rather than to black: a black
+            // cap reads as a hole punched in the picture.
+            col = mix(col * 0.35, col, k);
           }
           gl_FragColor = vec4(col, 1.0);
         }
@@ -2070,6 +2108,8 @@ export class Globe {
       this.bgUniforms.uHasNight.value = this.nightTex ? 1 : 0
       this.bgUniforms.uShowGrid.value = this.earthTex ? 0 : 1
       this.bgUniforms.uNightFloor.value = 0.22
+      this.bgUniforms.uTerminator.value = 1
+      this.bgUniforms.uPoleFade.value = 0
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
       this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
@@ -2093,6 +2133,8 @@ export class Globe {
        * rotation, so the picture has no single time of day to shade for.
        */
       this.bgUniforms.uHasNight.value = 0
+      this.bgUniforms.uTerminator.value = 0
+      this.bgUniforms.uPoleFade.value = JUPITER_POLE_FADE_DEG
       this.bgUniforms.uNightFloor.value = 1
       this.bgUniforms.uBrightness.value = 1
       this.bgUniforms.uSaturation.value = 1
@@ -2143,6 +2185,8 @@ export class Globe {
      * though — a hemisphere of nothing is a map nobody can read.
      */
     this.bgUniforms.uNightFloor.value = MARS_NIGHT_FLOOR
+    this.bgUniforms.uTerminator.value = 1
+    this.bgUniforms.uPoleFade.value = 0
     if (this.marsTex) {
       this.bgUniforms.uMap.value = this.marsTex
       this.bgUniforms.uHasMap.value = 1

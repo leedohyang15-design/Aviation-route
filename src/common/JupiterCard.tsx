@@ -75,6 +75,12 @@ export function MoonCard({ moon, now }: { moon: JupiterMoon; now: number }): JSX
         </div>
 
         <MoonOrrery now={now} selected={moon.id} />
+        {/* The map shows the same thing flattened out, and a visitor who has
+            just tapped a chip needs telling which dot moved. */}
+        <p className="future-note">
+          지도 위의 {moon.name} 점은 지금 목성 둘레의 어느 쪽에 있는지를 보여줘요. 실제로는
+          목성에서 {(moon.distanceKm / 10000).toFixed(0)}만 km 떨어져 있어요.
+        </p>
 
         <ol className="probe-timeline">
           {moon.facts.map((f, i) => (

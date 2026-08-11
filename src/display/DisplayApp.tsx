@@ -23,6 +23,7 @@ import {
   GALILEAN,
   GALILEO_PROBE,
   JUPITER_BOUND,
+  moonMapLon,
   moonPeriodDays,
   monthsUntil,
   waitLabel,
@@ -177,7 +178,7 @@ export function DisplayApp(): JSX.Element {
           title: `${m.name}   ${m.headline}`,
           prefix: '목성을 한 바퀴 도는 데',
           value: days < 5 ? `${(days * 24).toFixed(0)}시간` : `${days.toFixed(1)}일`,
-          suffix: `· 목성에서 ${(m.distanceKm / 10000).toFixed(0)}만 km`
+          suffix: `· 지금 목성 둘레의 저 점에 있어요`
         }
       }
       const v = JUPITER_BOUND.find((x) => x.id === state.selected)
@@ -200,7 +201,7 @@ export function DisplayApp(): JSX.Element {
       return {
         ...NOTHING,
         title: '목성',
-        prefix: `지구 1,300개가 들어가는 행성이에요. 땅은 한 뼘도 없고, 달 ${GALILEAN.length}개가 돌고 있어요`
+        prefix: `지구 1,300개가 들어가는 행성이에요. 땅은 한 뼘도 없고, 지도 위의 점 ${GALILEAN.length}개가 지금 목성을 돌고 있는 큰 달이에요`
       }
     }
     /*
@@ -397,7 +398,15 @@ export function DisplayApp(): JSX.Element {
   // are not on the planet, so they are not on the map — see MoonOrrery.
   useEffect(() => {
     if (!isJupiter) return
+    void marsTick
+    const now = Date.now()
     globeRef.current?.setProbes([
+      ...GALILEAN.map((m) => ({
+        id: m.id,
+        lon: moonMapLon(m, now),
+        lat: 0,
+        color: new THREE.Color(m.color)
+      })),
       {
         id: GALILEO_PROBE.id,
         lon: westToRendererLon(GALILEO_PROBE.lonWest),
@@ -405,7 +414,7 @@ export function DisplayApp(): JSX.Element {
         color: new THREE.Color(GALILEO_PROBE.color)
       }
     ])
-  }, [isJupiter])
+  }, [isJupiter, marsTick])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(visible)
   }, [mode, visible])

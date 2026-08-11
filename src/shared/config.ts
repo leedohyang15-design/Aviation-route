@@ -90,6 +90,21 @@ export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
  */
 export const JUPITER_TEXTURE_URL = 'jupiter_equirect.jpg'
 /**
+ * Degrees of latitude to fade out at each of Jupiter's poles.
+ *
+ * Jupiter is only ever photographed from near its own equatorial plane, so no
+ * cylindrical map of it has real data at the top and bottom — what is printed
+ * there is extrapolated, and where the extrapolation meets the real data there
+ * is a seam. Equirectangular projection stretches that seam across the entire
+ * width of the frame, and on a dome that is the loudest place an artefact can
+ * possibly sit.
+ *
+ * Raise it if a band of noise is still visible along the top or bottom of the
+ * planet; drop it to 0 to see the map exactly as the file has it. Earth and
+ * Mars are mapped from orbit pole to pole and get none of this.
+ */
+export const JUPITER_POLE_FADE_DEG = 14
+/**
  * Grading for the Mars map. NEUTRAL by default, and that is the point.
  *
  * These exist because two rounds of them were spent chasing a map that looked

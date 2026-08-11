@@ -15,7 +15,7 @@ import type {
 import * as THREE from 'three'
 import { MARS_PROBES, PROBE_COLOR, probePosition } from '@shared/probes'
 import { MARS_TARGETS, TARGET_COLOR, isTargetId, targetPosition } from '@shared/mars-future'
-import { GALILEO_PROBE, westToRendererLon } from '@shared/jupiter'
+import { GALILEAN, GALILEO_PROBE, moonMapLon, westToRendererLon } from '@shared/jupiter'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -161,7 +161,14 @@ export function MapView({
    */
   useEffect(() => {
     if (!isJupiter) return
+    const now = Date.now()
     globeRef.current?.setProbes([
+      ...GALILEAN.map((m) => ({
+        id: m.id,
+        lon: moonMapLon(m, now),
+        lat: 0,
+        color: new THREE.Color(m.color)
+      })),
       {
         id: GALILEO_PROBE.id,
         lon: westToRendererLon(GALILEO_PROBE.lonWest),
