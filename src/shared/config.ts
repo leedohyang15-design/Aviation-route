@@ -83,6 +83,13 @@ export const EARTH_NIGHT_URL = 'earth_night.jpg'
  */
 export const MARS_TEXTURE_URL = 'mars_equirect.jpg'
 /**
+ * Jupiter's map, dropped beside the others in public/ and git-ignored the same
+ * way. Any cylindrical (plate carree) Jupiter map works — the Cassini global
+ * mosaic is the usual one — as long as it is exactly 2:1. Without it the tab
+ * falls back to the wireframe grid and says so in the log.
+ */
+export const JUPITER_TEXTURE_URL = 'jupiter_equirect.jpg'
+/**
  * Grading for the Mars map. NEUTRAL by default, and that is the point.
  *
  * These exist because two rounds of them were spent chasing a map that looked

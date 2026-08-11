@@ -34,7 +34,7 @@ export interface Aircraft {
 }
 
 /** Which layer the exhibit is showing. Tabs switch between them. */
-export type ExhibitMode = 'flight' | 'satellite' | 'weather' | 'mars'
+export type ExhibitMode = 'flight' | 'satellite' | 'weather' | 'mars' | 'jupiter'
 
 /** The two weather products, each its own chip on the control screen. Both are
  * global: `cloud` is total cloud cover in percent, `rain` is radar

@@ -9,6 +9,8 @@ import { ProbeTimelineCard } from '../common/ProbeTimelineCard'
 import { MarsFutureCard } from '../common/MarsFutureCard'
 import { MARS_PROBES, PROBE_COLOR, PROBE_STATE_LABEL } from '@shared/probes'
 import { MARS_PLAN, MARS_TARGETS, TARGET_COLOR } from '@shared/mars-future'
+import { GALILEAN, GALILEO_PROBE, JUPITER_BOUND } from '@shared/jupiter'
+import { MoonCard, ProbeEntryCard, VisitorCard } from '../common/JupiterCard'
 import type { Aircraft, ExhibitMode, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
@@ -27,7 +29,8 @@ const TITLES: Record<ExhibitMode, [string, string]> = {
   flight: ['실시간 항공 경로', 'Real-time Global Air Traffic'],
   satellite: ['지구를 도는 위성', 'Satellites in Orbit'],
   weather: ['지금 지구의 하늘', "Earth's Weather Right Now"],
-  mars: ['화성에 간 로봇들', 'Robots on Mars']
+  mars: ['화성에 간 로봇들', 'Robots on Mars'],
+  jupiter: ['목성과 네 개의 달', "Jupiter and Its Moons"]
 }
 
 /** Card footprint, matched to .sheet in control.css — used to keep the card
@@ -249,8 +252,12 @@ export function ControlApp(): JSX.Element {
   const mode = state.mode
   const isSat = mode === 'satellite'
   const isMars = mode === 'mars'
+  const isJupiter = mode === 'jupiter'
   const marsProbe = isMars ? MARS_PROBES.find((p) => p.id === state.selected) ?? null : null
   const marsTarget = isMars ? MARS_TARGETS.find((t) => t.id === state.selected) ?? null : null
+  const jMoon = isJupiter ? GALILEAN.find((m) => m.id === state.selected) ?? null : null
+  const jVisitor = isJupiter ? JUPITER_BOUND.find((v) => v.id === state.selected) ?? null : null
+  const jProbe = isJupiter && state.selected === GALILEO_PROBE.id
   const isWeather = mode === 'weather'
   const hiddenWeather = state.hiddenWeather ?? []
   const toggleWeather = (l: WeatherLayer) => {
@@ -610,6 +617,11 @@ export function ControlApp(): JSX.Element {
                 </>
               )}
             </>
+          ) : isJupiter ? (
+            <>
+              목성을 도는 큰 달 <b>{GALILEAN.length}</b>개 · 가는 중인 탐사선{' '}
+              <b>{JUPITER_BOUND.length}</b>대
+            </>
           ) : isMars ? (
             <>
               화성에 내려앉은 로봇 <b>{MARS_PROBES.length}</b>대 · 지금도 일하는 중{' '}
@@ -637,7 +649,7 @@ export function ControlApp(): JSX.Element {
               ? weatherAt == null
                 ? 'pending'
                 : 'ok'
-              : isMars || isSat || live
+              : isJupiter || isMars || isSat || live
               ? 'ok'
               : 'pending')
           }
@@ -646,6 +658,8 @@ export function ControlApp(): JSX.Element {
               come from the one service, which is the point of the change. */}
           {isWeather
             ? (weatherSource ?? '기상 영상 불러오는 중')
+            : isJupiter
+            ? '갈릴레오 위성 궤도 · 실시간 계산'
             : isMars
             ? 'NASA · ESA · 소련 · 중국 — 착륙 기록'
             : isSat
@@ -699,6 +713,17 @@ export function ControlApp(): JSX.Element {
             }}
           >
             🔴 화성
+          </button>
+          <button
+            role="tab"
+            aria-selected={isJupiter}
+            className={'feed-tab' + (isJupiter ? ' on' : '')}
+            onClick={() => {
+              poke()
+              send({ type: 'setMode', mode: 'jupiter' })
+            }}
+          >
+            🪐 목성
           </button>
         </div>
         {/* There is no live/simulation choice because there is no simulation.
@@ -797,6 +822,64 @@ export function ControlApp(): JSX.Element {
               ))}
             </div>
           </div>
+        ) : isJupiter ? (
+          /*
+           * Four moons, the one entry point, and the two still on their way.
+           *
+           * Same shape as the Mars list, and the same reason: seven names a
+           * child can read beat seven specks on a planet the size of a wall.
+           * The break before the last two says the same thing the Mars list's
+           * break says — everything above it has happened.
+           */
+          <div className="legend probe-list">
+            {GALILEAN.map((m) => (
+              <button
+                key={m.id}
+                className={'leg probe' + (state.selected === m.id ? ' on' : '')}
+                title={m.headline}
+                onClick={() => {
+                  poke()
+                  send({ type: 'select', icao24: state.selected === m.id ? null : m.id })
+                }}
+              >
+                <i style={{ background: m.color }} />
+                {m.name}
+              </button>
+            ))}
+            <button
+              className={'leg probe' + (state.selected === GALILEO_PROBE.id ? ' on' : '')}
+              title="목성 안으로 들어간 단 하나"
+              onClick={() => {
+                poke()
+                send({
+                  type: 'select',
+                  icao24: state.selected === GALILEO_PROBE.id ? null : GALILEO_PROBE.id
+                })
+              }}
+            >
+              <i style={{ background: GALILEO_PROBE.color }} />
+              {GALILEO_PROBE.name}
+              <em>{GALILEO_PROBE.entered.slice(0, 4)}</em>
+            </button>
+            <div className="target-row">
+              <span className="target-lead">가는 중</span>
+              {JUPITER_BOUND.map((v) => (
+                <button
+                  key={v.id}
+                  className={'leg probe target' + (state.selected === v.id ? ' on' : '')}
+                  title={`${v.target}로 가는 중 · ${v.arrivesLabel} 도착`}
+                  onClick={() => {
+                    poke()
+                    send({ type: 'select', icao24: state.selected === v.id ? null : v.id })
+                  }}
+                >
+                  <i style={{ background: v.color }} />
+                  {v.name}
+                  <em>{v.arrivesLabel.slice(0, 5)}</em>
+                </button>
+              ))}
+            </div>
+          </div>
         ) : isSat ? (
           <div className="legend">
             {(
@@ -869,6 +952,22 @@ export function ControlApp(): JSX.Element {
       <div className="sheet" ref={sheetRef} style={sheetStyle} hidden={!settled}>
         {isWeather
           ? null
+          : isJupiter
+          ? (jMoon && (
+              <div className="sheet-card" key={jMoon.id}>
+                <MoonCard moon={jMoon} now={Date.now()} />
+              </div>
+            )) ||
+            (jVisitor && (
+              <div className="sheet-card" key={jVisitor.id}>
+                <VisitorCard visitor={jVisitor} now={Date.now()} />
+              </div>
+            )) ||
+            (jProbe && (
+              <div className="sheet-card" key={GALILEO_PROBE.id}>
+                <ProbeEntryCard now={Date.now()} />
+              </div>
+            ))
           : isMars
           ? (marsTarget && (
               <div className="sheet-card" key={marsTarget.id}>
@@ -897,7 +996,9 @@ export function ControlApp(): JSX.Element {
           a plane is selected so it doesn't fight the boarding-pass card. */}
       {(!state.selected || attract) && (
         <div className="touch-hint">
-          {isMars
+          {isJupiter
+            ? '🖐 목성을 돌려보고, 달 이름을 눌러보세요!'
+            : isMars
             ? '🖐 화성을 돌려보고, 로봇을 눌러보세요!'
             : `🖐 지구를 돌려${isWeather ? '보세요!' : `보고, ${isSat ? '위성을' : '비행기를'} 눌러보세요!`}`}
         </div>

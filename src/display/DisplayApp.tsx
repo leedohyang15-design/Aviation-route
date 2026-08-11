@@ -19,6 +19,15 @@ import {
   nextTransferWindow,
   targetPosition
 } from '@shared/mars-future'
+import {
+  GALILEAN,
+  GALILEO_PROBE,
+  JUPITER_BOUND,
+  moonPeriodDays,
+  monthsUntil,
+  waitLabel,
+  westToRendererLon
+} from '@shared/jupiter'
 import { Globe } from './globe'
 import { panelSkin, telemetrySkin } from './textures'
 import type { OrbitClass } from '@shared/types'
@@ -35,14 +44,24 @@ const ORBIT_LABEL: Record<OrbitClass, string> = {
 const FRAME = { w: 1664, h: 838 }
 
 /**
- * The rule down the edge of the Mars plate: the colour of the thing selected.
+ * The rule down the edge of the Mars or Jupiter plate: the colour of the thing
+ * selected.
  *
  * Same table the map and the control chips read, so the dot, the chip and the
  * plate cannot disagree about whether a machine is still working. With nothing
  * selected the plate is about the planet rather than about any one object, so
  * it takes the amber of the two that are still alive — the tab's own colour.
  */
-function marsAccent(selected: string | null): string {
+function planetAccent(selected: string | null, jupiter = false): string {
+  if (jupiter) {
+    const m = GALILEAN.find((x) => x.id === selected)
+    if (m) return m.color
+    const v = JUPITER_BOUND.find((x) => x.id === selected)
+    if (v) return v.color
+    // Nothing chosen, or the probe entry: the planet's own colour, which is
+    // the belts rather than any one object on it.
+    return GALILEO_PROBE.color
+  }
   if (isTargetId(selected)) return TARGET_COLOR
   const p = MARS_PROBES.find((x) => x.id === selected)
   return p ? PROBE_COLOR[p.status] : PROBE_COLOR.active
@@ -84,6 +103,7 @@ export function DisplayApp(): JSX.Element {
   const isSat = mode === 'satellite'
   const isWeather = mode === 'weather'
   const isMars = mode === 'mars'
+  const isJupiter = mode === 'jupiter'
   /*
    * A slow tick, only on Mars.
    *
@@ -94,10 +114,10 @@ export function DisplayApp(): JSX.Element {
    */
   const [marsTick, setMarsTick] = useState(0)
   useEffect(() => {
-    if (!isMars) return
+    if (!isMars && !isJupiter) return
     const t = setInterval(() => setMarsTick((n) => n + 1), 20_000)
     return () => clearInterval(t)
-  }, [isMars])
+  }, [isMars, isJupiter])
   const hiddenWx = (state.hiddenWeather ?? []).join(',')
   const showCloud = isWeather && !hiddenWx.includes('cloud')
   const showRain = isWeather && !hiddenWx.includes('rain')
@@ -138,6 +158,51 @@ export function DisplayApp(): JSX.Element {
    * gets there, or until it passes over us.
    */
   const callout = useMemo<Callout>(() => {
+    /*
+     * Jupiter: the four moons, and the two things still flying there.
+     *
+     * The figure is never a distance. Jupiter is between 590 and 970 million
+     * kilometres away depending on the month, and no number that big means
+     * anything to a child standing in front of it — so the plate carries TIME,
+     * the same as every other tab does. A moon's day, or the years a
+     * spacecraft still has to fly.
+     */
+    if (isJupiter) {
+      void marsTick
+      const now = Date.now()
+      const m = GALILEAN.find((x) => x.id === state.selected)
+      if (m) {
+        const days = moonPeriodDays(m)
+        return {
+          title: `${m.name}   ${m.headline}`,
+          prefix: '목성을 한 바퀴 도는 데',
+          value: days < 5 ? `${(days * 24).toFixed(0)}시간` : `${days.toFixed(1)}일`,
+          suffix: `· 목성에서 ${(m.distanceKm / 10000).toFixed(0)}만 km`
+        }
+      }
+      const v = JUPITER_BOUND.find((x) => x.id === state.selected)
+      if (v) {
+        return {
+          title: `${v.name}   ${v.target}로 가는 중`,
+          prefix: `${v.launched.slice(0, 4)}년에 떠나서, 도착까지`,
+          value: waitLabel(monthsUntil(v.arrivesYm, now)),
+          suffix: `· ${v.arrivesLabel}`
+        }
+      }
+      if (state.selected === GALILEO_PROBE.id) {
+        return {
+          title: `${GALILEO_PROBE.name}   목성 안으로 들어간 단 하나`,
+          prefix: '구름 속으로 떨어지며 버틴 시간',
+          value: `${Math.floor(GALILEO_PROBE.lastedSec / 60)}분 ${GALILEO_PROBE.lastedSec % 60}초`,
+          suffix: '· 그 아래엔 땅이 없어요'
+        }
+      }
+      return {
+        ...NOTHING,
+        title: '목성',
+        prefix: `지구 1,300개가 들어가는 행성이에요. 땅은 한 뼘도 없고, 달 ${GALILEAN.length}개가 돌고 있어요`
+      }
+    }
     /*
      * Mars: a place, and how long the thing standing there has been standing.
      *
@@ -299,10 +364,12 @@ export function DisplayApp(): JSX.Element {
     // A switch on the mode, not a boolean. `isSat ? 'satellite' : 'aircraft'`
     // quietly gave the fourth tab aeroplane silhouettes pointing at headings
     // that landers do not have.
-    globeRef.current?.setObjectKind(isSat ? 'satellite' : isMars ? 'probe' : 'aircraft')
-    globeRef.current?.setPlanet(isMars ? 'mars' : 'earth')
+    globeRef.current?.setObjectKind(
+      isSat ? 'satellite' : isMars || isJupiter ? 'probe' : 'aircraft'
+    )
+    globeRef.current?.setPlanet(isMars ? 'mars' : isJupiter ? 'jupiter' : 'earth')
     globeRef.current?.clearObjects()
-  }, [mode, isSat, isMars])
+  }, [mode, isSat, isMars, isJupiter])
   useEffect(() => {
     if (!isMars) return
     // Twelve places robots reached, then three nobody has. Same instanced
@@ -322,8 +389,23 @@ export function DisplayApp(): JSX.Element {
     ])
   }, [isMars, marsLive])
   useEffect(() => {
-    globeRef.current?.setProbeIcon(isTargetId(state.selected) ? 'target' : 'rover')
-  }, [isMars, state.selected])
+    globeRef.current?.setProbeIcon(
+      isTargetId(state.selected) || isJupiter ? 'target' : 'rover'
+    )
+  }, [isMars, isJupiter, state.selected])
+  // Jupiter carries one marker: the only spot anything has ever been. The moons
+  // are not on the planet, so they are not on the map — see MoonOrrery.
+  useEffect(() => {
+    if (!isJupiter) return
+    globeRef.current?.setProbes([
+      {
+        id: GALILEO_PROBE.id,
+        lon: westToRendererLon(GALILEO_PROBE.lonWest),
+        lat: GALILEO_PROBE.lat,
+        color: new THREE.Color(GALILEO_PROBE.color)
+      }
+    ])
+  }, [isJupiter])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(visible)
   }, [mode, visible])
@@ -422,9 +504,13 @@ export function DisplayApp(): JSX.Element {
          * putting the choice at the single place the plate is drawn makes it
          * impossible for a sixth branch to forget.
          */
-        isMars ? panelSkin(marsAccent(state.selected)) : isSat ? telemetrySkin() : undefined
+        isMars || isJupiter
+          ? panelSkin(planetAccent(state.selected, isJupiter))
+          : isSat
+          ? telemetrySkin()
+          : undefined
       ),
-    [callout, isSat, isMars, state.selected]
+    [callout, isSat, isMars, isJupiter, state.selected]
   )
 
   return (

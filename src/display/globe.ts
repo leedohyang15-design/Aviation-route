@@ -34,6 +34,7 @@ import {
   MARS_NIGHT_FLOOR,
   MARS_SATURATION,
   MARS_TINT,
+  JUPITER_TEXTURE_URL,
   MARS_TEXTURE_URL,
   EARTH_NIGHT_URL,
   EARTH_MIPMAPS,
@@ -237,6 +238,9 @@ const CAPACITY = 20000 // max rendered objects (aircraft ~7k, satellites ~11k)
  * always meant.
  */
 export type ObjectKind = 'aircraft' | 'satellite' | 'probe'
+
+/** Which world the background shader is drawing. */
+export type Planet = 'earth' | 'mars' | 'jupiter'
 
 const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to city level
 /**
@@ -459,12 +463,14 @@ export class Globe {
   private pendingRecenter = false // center on the route once, on selection only
   private hasEarthTexture = false
 
-  private planet: 'earth' | 'mars' = 'earth'
+  private planet: Planet = 'earth'
   private earthTex: THREE.Texture | null = null
   private nightTex: THREE.Texture | null = null
   private marsTex: THREE.Texture | null = null
+  private jupiterTex: THREE.Texture | null = null
   /** So a missing Mars map is looked for once, not on every tab press. */
   private marsTried = false
+  private jupiterTried = false
   private nightHourOverride: number | null = null // null = live time
 
   // Interactive (control) mode: the operator drives the camera locally with
@@ -1117,6 +1123,7 @@ export class Globe {
      * because nobody is standing in front of it yet.
      */
     this.loadMars()
+    this.loadJupiter()
     this.resize()
     if (this.interactive) {
       this.attachInput()
@@ -2054,7 +2061,7 @@ export class Globe {
    * GPU memory each, and re-decoding a 2:1 photograph to save that is a bad
    * trade on a machine that will run for months without a restart.
    */
-  setPlanet(planet: 'earth' | 'mars'): void {
+  setPlanet(planet: Planet): void {
     if (planet === this.planet) return
     this.planet = planet
     if (planet === 'earth') {
@@ -2067,6 +2074,39 @@ export class Globe {
       this.bgUniforms.uSaturation.value = 1
       this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
       this.bgUniforms.uLift.value = 1
+      return
+    }
+    if (planet === 'jupiter') {
+      /*
+       * A map, not a lit globe — the one planet here with no terminator.
+       *
+       * Earth and Mars get a shadow because the sun's position over each of
+       * them is a fact this code can compute and check. Jupiter's would need
+       * its System III rotation phase, and that is the second unverifiable
+       * phase in this tab: the moons' zero point could not be pinned against a
+       * published event either (see shared/jupiter.ts). One unverified number
+       * declared as such is honest; two, with one of them drawing a shadow
+       * across the picture, is a guess dressed as a rendering.
+       *
+       * It costs nothing anyway. The subject here is the belts, and they are
+       * weather — the visible surface laps the poles by five minutes a
+       * rotation, so the picture has no single time of day to shade for.
+       */
+      this.bgUniforms.uHasNight.value = 0
+      this.bgUniforms.uNightFloor.value = 1
+      this.bgUniforms.uBrightness.value = 1
+      this.bgUniforms.uSaturation.value = 1
+      this.bgUniforms.uTint.value = new THREE.Vector3(1, 1, 1)
+      this.bgUniforms.uLift.value = 1
+      if (this.jupiterTex) {
+        this.bgUniforms.uMap.value = this.jupiterTex
+        this.bgUniforms.uHasMap.value = 1
+        this.bgUniforms.uShowGrid.value = 0
+        return
+      }
+      this.bgUniforms.uHasMap.value = 0
+      this.bgUniforms.uShowGrid.value = 1
+      this.loadJupiter()
       return
     }
     // See MARS_TINT: desaturating a red image only makes it a duller red. What
@@ -2120,11 +2160,33 @@ export class Globe {
   private loadMars(): void {
     if (this.marsTried) return
     this.marsTried = true
+    this.loadPlanetMap('mars', MARS_TEXTURE_URL, (tex) => (this.marsTex = tex))
+  }
+
+  /** Same for Jupiter, and for the same reason — see loadPlanetMap. */
+  private loadJupiter(): void {
+    if (this.jupiterTried) return
+    this.jupiterTried = true
+    this.loadPlanetMap('jupiter', JUPITER_TEXTURE_URL, (tex) => (this.jupiterTex = tex))
+  }
+
+  /**
+   * Fetch a planet's map, report what actually arrived, and hang it if that
+   * planet is the one on screen.
+   *
+   * Written once for both, because everything worth saying here is about the
+   * FILE rather than about the planet, and the two files fail in exactly the
+   * same ways. This is called from the constructor, before anybody is standing
+   * in front of the exhibit: a map wider than the GPU's limit is redrawn
+   * through a 2D canvas on the CPU, and doing that when a visitor presses a tab
+   * makes the tab appear to hang.
+   */
+  private loadPlanetMap(tag: string, url: string, keep: (tex: THREE.Texture) => void): void {
     this.loadFirstTexture(
-      this.textureCandidates(MARS_TEXTURE_URL),
+      this.textureCandidates(url),
       (tex) => {
         this.tuneTexture(tex, true)
-        this.marsTex = tex
+        keep(tex)
         /*
          * The dimensions, not just "loaded".
          *
@@ -2152,7 +2214,7 @@ export class Globe {
         const maxTex = this.renderer.capabilities.maxTextureSize
         if (w > maxTex) {
           console.warn(
-            `[mars] map is ${w}px wide but this GPU takes ${maxTex} — three.js will ` +
+            `[${tag}] map is ${w}px wide but this GPU takes ${maxTex} — three.js will ` +
               `redraw it through a canvas on the CPU every time it loads, in every ` +
               `window. That is the pause when the tab opens. A ${maxTex}px or smaller ` +
               `map (8192x4096 is ample: the frame is 1664px and the deepest zoom ` +
@@ -2161,14 +2223,13 @@ export class Globe {
           )
         }
         console.log(
-          `[mars] loaded map ${w}x${h} (${ratio.toFixed(3)}:1, GPU max ${maxTex}) — ` +
+          `[${tag}] loaded map ${w}x${h} (${ratio.toFixed(3)}:1, GPU max ${maxTex}) — ` +
             (Math.abs(ratio - 2) < 0.01
-              ? 'equirectangular, correct — the bands at top and bottom are the ' +
-                'polar caps, which converge to a smear in this projection'
+              ? 'equirectangular, correct'
               : 'NOT 2:1 — this map is not plate carree, or it has a border or a ' +
                 'colour key baked into it. Every latitude on it will be drawn wrong.')
         )
-        if (this.planet === 'mars') {
+        if (this.planet === tag) {
           this.bgUniforms.uMap.value = tex
           this.bgUniforms.uHasMap.value = 1
           this.bgUniforms.uShowGrid.value = 0
@@ -2176,8 +2237,8 @@ export class Globe {
       },
       () => {
         console.warn(
-          `[mars] no/invalid map — showing the grid instead. ` +
-            `Put a 2:1 image at public/${MARS_TEXTURE_URL} (or .png). ` +
+          `[${tag}] no/invalid map — showing the grid instead. ` +
+            `Put a 2:1 image at public/${url} (or .png). ` +
             `Check the file name has no hidden double extension.`
         )
       }

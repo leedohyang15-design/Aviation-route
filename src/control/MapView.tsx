@@ -15,6 +15,7 @@ import type {
 import * as THREE from 'three'
 import { MARS_PROBES, PROBE_COLOR, probePosition } from '@shared/probes'
 import { MARS_TARGETS, TARGET_COLOR, isTargetId, targetPosition } from '@shared/mars-future'
+import { GALILEO_PROBE, westToRendererLon } from '@shared/jupiter'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
 
@@ -119,12 +120,13 @@ export function MapView({
     // A switch, not a boolean: the fourth mode used to inherit the aircraft
     // branch and draw landing sites as aeroplanes pointing at a heading.
     globeRef.current?.setObjectKind(
-      mode === 'satellite' ? 'satellite' : mode === 'mars' ? 'probe' : 'aircraft'
+      mode === 'satellite' ? 'satellite' : mode === 'mars' || mode === 'jupiter' ? 'probe' : 'aircraft'
     )
-    globeRef.current?.setPlanet(mode === 'mars' ? 'mars' : 'earth')
+    globeRef.current?.setPlanet(mode === 'mars' ? 'mars' : mode === 'jupiter' ? 'jupiter' : 'earth')
     globeRef.current?.clearObjects()
   }, [mode])
   const isMars = mode === 'mars'
+  const isJupiter = mode === 'jupiter'
   useEffect(() => {
     if (!isMars) return
     // Warm dots for the machines that got there, green for the three regions
@@ -144,8 +146,30 @@ export function MapView({
     ])
   }, [isMars, marsLive])
   useEffect(() => {
-    globeRef.current?.setProbeIcon(isTargetId(selected) ? 'target' : 'rover')
-  }, [isMars, selected])
+    // A reticle for a place and a rover for a machine. On Jupiter the only
+    // marker is where the probe went IN, which is a spot on a planet rather
+    // than a vehicle standing on one, so it wears the reticle too.
+    globeRef.current?.setProbeIcon(isTargetId(selected) || isJupiter ? 'target' : 'rover')
+  }, [isMars, isJupiter, selected])
+  /*
+   * One marker, and it is the only place anything has ever been.
+   *
+   * The moons are not here: they are not ON Jupiter, and putting them at the
+   * point of sky they happen to sit over would be a diagram nobody could read.
+   * They live in the card's orrery, which is the frame their scale fits in —
+   * the same call the rover traverse made.
+   */
+  useEffect(() => {
+    if (!isJupiter) return
+    globeRef.current?.setProbes([
+      {
+        id: GALILEO_PROBE.id,
+        lon: westToRendererLon(GALILEO_PROBE.lonWest),
+        lat: GALILEO_PROBE.lat,
+        color: new THREE.Color(GALILEO_PROBE.color)
+      }
+    ])
+  }, [isJupiter])
   useEffect(() => {
     if (mode === 'flight') globeRef.current?.setAircraft(aircraft)
   }, [mode, aircraft])

@@ -20,6 +20,7 @@ import { createFlightFeed, type PausableFeed } from './resilient'
 import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
+import { GALILEAN, GALILEO_PROBE, JUPITER_BOUND } from '../src/shared/jupiter'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
 import { opsLog } from './log'
@@ -331,6 +332,13 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
         stopSatellites()
         feed.setPaused(true, '화성 모드')
         break
+      case 'jupiter':
+        // Same again, and more so: shared/jupiter.ts has no live half at all.
+        // Where Mars has a daily rover check, Jupiter's moons are arithmetic
+        // and the two spacecraft on their way left years ago.
+        stopSatellites()
+        feed.setPaused(true, '목성 모드')
+        break
       case 'weather':
         stopSatellites()
         feed.setPaused(true, '날씨 모드')
@@ -476,6 +484,15 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     // targets are not probes and are not in MARS_PROBES, so leaving them out
     // here made every tap on one a silent "ignored — not on the mars layer".
     if (state.mode === 'mars') return MARS_PROBES.some((p) => p.id === id) || isTargetId(id)
+    // Four moons, two spacecraft on their way, and the one place anything ever
+    // went in. None of them is a probe on a surface, so none is in MARS_PROBES.
+    if (state.mode === 'jupiter') {
+      return (
+        GALILEAN.some((m) => m.id === id) ||
+        JUPITER_BOUND.some((v) => v.id === id) ||
+        id === GALILEO_PROBE.id
+      )
+    }
     if (state.mode === 'satellite') return satDetail(id) != null
     // An aircraft that has just blinked out of one snapshot is still the
     // visitor's selection (see holdSelection), so the grace window counts too.
@@ -507,9 +524,9 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
          * the fourth-mode trap the satellite tab already hit once: the branch
          * that catches everything is an aircraft branch.
          */
-        if (state.mode === 'mars') {
+        if (state.mode === 'mars' || state.mode === 'jupiter') {
           state.selected = msg.icao24
-          opsLog(`[hub] mars select ${msg.icao24 ?? '(cleared)'}`)
+          opsLog(`[hub] ${state.mode} select ${msg.icao24 ?? '(cleared)'}`)
           broadcast({ type: 'state', state })
           // Nothing else has anything to say about a probe: the card is built
           // in the window from shared/probes.ts.
