@@ -1,5 +1,7 @@
-/* See BootCurtain.tsx: a still card over a window that is about to freeze for a
-   few seconds while a quarter of a billion pixels go to the GPU. */
+/* See BootCurtain.tsx: a card over a window that is about to freeze for a few
+   seconds while a quarter of a billion pixels go to the GPU. Everything that
+   moves in here moves on `transform` only, so the compositor keeps animating it
+   while the main thread is stopped. */
 .boot-curtain {
   position: fixed;
   inset: 0;
@@ -32,33 +34,76 @@
   color: #7f93ad;
 }
 
-/* A bar that fills once, over roughly the time the maps take, rather than a
-   spinner: the thread stops during the uploads and a stalled spinner reads as
-   a crash. If the load finishes first the curtain fades and the bar goes with
-   it; if it takes longer the bar simply rests full. */
-.boot-bar {
-  margin: 22px auto 0;
-  width: 260px;
-  height: 4px;
-  border-radius: 999px;
-  background: #16202e;
-  overflow: hidden;
+/* The route: two dots, a dashed line between them, and an aeroplane crossing
+   it on a loop. */
+.boot-route {
+  position: relative;
+  width: 320px;
+  height: 44px;
+  margin: 26px auto 0;
 }
-.boot-bar span {
-  display: block;
-  height: 100%;
+.boot-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 2px dashed #23344a;
+}
+.boot-from,
+.boot-to {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: #33506f;
+}
+.boot-from {
+  left: -4px;
+}
+.boot-to {
+  right: -4px;
+  background: #66b3ff;
+}
+
+.boot-plane {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  color: #cfe6ff;
+  animation: boot-fly 3.6s ease-in-out infinite;
+  will-change: transform;
+}
+.boot-plane svg {
   width: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #2f6fb5, #66b3ff);
-  transform-origin: left center;
-  animation: boot-fill 3.2s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  height: 100%;
+  display: block;
+  /* Nose along the route rather than straight up, and a little lift at the
+     top of the arc, the way a plane sits on a climb. */
+  transform: rotate(90deg);
 }
-@keyframes boot-fill {
-  from {
-    transform: scaleX(0.04);
+
+/* Across, with a shallow arc: up on the climb, level in the cruise, down on
+   the approach. */
+@keyframes boot-fly {
+  0% {
+    transform: translate(0, 6px) scale(0.85);
   }
-  to {
-    transform: scaleX(1);
+  25% {
+    transform: translate(80px, -4px) scale(1);
+  }
+  50% {
+    transform: translate(160px, -6px) scale(1);
+  }
+  75% {
+    transform: translate(240px, -4px) scale(1);
+  }
+  100% {
+    transform: translate(320px, 6px) scale(0.85);
   }
 }
 
@@ -69,7 +114,32 @@
 .boot-curtain.dome .boot-sub {
   font-size: 22px;
 }
-.boot-curtain.dome .boot-bar {
-  width: 380px;
-  height: 6px;
+.boot-curtain.dome .boot-route {
+  width: 460px;
+  height: 56px;
+}
+.boot-curtain.dome .boot-plane {
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+}
+.boot-curtain.dome .boot-from,
+.boot-curtain.dome .boot-to {
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+}
+@keyframes boot-fly-dome {
+  0% {
+    transform: translate(0, 8px) scale(0.85);
+  }
+  50% {
+    transform: translate(230px, -8px) scale(1);
+  }
+  100% {
+    transform: translate(460px, 8px) scale(0.85);
+  }
+}
+.boot-curtain.dome .boot-plane {
+  animation-name: boot-fly-dome;
 }

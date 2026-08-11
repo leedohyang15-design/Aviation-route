@@ -15,9 +15,12 @@
  * starts, so it survives the freeze on screen — and takes it away when the
  * renderer says every map has settled.
  *
- * It is deliberately not a spinner. A spinner that stops moving (which this one
- * would, the thread being blocked) reads as a crash; a still card reads as
- * waiting.
+ * The aeroplane keeps flying through all of it, and that is not luck. It moves
+ * on transform alone, which the compositor animates on its own thread, so it
+ * carries on while the main thread is stopped dead. Anything driven by
+ * JavaScript — a counter, a spinner, a progress bar fed by real progress —
+ * would freeze exactly when the wait is longest, and a stopped spinner reads as
+ * a crash.
  */
 import { useEffect, useState } from 'react'
 import './boot-curtain.css'
@@ -26,7 +29,7 @@ interface Props {
   /** False until the renderer reports every map settled. */
   ready: boolean
   /** The dome frame draws its own furniture large; the control screen is a
-   *  touchscreen at arm's length. Only the text size differs. */
+   *  touchscreen at arm's length. Only the sizes differ. */
   variant?: 'dome' | 'control'
 }
 
@@ -43,10 +46,23 @@ export function BootCurtain({ ready, variant = 'control' }: Props): JSX.Element 
   return (
     <div className={`boot-curtain ${variant} ${ready ? 'done' : ''}`}>
       <div className="boot-card">
-        <div className="boot-title">전시를 준비하고 있어요</div>
-        <div className="boot-sub">지구 · 화성 · 목성 지도를 불러오는 중</div>
-        <div className="boot-bar">
-          <span />
+        <div className="boot-title">여행 준비 중이에요</div>
+        <div className="boot-sub">지구 · 화성 · 목성 지도를 펼치고 있어요</div>
+        <div className="boot-route">
+          <span className="boot-line" />
+          <span className="boot-from" />
+          <span className="boot-to" />
+          <span className="boot-plane">
+            {/* Drawn rather than an emoji: the exhibit machine's emoji font is
+                not something this code gets to choose, and a tofu box in the
+                middle of the opening screen is not a risk worth taking. */}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M21 15.5 13.5 11V4.2a1.5 1.5 0 0 0-3 0V11L3 15.5v2l7.5-2.2v4l-2.2 1.4V22l3.7-1 3.7 1v-1.3L13.5 19.3v-4l7.5 2.2z"
+              />
+            </svg>
+          </span>
         </div>
       </div>
     </div>

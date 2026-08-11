@@ -826,6 +826,13 @@ export class Globe {
        * smears that along the row into coloured streaks. Measured on load (see
        * measureDataBand) rather than configured, so any map dropped into
        * public/ is handled whatever latitude it stops at.
+       *
+       * These say where the photograph ENDS, not where the planet does. Past
+       * them the shader carries the boundary band on and shades it toward the
+       * pole; it does not stop drawing. Blanking the padding was the first fix
+       * and it was wrong — the top of this frame is the north pole of a sphere,
+       * so a blank there is a hole in the planet, which is a bigger lie than a
+       * soft cap over a region nobody has photographed.
        */
       uDataTop: { value: 1 },
       uDataBot: { value: 0 },
@@ -935,8 +942,34 @@ export class Globe {
           // No fract(): let RepeatWrapping tile the texture. fract() creates a
           // huge UV derivative at the wrap, which picks the wrong mip level and
           // draws a vertical seam when the map wraps around.
-          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, vUv.y);
-          vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv).rgb : vec3(0.05, 0.12, 0.22);
+          /*
+           * How far past the map's real data this row is: 0 at the edge of the
+           * data, 1 at the pole. Zero everywhere for a map that reaches both
+           * poles, which is Earth and Mars.
+           */
+          float over = 0.0;
+          if (uHasBand > 0.5) {
+            if (vUv.y > uDataTop) over = (vUv.y - uDataTop) / max(1e-4, 1.0 - uDataTop);
+            else if (vUv.y < uDataBot) over = (uDataBot - vUv.y) / max(1e-4, uDataBot);
+            over = clamp(over, 0.0, 1.0);
+          }
+          /*
+           * Past the data, keep sampling the last row that HAS data.
+           *
+           * Not the file's own pixels up there — those are black padding with
+           * compression ringing along its edge, and that ringing is the band of
+           * coloured streaks. But not nothing either: a planet with its top cut
+           * off is a worse lie than a soft cap, and on the dome the top of the
+           * frame IS the north pole, so blanking it punches a hole in the
+           * planet. Jupiter has poles. They are simply not in this photograph.
+           *
+           * The mip bias grows with the distance past the edge, which averages
+           * the boundary row along its length — so the cap is the colour that
+           * band actually is, rather than one row of it smeared north.
+           */
+          float mapV = uHasBand > 0.5 ? clamp(vUv.y, uDataBot, uDataTop) : vUv.y;
+          vec2 uv = vec2(vUv.x - uLonOffset / 360.0, mapV);
+          vec3 day = uHasMap > 0.5 ? texture2D(uMap, uv, over * 5.0).rgb : vec3(0.05, 0.12, 0.22);
           // Brightness + saturation grade on the daytime image.
           float luma = dot(day, vec3(0.299, 0.587, 0.114));
           day = mix(vec3(luma), day, uSaturation) * uBrightness * uTint;
@@ -1207,18 +1240,19 @@ export class Globe {
            * and have honest polar data.
            */
           /*
-           * Outside the map's real data, draw nothing.
+           * And shade that cap, so it does not claim to be a photograph.
            *
-           * Not "draw the file's pixels", which is the black padding plus the
-           * ringing that lives on its edge — that ringing IS the band of
-           * coloured streaks. A short ramp rather than a hard cut, or the fix
-           * would just move the seam.
+           * It carries the boundary band's own colour (see the sampling above),
+           * dimmed and drained of colour toward the pole. Two things at once:
+           * it stops the extended band from reading as real cloud structure at
+           * a latitude nothing has ever photographed, and it happens to be what
+           * a gas giant's poles do look like from a spacecraft — dusky and
+           * grey, not banded. No hard edge anywhere, because it ramps from
+           * nothing at the boundary.
            */
-          if (uHasBand > 0.5) {
-            float ramp = 0.006;
-            float k = smoothstep(uDataBot, uDataBot + ramp, vUv.y) *
-                      (1.0 - smoothstep(uDataTop - ramp, uDataTop, vUv.y));
-            col *= k;
+          if (over > 0.0) {
+            float polarLuma = dot(col, vec3(0.299, 0.587, 0.114));
+            col = mix(col, vec3(polarLuma), 0.5 * over) * (1.0 - 0.4 * over);
           }
           if (uPoleFade > 0.0) {
             float fromPole = 90.0 - abs(vUv.y * 180.0 - 90.0);
@@ -2628,8 +2662,10 @@ export class Globe {
       this.note(
         `[${tag}] black padding: top ${(topPad * 100).toFixed(1)}% (to ${(90 - topPad * 180).toFixed(0)}°N), ` +
           `bottom ${(botPad * 100).toFixed(1)}% (to ${(90 - botPad * 180).toFixed(0)}°S) — ` +
-          `a latitude-limited map. Cutting there plus ${(MARGIN * 100).toFixed(0)}% for the ` +
-          `compression ringing along the seam, which is what the coloured streaks are ` +
+          `a latitude-limited map. The last real row past there (plus ` +
+          `${(MARGIN * 100).toFixed(0)}% for the compression ringing along the seam, which is ` +
+          `what the coloured streaks are), dimmed toward the pole — the planet keeps its ` +
+          `top, it just is not a photograph up there ` +
           `(${took})`
       )
     } catch (err) {
