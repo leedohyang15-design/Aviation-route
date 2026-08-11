@@ -4161,12 +4161,27 @@ export class Globe {
       this.planes.setColorAt(i, this.scratchColor)
 
       if (isPlace) {
-        // Same size as the bodies around it so it does not read as a lesser
-        // thing — a different SHAPE is the whole point, not a smaller one.
-        this.placeMesh.matrix.copy(
-          this.setSpriteMatrix(u, 1 - v, 0.68, ICON_H * this.iconScale, 0, e.lat)
+        /*
+         * position/scale, not a matrix.
+         *
+         * These label() quads keep matrixAutoUpdate on — three.js recomputes
+         * their matrix from position/quaternion/scale every frame, so writing
+         * one directly is thrown away before it is ever drawn. Which is not a
+         * subtle failure: the quad stays at the origin at scale 1, and a unit
+         * quad in a view that spans 0..1 is the entire frame. It came out as a
+         * diamond the size of the planet. The endpoint markers next door do it
+         * this way for the same reason.
+         *
+         * Same size as the bodies around it: a different SHAPE is the whole
+         * point here, not a smaller one.
+         */
+        const h = ICON_H * this.iconScale
+        this.placeMesh.scale.set(
+          this.quadWidth(h, 1) * this.poleStretch(e.lat, MAX_PLATE_STRETCH),
+          h,
+          1
         )
-        this.placeMesh.matrixWorldNeedsUpdate = true
+        this.placeMesh.position.set(u, 1 - v, 0.68)
         this.placeMesh.visible = true
       }
 

@@ -33,11 +33,11 @@ const TITLES: Record<ExhibitMode, [string, string]> = {
   jupiter: ['목성과 네 개의 달', "Jupiter and Its Moons"]
 }
 
-/** Card footprint, matched to .sheet in control.css — used to keep the card
- * inside the window when it is anchored to a tapped object. */
 /** The ten that are no longer working — everything but the two still driving. */
 const PAST_PROBES = MARS_PROBES.filter((p) => p.status !== 'active')
 
+/** Card footprint, matched to .sheet in control.css — used to keep the card
+ * inside the window when it is anchored to a tapped object. */
 const SHEET_W = 360
 const SHEET_H = 660
 /** How far the card keeps off the object it describes. Generous: at the old
@@ -869,6 +869,54 @@ export function ControlApp(): JSX.Element {
                     <em>{p.landed.slice(0, 4)}</em>
                   </button>
                 ))}
+            </div>
+          </div>
+        ) : isJupiter ? (
+          /*
+           * Four moons and the one place anything ever went in.
+           *
+           * Same shape as the Mars list, and the same reason: five names a
+           * child can read beat five specks on a planet the size of a wall.
+           * The break before the last one says what the Mars list's breaks
+           * say — the group under it is a different kind of thing. Four are
+           * worlds; one is a spot on this planet, and it wears the diamond the
+           * Mars tab uses for exactly that.
+           */
+          <div className="legend probe-list">
+            <div className="probe-row">
+              <span className="target-lead live">목성의 달</span>
+              {GALILEAN.map((m) => (
+                <button
+                  key={m.id}
+                  className={'leg probe' + (state.selected === m.id ? ' on' : '')}
+                  title={m.headline}
+                  onClick={() => {
+                    poke()
+                    send({ type: 'select', icao24: state.selected === m.id ? null : m.id })
+                  }}
+                >
+                  <i style={{ background: m.color }} />
+                  {m.name}
+                </button>
+              ))}
+            </div>
+            <div className="probe-row">
+              <span className="target-lead past">안으로 들어간 것</span>
+              <button
+                className={'leg probe' + (state.selected === GALILEO_PROBE.id ? ' on' : '')}
+                title="목성 안으로 들어간 단 하나"
+                onClick={() => {
+                  poke()
+                  send({
+                    type: 'select',
+                    icao24: state.selected === GALILEO_PROBE.id ? null : GALILEO_PROBE.id
+                  })
+                }}
+              >
+                <i style={{ background: GALILEO_PROBE.color }} />
+                {GALILEO_PROBE.name}
+                <em>{GALILEO_PROBE.entered.slice(0, 4)}</em>
+              </button>
             </div>
           </div>
         ) : isSat ? (
