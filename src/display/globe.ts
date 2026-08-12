@@ -617,6 +617,8 @@ export class Globe {
   private lastStallNote = 0
   private stallsHidden = 0
   private lastDrawMs = 0
+  /** How many icons the last frame actually drew — see the note in the loop. */
+  private lastDrawnCount = -1
 
   /**
    * Say it in the log AND in the console — the console is for a developer at a
@@ -4738,6 +4740,25 @@ export class Globe {
     this.planes.count = i
     this.planes.instanceMatrix.needsUpdate = true
     if (this.planes.instanceColor) this.planes.instanceColor.needsUpdate = true
+    /*
+     * Say so when the number of icons on screen changes.
+     *
+     * "The icons are all gone" has two completely different causes and they
+     * are indistinguishable from a photograph of the screen: either the layer's
+     * objects never reached the renderer, or they reached it and something
+     * stopped them being drawn. This line separates them — it reports what the
+     * renderer HAS, not what it was sent — and it is one integer comparison per
+     * frame, logged only on the frames where the answer changed.
+     */
+    if (i !== this.lastDrawnCount) {
+      const inst = this.planes.material as THREE.MeshBasicMaterial
+      this.note(
+        `[layer] ${this.planet}/${this.kind} — drawing ${i} of ${this.order.length} ` +
+          `(was ${this.lastDrawnCount}), mesh ${this.planes.visible ? 'visible' : 'HIDDEN'}, ` +
+          `icon ${inst.map ? 'ok' : 'MISSING'}, scale ${this.iconScale.toFixed(2)}`
+      )
+      this.lastDrawnCount = i
+    }
     // If the selected plane vanished (filtered out / dropped), hide its overlays.
     if (!this.selected || !this.eased.has(this.selected)) {
       this.extraAvoid = []
