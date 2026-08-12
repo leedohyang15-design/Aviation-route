@@ -17,7 +17,7 @@ import type {
 import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
 import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
-import { HUB_PORT, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
+import { HUB_PORT, SAT_REPLAY_MAX_AGE_MS, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
 import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
@@ -42,6 +42,8 @@ import {
   startSatellites,
   stopSatellites,
   snapshot as satSnapshot,
+  snapshotAgeMs as satSnapshotAgeMs,
+  elementCount as satElementCount,
   getDetail as satDetail
 } from './satellites'
 
@@ -321,10 +323,22 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     // A switch, not an if/else: the else used to mean "anything that isn't
     // satellite resumes OpenSky", which quietly made a third layer start
     // spending credits on aircraft nobody was looking at.
+    /*
+     * What this layer has to show, at the moment it was asked for.
+     *
+     * "The icons keep not showing" has two halves and only one of them is in
+     * the renderer. This is the other half: whether the hub had anything to
+     * send when the tab was pressed. One line per switch, and between it and
+     * the renderer's own [layer] line there is nowhere left for an empty tab
+     * to hide.
+     */
+    opsLog(`[hub] mode → ${next}${layerStock(next)}`)
+
     switch (next) {
       case 'satellite':
         feed.setPaused(true, '위성 모드')
         startSatellites(onSatellites)
+        replaySatellites()
         break
       case 'mars':
         // Nothing to start. The landing sites are settled history and live in
@@ -423,6 +437,45 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
       if (state.mode !== 'weather') return
       for (const f of frames) broadcast({ type: 'weather', frame: f })
     })
+  }
+
+  /**
+   * Put the satellites on screen the instant the tab opens.
+   *
+   * startSatellites launches a pass immediately, but a pass is a pass: the
+   * whole catalogue is propagated before the first byte goes out, and the
+   * windows have already cleared the previous layer by then. The picture the
+   * hub is holding is good enough to fill that gap — provided it is actually
+   * recent. A snapshot from ten minutes ago would put every satellite a
+   * quarter of an orbit from where it is and then slide them all across the
+   * map when the real one lands, which is worse than a moment of nothing.
+   */
+  function replaySatellites(): void {
+    if (satSnapshotAgeMs() > SAT_REPLAY_MAX_AGE_MS) return
+    setImmediate(() => {
+      if (state.mode !== 'satellite') return
+      onSatellites()
+    })
+  }
+
+  /** What the hub is holding for a layer, for the switch line. */
+  function layerStock(mode: ExhibitMode): string {
+    if (mode === 'satellite') {
+      const age = satSnapshotAgeMs()
+      return (
+        ` — ${satElementCount()} elements loaded, ` +
+        (Number.isFinite(age)
+          ? `snapshot of ${satSnapshot().length} from ${(age / 1000).toFixed(1)}s ago`
+          : 'no snapshot yet, first pass starting')
+      )
+    }
+    if (mode === 'weather') {
+      const frames = currentWeatherFrames()
+      return frames.length
+        ? ` — ${frames.length} frame(s) ready`
+        : ' — NOTHING to show: no frame is both present and fresh, so the tab stays empty until the poll lands'
+    }
+    return ''
   }
 
   feed.start(

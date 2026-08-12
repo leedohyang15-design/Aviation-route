@@ -336,6 +336,20 @@ export const TLE_MAX_AGE_MS = Number(readEnv('TLE_MAX_AGE_MS') ?? 24 * 3600_000)
  */
 export const SAT_TICK_MS = Number(readEnv('SAT_TICK_MS') ?? 2000)
 /**
+ * How stale the held satellite snapshot may be and still be worth putting up
+ * the instant the tab opens, while a fresh pass runs behind it.
+ *
+ * Sized off how far a satellite actually moves, not off the tick. The frame is
+ * 1664px for 40,000km of equator, so one pixel is about 24km, and the fastest
+ * thing up there covers 7.6km a second: thirty seconds of staleness is roughly
+ * TEN PIXELS of error, which nobody can see and which the next pass corrects
+ * within a second anyway. A few ticks — the first thing tried here — expired
+ * before almost any real visit ended, so the replay never fired and the tab
+ * still opened empty. Minutes would be too far: five of them is ninety-odd
+ * pixels, and the whole field would visibly slide when the real pass landed.
+ */
+export const SAT_REPLAY_MAX_AGE_MS = Number(readEnv('SAT_REPLAY_MAX_AGE_MS') ?? 30_000)
+/**
  * Propagation yields to the event loop whenever a slice has run this long, so a
  * tick never blocks the main process long enough to stall WebSocket sends or
  * make the windows stutter — however large the catalogue grows.

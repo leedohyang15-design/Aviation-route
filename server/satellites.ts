@@ -224,41 +224,81 @@ export function snapshot(): Satellite[] {
   return latest
 }
 
+/** When `latest` was computed. How stale the picture is decides whether it is
+ *  worth showing while a fresh pass runs — see the hub's replay. */
+let latestAt = 0
+/** How old the current snapshot is, or Infinity when there is not one. */
+export function snapshotAgeMs(): number {
+  return latest.length ? Date.now() - latestAt : Infinity
+}
+/** How many element sets are loaded — the ceiling on what the tab can show. */
+export function elementCount(): number {
+  return entries.length
+}
+
 /** True while a loop body is alive, including across its awaits. */
 let running = false
+/**
+ * Which loop is the live one.
+ *
+ * `stopped` and `running` between them could not settle this. A pass takes long
+ * enough that a 🛰→✈→🛰 tap can land entirely inside one, and then: stop clears
+ * the flags, start sees them clear and launches a second loop, and the FIRST
+ * loop wakes from its await to find `stopped` false again — so it broadcasts
+ * and reschedules too. Two loops on the main process, propagating the whole
+ * catalogue, each overwriting the other's timer handle, and the orphaned handle
+ * is one nobody can ever cancel.
+ *
+ * A generation number settles it in one comparison: every start takes a new
+ * one, every stop burns the current one, and a body whose generation is no
+ * longer the live one goes quietly — no broadcast, no reschedule, and it does
+ * not touch the shared flags on its way out.
+ */
+let generation = 0
 
 export function startSatellites(onSnapshot: (s: Satellite[]) => void): void {
   stopped = false
-  // Guarding on `stopped` alone was not enough: a full pass takes a second or
-  // two and propagateAll never checks it, so a 🛰→✈→🛰 tap sequence completed
-  // inside one pass found `stopped` true again and started a SECOND loop. The
-  // first then resumed past its own post-await check, broadcast, and rescheduled
-  // — two loops propagating sixteen thousand satellites on the main process,
-  // racing to write `latest` and overwriting each other's timer handle. The
-  // flag has to be owned by the loop body, not by the start/stop pair.
   if (running) return
   running = true
+  const mine = ++generation
+  /** This body is no longer the live loop — a stop or a newer start has been. */
+  const superseded = (): boolean => stopped || mine !== generation
   const loop = async (): Promise<void> => {
-    if (stopped) {
-      running = false
+    if (superseded()) {
+      if (mine === generation) running = false
       return
     }
     const started = Date.now()
     try {
-      latest = await propagateAll()
+      const next = await propagateAll()
+      // Checked AFTER the await, before anything is published: the tab may
+      // have been left while this pass was running, and a snapshot broadcast
+      // into a layer nobody is on is at best wasted and at worst a stale
+      // picture racing the layer that replaced it.
+      if (superseded()) {
+        if (mine === generation) running = false
+        return
+      }
+      latest = next
+      latestAt = Date.now()
       onSnapshot(latest)
     } catch (err) {
       opsLog(`[sat] propagation failed: ${(err as Error).message}`)
     }
-    if (stopped) {
-      running = false
+    if (superseded()) {
+      if (mine === generation) running = false
       return
     }
     // Aim for a steady period: a full catalogue takes a second or two to
     // propagate, and adding the interval on top of that would stretch the gap
     // between updates instead of holding it.
     const wait = Math.max(50, SAT_TICK_MS - (Date.now() - started))
-    timer = setTimeout(() => void loop(), wait)
+    timer = setTimeout(() => {
+      // Cleared as it fires, so `timer` always means "a wake-up is pending"
+      // rather than "one was scheduled at some point".
+      timer = null
+      void loop()
+    }, wait)
     ;(timer as unknown as { unref?: () => void }).unref?.()
   }
   void loop()
@@ -266,15 +306,18 @@ export function startSatellites(onSnapshot: (s: Satellite[]) => void): void {
 
 export function stopSatellites(): void {
   stopped = true
-  // Clearing the pending timer means the loop body is ASLEEP, not running, so
-  // nobody is left to clear `running` — and while it stays set, start() sees a
-  // live loop and returns, so the layer never updates again. A tab away and
-  // back was enough to kill it silently. When the body IS mid-flight `timer` is
-  // null and it clears the flag itself on the next check.
+  // Burn the generation, so a body that is mid-flight right now cannot come
+  // back and publish or reschedule once `stopped` is cleared again by the next
+  // start. With that fence in place both flags can be cleared unconditionally:
+  // there is no longer a case where an old loop is relied upon to clear them,
+  // which is what used to leave `running` stuck true — and a stuck `running`
+  // makes every later start return immediately, so the layer never updates
+  // again. A tab away and back was enough to kill it silently.
+  generation++
+  running = false
   if (timer) {
     clearTimeout(timer)
     timer = null
-    running = false
   }
 }
 
