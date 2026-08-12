@@ -23,6 +23,7 @@ import {
   WEATHER_FRAME_COUNT,
   WEATHER_WIND_FRAMES,
   WEATHER_MAX_SERIES_MB,
+  WEATHER_CACHE_MAX_AGE_MS,
   WEATHER_POLL_MS,
   WEATHER_TIMEOUT_MS,
   WEATHER_ZOOM,
@@ -133,6 +134,20 @@ const cloudSteps = new Map<number, WeatherFrame['tiles']>()
 /** What is on screen right now, for a window that has just connected. */
 export function weatherFrames(): WeatherFrame[] {
   return [...latest.values()].flat()
+}
+
+/**
+ * Is what we are holding recent enough to put on a wall?
+ *
+ * The one rule, in one place. The hub decides what to SHOW with it and the poll
+ * below decides what to WAIT for with it, and those two must not be able to
+ * disagree — a picture the hub refuses to display is also a picture the poll
+ * must not treat as "already on screen", or the tab stays blank while the poll
+ * politely holds a fresh layer back on behalf of a stale one nobody can see.
+ */
+export function haveFreshFrames(): boolean {
+  const frames = weatherFrames()
+  return frames.length > 0 && Date.now() - seriesTime(frames) <= WEATHER_CACHE_MAX_AGE_MS
 }
 
 function loadCache(): void {
@@ -538,6 +553,31 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
   const ORDER: WeatherLayer[] = ['rain', 'wind', 'cloud']
   const ready: { layer: WeatherLayer; series: WeatherFrame[] }[] = []
   let timeline: number[] | null = null
+  /*
+   * Is there anything on screen for a new layer to be inconsistent WITH?
+   *
+   * The all-or-nothing swap below exists to stop this hour's rain being drawn
+   * over last hour's cloud. That is a real fault and the rule is right — but it
+   * only applies when there IS a coherent picture up. On a cold start there is
+   * not: the held cache is hours old, the hub refuses to show it, and the tab
+   * is blank. Holding the rain back then buys nothing and costs everything,
+   * because the layer it is waiting for is thirty-odd satellite photographs and
+   * takes minutes. Somebody pressing 날씨 in that window got an empty planet.
+   *
+   * So when the screen is blank, each layer goes up as it lands. They cannot
+   * disagree with each other: they are all from THIS poll, and the cloud
+   * follows the rain's clock by construction. The stale cache goes at the same
+   * time — a picture too old to show is also too old to be the baseline the
+   * skip test below compares against.
+   */
+  const blank = !haveFreshFrames()
+  if (blank && latest.size) {
+    latest.clear()
+    opsLog(
+      `[weather] the held picture is too old to show — dropped, so this poll ` +
+        `starts from an empty screen and publishes each layer as it lands`
+    )
+  }
   for (const layer of ORDER.filter((l) => LAYERS.includes(l))) {
     if (stopped) return
     let series = await fetchMaptilerLayer(index, layer)
@@ -555,6 +595,17 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
     if (!series) continue
     // Same moment as what is already on screen: nothing to send.
     if (seriesTime(latest.get(layer) ?? []) === seriesTime(series)) continue
+    if (blank) {
+      // Nothing up there to clash with — see the note on `blank`.
+      latest.set(layer, series)
+      opsLog(`[weather] ${layer}: up now rather than waiting for the slower layers`)
+      for (const f of series) {
+        if (stopped) return
+        onFrame(f)
+        await new Promise((r) => setImmediate(r))
+      }
+      continue
+    }
     // Held, not published. `latest` is what a window reads when it connects and
     // what the next poll compares against, so writing it here would hand a
     // window that arrived mid-poll the same mismatched pair by another door.

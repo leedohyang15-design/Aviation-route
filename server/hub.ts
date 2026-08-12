@@ -17,7 +17,7 @@ import type {
 import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
 import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
-import { HUB_PORT, SAT_REPLAY_MAX_AGE_MS, WEATHER_CACHE_MAX_AGE_MS } from '../src/shared/config'
+import { HUB_PORT, SAT_REPLAY_MAX_AGE_MS } from '../src/shared/config'
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
 import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
@@ -36,7 +36,7 @@ import {
   stopRouteResolver
 } from './routes'
 import { isKnownFlight } from '../src/common/flightClass'
-import { startWeather, stopWeather, weatherFrames } from './weather'
+import { haveFreshFrames, startWeather, stopWeather, weatherFrames } from './weather'
 import {
   initSatellites,
   startSatellites,
@@ -406,8 +406,10 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
   function currentWeatherFrames(): WeatherFrame[] {
     const frames = weatherFrames()
     if (!frames.length) return []
+    // The same test the poll uses to decide what it may publish early, so
+    // "too old to show" and "already on screen" cannot drift apart.
+    if (haveFreshFrames()) return frames
     const age = Date.now() - frames.reduce((m, f) => Math.max(m, f.time), 0)
-    if (age <= WEATHER_CACHE_MAX_AGE_MS) return frames
     opsLog(
       `[weather] cached picture is ${Math.round(age / 60_000)}분 old — not shown; ` +
         `waiting for the poll`
