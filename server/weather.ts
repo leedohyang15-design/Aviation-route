@@ -122,6 +122,25 @@ let stopped = true
 let running = false
 /** Consecutive failures, for the backoff. */
 let failures = 0
+/*
+ * Set by the 새로고침 button, consumed by the very next poll cycle.
+ *
+ * Every layer has an "unchanged since last time, don't bother" shortcut —
+ * three of them, in three different functions — because the model publishes
+ * hourly and polling every five minutes means eleven checks out of twelve
+ * would otherwise re-download the same tiles for nothing. That is correct for
+ * the background loop and wrong for a person standing at the settings screen
+ * who just pressed "지금 다시 받기": they are not asking "is there anything
+ * new", they are asking to actually go and look, right now, regardless of
+ * whether the clock moved. One flag, read once at the top of the next poll
+ * and cleared immediately, so it forces exactly the ONE press that asked for
+ * it and never lingers into the polls after.
+ */
+let forceOnce = false
+/** Bypass every "nothing changed" shortcut on the next poll. */
+export function forceWeatherRefresh(): void {
+  forceOnce = true
+}
 
 /**
  * Past cloud steps, by the timestamp they were taken at.
@@ -312,7 +331,8 @@ async function fetchMtKeyframe(
  */
 async function fetchMaptilerLayer(
   index: MtIndex,
-  layer: WeatherLayer
+  layer: WeatherLayer,
+  force = false
 ): Promise<WeatherFrame[] | null> {
   const wantIds = MAPTILER_VARIABLES[layer].split('|').map((s) => s.trim()).filter(Boolean)
   const offered = (index.variables ?? []).map((x) => x.metadata?.weather_variable?.variable_id)
@@ -448,7 +468,7 @@ async function fetchMaptilerLayer(
   // hourly -- so matching on time alone would keep a recovered MapTiler layer
   // locked out for as long as the hour held.
   const mine = have?.length ? have.every((f) => f.feed === 'maptiler') : false
-  if (mine && Number.isFinite(newest) && seriesTime(have!) === newest) {
+  if (!force && mine && Number.isFinite(newest) && seriesTime(have!) === newest) {
     opsLog(
       `[weather] ${layer}: still ${clock(newest)} local — nothing new published, no tiles fetched`
     )
@@ -524,7 +544,7 @@ async function fetchMaptilerLayer(
 
 
 /** One poll of MapTiler: index, then both layers' series. */
-async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
+async function pollMaptiler(onFrame: (f: WeatherFrame) => void, force = false): Promise<void> {
   const url = `${mtIndexUrl()}?key=${encodeURIComponent(mtKey())}`
   const res = await fetchWithTimeout(url, WEATHER_TIMEOUT_MS)
   // The key is in the URL, so the message says the status and nothing else.
@@ -581,7 +601,7 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
   }
   for (const layer of ORDER.filter((l) => LAYERS.includes(l))) {
     if (stopped) return
-    let series = await fetchMaptilerLayer(index, layer)
+    let series = await fetchMaptilerLayer(index, layer, force)
     if (series && layer === 'rain' && series.length > 1) {
       timeline = series.map((f) => f.time)
     }
@@ -591,7 +611,7 @@ async function pollMaptiler(onFrame: (f: WeatherFrame) => void): Promise<void> {
       // layer quietly kept whatever the disk cache held, so the screen showed a
       // cloud picture from hours ago next to live rain and nothing said so.
       opsLog('[weather] cloud: falling back to NASA GIBS for this layer')
-      series = await fetchGibsCloud(timeline)
+      series = await fetchGibsCloud(timeline, force)
     }
     if (!series) continue
     // Same moment as what is already on screen: nothing to send.
@@ -819,7 +839,7 @@ async function fetchGibsGlobalCloud(
  *   its own, which is what makes the two layers one animation rather than two
  *   that happen to be on screen together.
  */
-async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[] | null> {
+async function fetchGibsCloud(timeline?: number[] | null, force = false): Promise<WeatherFrame[] | null> {
   /*
    * Following a timeline that has not moved: there is nothing to go and get.
    *
@@ -831,7 +851,7 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
    */
   const had = latest.get('cloud')
   const mine = had?.length ? had.every((f) => f.feed === 'gibs') : false
-  if (timeline?.length && mine && seriesTime(had!) === timeline[timeline.length - 1]) {
+  if (!force && timeline?.length && mine && seriesTime(had!) === timeline[timeline.length - 1]) {
     opsLog('[weather] cloud: rain is on the same instants as last poll — nothing fetched')
     return had ?? null
   }
@@ -1150,7 +1170,8 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
   let reused = 0
   for (const at of wantedAt) {
     if (stopped) break
-    const have = cloudSteps.get(at)
+    // A forced refresh reads past this cache too — see forceWeatherRefresh.
+    const have = force ? undefined : cloudSteps.get(at)
     if (have) {
       series.push({ ...nowFrame, time: at, tiles: have })
       reused++
@@ -1256,8 +1277,13 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
  * log says the rain is missing and why.
  */
 async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
-  if (mtKey()) return pollMaptiler(onFrame)
-  const frames = await fetchGibsCloud(null)
+  // Read and clear here, once, so it can only ever force the ONE poll it was
+  // meant for — a throw partway through must not leave it armed for the next.
+  const force = forceOnce
+  forceOnce = false
+  if (force) opsLog('[weather] 새로고침 요청 — 바뀐 게 없어도 다시 받습니다')
+  if (mtKey()) return pollMaptiler(onFrame, force)
+  const frames = await fetchGibsCloud(null, force)
   if (!frames) throw new Error(`no cloud: ${lastTileError || 'every sensor failed'}`)
   if (seriesTime(latest.get('cloud') ?? []) !== seriesTime(frames)) {
     latest.set('cloud', frames)

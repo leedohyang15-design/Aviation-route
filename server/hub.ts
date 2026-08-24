@@ -50,7 +50,7 @@ import {
   stopRouteResolver
 } from './routes'
 import { isKnownFlight } from '../src/common/flightClass'
-import { haveFreshFrames, startWeather, stopWeather, weatherFrames } from './weather'
+import { forceWeatherRefresh, haveFreshFrames, startWeather, stopWeather, weatherFrames } from './weather'
 import {
   initSatellites,
   startSatellites,
@@ -378,6 +378,12 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
     opsLog(`[hub] 새로고침: ${what}`)
     switch (what) {
       case 'weather':
+        // See forceWeatherRefresh: every layer has an "unchanged since last
+        // poll, don't bother" shortcut, and without this the restart below
+        // would immediately hit it and do nothing — 새로고침 would poll,
+        // find nothing new by the clock, and report success having fetched
+        // zero bytes.
+        forceWeatherRefresh()
         stopWeather()
         startWeather(onWeather)
         return
