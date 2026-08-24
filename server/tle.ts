@@ -12,7 +12,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dataPath, dataPathCandidates } from './datadir'
-import { TLE_URL, TLE_MAX_AGE_MS } from '../src/shared/config'
+import { TLE_URL, TLE_FALLBACK_URLS, TLE_MAX_AGE_MS } from '../src/shared/config'
 import { opsLog } from './log'
 
 export interface TleRecord {
@@ -100,6 +100,75 @@ function readCache(path: string): { text: string; age: number } | null {
 }
 
 /**
+ * One request, with the server's own explanation attached when it says no.
+ *
+ * `HTTP 403` on its own cost this project an afternoon: it reads like a
+ * blocked network or a bad URL, and the actual body said "GP data has not
+ * updated since your last successful download of GROUP=active at 04:38:22
+ * UTC. Data is updated once every 2 hours." — an entirely different problem
+ * with an entirely different fix. Celestrak answers in plain text, so the
+ * reason is right there to be read; not reading it was the whole difficulty.
+ */
+async function fetchTle(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)' }
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    const why = body.trim().replace(/\s+/g, ' ').slice(0, 200)
+    throw new Error(`HTTP ${res.status}${why ? ` — ${why}` : ''}`)
+  }
+  return res.text()
+}
+
+/**
+ * The elements, from the configured group if it will have us and from the
+ * smaller groups if it will not.
+ *
+ * The fallbacks are merged rather than raced: each is a different slice of the
+ * catalogue, so taking only the first would put a handful of space stations on
+ * screen when six requests could have filled the sky. Failures among them are
+ * not fatal — the goal is "enough satellites", not "all of them" — but if
+ * every single one refuses, the error thrown is the FIRST one, because that is
+ * the primary group's answer and the one that explains what is going on.
+ */
+async function download(): Promise<string> {
+  try {
+    return await fetchTle(TLE_URL)
+  } catch (err) {
+    const primary = (err as Error).message
+    if (!TLE_FALLBACK_URLS.length) throw err
+    opsLog(`[tle] ${primary}`)
+    opsLog(`[tle] 기본 목록이 막혀 다른 그룹 ${TLE_FALLBACK_URLS.length}개로 우회합니다`)
+
+    const seen = new Set<string>()
+    const parts: string[] = []
+    const won: string[] = []
+    for (const url of TLE_FALLBACK_URLS) {
+      const group = /GROUP=([^&]+)/i.exec(url)?.[1] ?? url
+      try {
+        const text = await fetchTle(url)
+        // Merge by catalogue number: a station listed in both `stations` and
+        // `visual` would otherwise be propagated and drawn twice.
+        let added = 0
+        for (const rec of parseTle(text)) {
+          if (seen.has(rec.noradId)) continue
+          seen.add(rec.noradId)
+          parts.push(`${rec.name}\n${rec.line1}\n${rec.line2}`)
+          added++
+        }
+        if (added) won.push(`${group} ${added}개`)
+      } catch (e) {
+        opsLog(`[tle] ${group} 그룹도 실패: ${(e as Error).message}`)
+      }
+    }
+    if (!parts.length) throw new Error(primary)
+    opsLog(`[tle] 우회 성공 — ${won.join(', ')} (합계 ${seen.size}개)`)
+    return `${parts.join('\n')}\n`
+  }
+}
+
+/**
  * The current TLE set: cached copy when it's still fresh, otherwise a download
  * (falling back to a stale cache if the download fails). Returns an empty array
  * only when there is no cache AND no network — the caller logs that loudly
@@ -121,11 +190,7 @@ export async function loadTles(explicitPath?: string, force = false): Promise<Tl
   }
 
   try {
-    const res = await fetch(TLE_URL, {
-      headers: { 'User-Agent': 'aviation-route-exhibit/0.1 (museum kiosk)' }
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const text = await res.text()
+    const text = await download()
     const recs = parseTle(text)
     if (!recs.length) throw new Error(`downloaded ${text.length} bytes but parsed 0 satellites`)
     try {

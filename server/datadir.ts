@@ -24,7 +24,14 @@
 // and are legitimately part of a given build rather than operator state.
 
 import { basename, dirname, join } from 'node:path'
-import { app } from 'electron'
+// A DEFAULT import, deliberately. `import { app } from 'electron'` throws at
+// module-instantiation time under plain Node — the electron package resolves
+// there to a string (the path to the binary), which has no named exports, so
+// `npm run hub` died with "does not provide an export named 'app'" before a
+// line of it ran. The default import is that same string under Node and the
+// real module object inside Electron, so both survive and the guard below
+// decides which one we got.
+import electron from 'electron'
 
 /**
  * True only for a real packaged build. Three things have to hold at once:
@@ -47,13 +54,22 @@ export function exeAdjacentDir(): string {
   return isPackaged() ? dirname(process.execPath) : process.cwd()
 }
 
+/** Electron's `app`, or null anywhere that is not the Electron main process
+ * (a `tsx` script, a renderer). */
+function electronApp(): { getPath(name: 'userData'): string } | null {
+  return (electron as unknown as { app?: { getPath(name: 'userData'): string } })?.app ?? null
+}
+
 /** Directory for operator state: the project root in dev, an OS-managed
  * per-app folder once packaged (see the file header for why not beside the
  * exe). `app.getPath('userData')` needs no OS call and works before the
  * Electron `ready` event, so it's safe to reach for this as early as
  * `boot-env.ts`'s module-scope `loadEnv()` call. */
 export function dataDir(): string {
-  return isPackaged() ? app.getPath('userData') : process.cwd()
+  if (!isPackaged()) return process.cwd()
+  // Packaged means Electron, so `app` is there — but falling back to the exe's
+  // own folder beats throwing on the path that every log line goes through.
+  return electronApp()?.getPath('userData') ?? exeAdjacentDir()
 }
 
 /** Full path for one of those files. */

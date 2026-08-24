@@ -336,6 +336,40 @@ export const EARTH_MIPMAPS = (readEnv('EARTH_MIPMAPS') ?? '1') !== '0'
  */
 export const TLE_URL =
   readEnv('TLE_URL') ?? 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=TLE'
+
+/**
+ * Where to go when GROUP=active refuses, comma separated.
+ *
+ * Celestrak answers a re-request inside its two-hour window with a 403 whose
+ * body reads "GP data has not updated since your last successful download of
+ * GROUP=active at ...". That is a courtesy, not a fault — but it is fatal in
+ * one specific situation the exhibit hit for real: the download succeeds, the
+ * cache it wrote is then destroyed (a rebuild wipes electron-builder's output
+ * directory, which is where the cache used to live), and the next start finds
+ * itself locked out with nothing to fall back on. Two hours of an empty
+ * satellite tab, and no amount of retrying shortens it.
+ *
+ * The lock is counted PER GROUP — the message names the group it is refusing.
+ * So a handful of smaller groups is a way through the same front door: fewer
+ * objects than `active`, but the recognisable ones, and enough that the sky is
+ * populated instead of empty. They are merged, and duplicates (a station in
+ * both `stations` and `visual`) are dropped by catalogue number.
+ */
+export const TLE_FALLBACK_URLS = (
+  readEnv('TLE_FALLBACK_URLS') ??
+  [
+    'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=TLE',
+    'https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=TLE',
+    'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=TLE',
+    'https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=TLE',
+    'https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=TLE',
+    'https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=TLE'
+  ].join(',')
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
 /** How long a downloaded TLE set is considered current. */
 export const TLE_MAX_AGE_MS = Number(readEnv('TLE_MAX_AGE_MS') ?? 24 * 3600_000)
 

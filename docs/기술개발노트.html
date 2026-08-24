@@ -1086,6 +1086,33 @@ $dst.Dispose(); Move-Item "$p.new" $p -Force</pre>
     </div>
 
     <div class="trap">
+      <h4><span class="trap-tag">05-B</span>Celestrak은 2시간 안에 다시 달라면 거절합니다</h4>
+      <p>
+        <b>증상</b> — 위성이 하나도 안 뜨고, 기록 탭에 이 세 줄이 반복됩니다:
+      </p>
+      <pre>tle download failed: HTTP 403
+tle no cached elements either — satellite mode will be empty
+sat 0 satellites ready for propagation</pre>
+      <p>
+        <b>원인</b> — <code>HTTP 403</code>이 <b>차단이 아니라 안내</b>인 경우가 있습니다.
+        Celestrak은 같은 회선에서 2시간 안에 다시 받아가려 하면 거절하면서 본문에 이렇게
+        적어 보냅니다: <span class="mono">“GP data has not updated since your last
+        successful download of GROUP=active at …”</span> — <b>이미 줬으니 그거 쓰라</b>는
+        뜻입니다. 문제는 그 “이미 받은 것”이 사라졌을 때입니다. 예전에는 캐시가 실행 파일
+        옆에 있어서 <b>새 버전을 빌드하면 같이 지워졌고</b>, 그러면 받아둔 것도 없는데 2시간
+        동안 새로 받지도 못하는 상태가 됐습니다.
+      </p>
+      <p style="margin-bottom:0">
+        <b>대응</b> — 세 가지를 고쳤습니다. ① 캐시를 실행 파일 옆이 아닌 곳으로 옮겨
+        새 버전을 올려도 안 지워지게 했습니다(3장). ② 기본 목록이 막히면 <b>다른 그룹</b>
+        (우주정거장·육안관측·스타링크·GPS·기상·정지궤도)으로 우회해서 받아옵니다 —
+        제한은 그룹별로 걸리기 때문입니다. 개수는 좀 줄지만 하늘이 비지는 않습니다.
+        ③ 기록에 <code>HTTP 403</code>만 남기지 않고 <b>서버가 보낸 이유를 그대로</b>
+        찍습니다. 앞으로 위성이 안 보이면 그 줄부터 읽으세요 — 원인이 거기 적혀 있습니다.
+      </p>
+    </div>
+
+    <div class="trap">
       <h4><span class="trap-tag">06</span>OpenSky 크레딧은 하루 4,000입니다</h4>
       <p style="margin-bottom:0">
         전 세계 요청 한 번에 4크레딧이라 하루 약 1,000번입니다. 그래서 「비행기 갱신
