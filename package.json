@@ -18,6 +18,7 @@
     "note": "node scripts/build-note.mjs",
     "test:flights": "tsx scripts/test-opensky-flights.ts",
     "pack:win": "npm run build && electron-builder --win --dir",
+    "dist:win:installer": "npm run build && electron-builder --win nsis",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux"
@@ -37,6 +38,7 @@
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "playwright": "^1.56.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsx": "^4.19.2",

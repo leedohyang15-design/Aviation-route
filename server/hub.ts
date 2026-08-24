@@ -4,6 +4,9 @@
 // Every window connects here over WebSocket; commands mutate PresentationState
 // and are rebroadcast so all windows — including late joiners — stay in sync.
 
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createReadStream, readdirSync, statSync } from 'node:fs'
+import { extname, join } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
 import type {
   Aircraft,
@@ -32,6 +35,7 @@ import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
 import { tleFetchedAt } from './tle'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
+import { mapsDir } from './datadir'
 import { onLogLine, opsLog, recentLog } from './log'
 import {
   hasRoute,
@@ -89,6 +93,58 @@ export function selectFeed(): PausableFeed {
  */
 loadSettings()
 
+/**
+ * Serve one planet map, and nothing else.
+ *
+ * The whole surface is `GET /maps/<one file name>` out of a single folder. The
+ * name is checked against a pattern rather than sanitised — a filter that tries
+ * to strip `..` out of a path is a filter somebody eventually gets past, while
+ * "letters, digits, dash, underscore, one known extension" has no path in it to
+ * traverse in the first place. Anything else gets a 404 and no explanation.
+ */
+const MAP_NAME = /^[a-z0-9_-]+\.(jpe?g|png|webp)$/i
+const MAP_TYPE: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp'
+}
+
+function serveMap(req: IncomingMessage, res: ServerResponse): void {
+  const url = req.url ?? '/'
+  const name = url.startsWith('/maps/') ? decodeURIComponent(url.slice('/maps/'.length)) : ''
+  if (req.method !== 'GET' || !MAP_NAME.test(name)) {
+    res.writeHead(404).end()
+    return
+  }
+  const file = join(mapsDir(), name)
+  let size: number
+  try {
+    const st = statSync(file)
+    if (!st.isFile()) throw new Error('not a file')
+    size = st.size
+  } catch {
+    res.writeHead(404).end()
+    return
+  }
+  /*
+   * CORS, and it is load-bearing rather than boilerplate.
+   *
+   * The window is loaded from file://, so its origin is opaque, and an image
+   * fetched without this would taint the WebGL context the moment it is used as
+   * a texture — texImage2D throws and the planet never appears. It is a local
+   * loopback server handing out the map files the operator put there
+   * themselves, so there is nothing here a page could not already read.
+   */
+  res.writeHead(200, {
+    'Content-Type': MAP_TYPE[extname(name).toLowerCase()] ?? 'application/octet-stream',
+    'Content-Length': String(size),
+    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-cache'
+  })
+  createReadStream(file).pipe(res)
+}
+
 export function startHub(port = settings().hubPort, feed: PausableFeed = selectFeed()): Hub {
   // Yesterday's answers are almost all still valid, so start from the saved
   // cache instead of re-asking adsbdb for every callsign.
@@ -100,7 +156,18 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
   // Bind explicitly to the IPv4 loopback so it always matches the windows'
   // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
   // firewall prompt that a 0.0.0.0 bind would trigger).
-  const wss = new WebSocketServer({ port, host: '127.0.0.1' })
+  /*
+   * One server, two jobs: the socket the windows talk on, and a static route
+   * for the planet maps.
+   *
+   * The maps cannot live inside the package — see mapsDir() — and a window
+   * loaded from file:// cannot read another file:// image into a WebGL texture
+   * without tainting it. Serving them over the port that already exists solves
+   * both: an ordinary http URL, with CORS set so the texture stays clean.
+   */
+  const httpServer = createServer((req, res) => serveMap(req, res))
+  const wss = new WebSocketServer({ server: httpServer })
+  httpServer.listen(port, '127.0.0.1')
 
   wss.on('listening', () => opsLog('[hub] window can now connect'))
   // opsLog, not console.error: the packaged exe has no console, so a hub that
@@ -780,6 +847,24 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
   startMars(() => broadcast({ type: 'marsLive', data: marsLive() }))
 
   console.log(`[hub] listening on ws://127.0.0.1:${port} (feed: ${feed.source})`)
+  /*
+   * Say where the maps are looked for, and what is actually there.
+   *
+   * This is the one piece of setup that cannot be done from the settings screen
+   * — the files are too big to type in — so it is the one most likely to be
+   * missed, and "the planet is a wireframe" gives no clue as to which folder
+   * was wrong. One line at startup turns that into a five-second check.
+   */
+  try {
+    const found = readdirSync(mapsDir()).filter((f) => MAP_NAME.test(f))
+    opsLog(
+      found.length
+        ? `[maps] ${mapsDir()} — ${found.join(', ')}`
+        : `[maps] ${mapsDir()} 에 지도가 없습니다. 2:1 이미지 네 장(earth_equirect / earth_night / mars_equirect / jupiter_equirect)을 여기에 넣으세요.`
+    )
+  } catch {
+    opsLog(`[maps] ${mapsDir()} 폴더가 없습니다 — 만들고 2:1 지도 이미지를 넣으세요.`)
+  }
 
   return {
     close() {

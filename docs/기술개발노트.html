@@ -614,6 +614,7 @@
       <dt>aviation-route-routes.json</dt><dd>편명 → 출발/도착 공항 캐시.</dd>
       <dt>aviation-route-weather.json</dt><dd>마지막 기상 영상.</dd>
       <dt>aviation-route-mars.json</dt><dd>로버 위치·주행 경로 캐시.</dd>
+      <dt>public/</dt><dd>행성 지도 네 장. <b>프로그램 안이 아니라 여기</b>에 있습니다 (4장 2번).</dd>
     </dl>
   </section>
 
@@ -643,11 +644,11 @@
       </li>
 
       <li>
-        <h4>행성 지도 넣기 — <span class="mono">public/</span></h4>
+        <h4>행성 지도 넣기 — 실행 파일 옆 <span class="mono">public</span> 폴더</h4>
         <p>
-          용량이 커서 배포판에 포함되지 않습니다. 실행 파일 옆의 <code>public</code> 폴더에
-          아래 네 개를 직접 넣습니다. 모두 <b>가로:세로가 정확히 2:1</b>인 정사각도법
-          이미지여야 합니다.
+          <b>지도는 프로그램 안에 들어 있지 않습니다.</b> 실행 파일과 같은 폴더에
+          <code>public</code> 폴더를 만들고 아래 네 개를 넣습니다. 모두 <b>가로:세로가
+          정확히 2:1</b>인 정사각도법 이미지여야 합니다.
         </p>
         <dl class="kv">
           <dt>earth_equirect.jpg</dt><dd>지구 낮 지도</dd>
@@ -655,10 +656,24 @@
           <dt>mars_equirect.jpg</dt><dd>화성 지도</dd>
           <dt>jupiter_equirect.jpg</dt><dd>목성 지도</dd>
         </dl>
-        <p style="margin-bottom:0">
+        <p>
           없으면 그 탭은 <b>격자(wireframe)</b>로 대체되고 기록에 그렇게 남습니다. 크기는
           <b>가로 8192px 이하</b>를 권장합니다 — 이유는 8장 첫 번째 함정에 있습니다.
         </p>
+        <p style="margin-bottom:0">
+          켤 때 기록에 <code>maps</code> 줄이 남습니다. <b>프로그램이 어느 폴더를 봤고 거기서
+          무엇을 찾았는지</b>가 그대로 적히므로, 지도가 안 뜨면 이 줄부터 보세요.
+        </p>
+        <pre style="margin-top:12px"><b>maps</b> C:\aviation-route\public — earth_equirect.jpg, mars_equirect.jpg, jupiter_equirect.jpg</pre>
+        <div class="trap" style="margin-top:14px">
+          <h4><span class="trap-tag">왜 밖에?</span>지도를 프로그램 안에 넣지 않는 이유</h4>
+          <p style="margin:0">
+            프로그램 내용물은 <b>봉인된 압축 파일(asar)</b>이라, 안에 넣은 지도는 나중에
+            바꿀 수 없습니다. 지도 한 장을 교체하려고 프로그램 전체를 다시 만들어 다시
+            설치해야 한다는 뜻입니다. 밖에 두면 <b>파일만 바꿔 넣고 다시 켜면</b> 됩니다.
+            설치본 용량이 100MB 넘게 줄어드는 건 덤입니다.
+          </p>
+        </div>
       </li>
 
       <li>
@@ -1106,17 +1121,35 @@ $dst.Dispose(); Move-Item "$p.new" $p -Force</pre>
     <pre><span class="dim"># 처음 한 번만</span>
 npm install
 
-<span class="dim"># 폴더 배포판 — 압축해서 그대로 옮기면 됩니다</span>
-npm run pack:win
-
-<span class="dim"># 설치본(.exe installer)</span>
+<span class="dim"># 이것만 쓰면 됩니다 — 폴더 배포판</span>
 npm run dist:win</pre>
 
     <p>
-      결과물은 <code>release/</code>(또는 <code>dist/</code>) 아래에 생깁니다.
-      <b>행성 지도는 포함되지 않으므로</b>, 만든 폴더의 <code>public</code>에 네 장을 다시
-      넣어야 합니다 (5장 2번).
+      결과물은 <code>dist\win-unpacked\</code> 폴더이고, 그 안의
+      <code>Aviation Route.exe</code>가 실행 파일입니다. <b>폴더째 복사해서</b> 전시 PC에
+      옮기고, 그 폴더 안에 <code>public</code>을 만들어 지도 네 장을 넣으면 끝입니다.
+      전시는 원래 폴더를 복사해서 설치하는 것이라, 설치 마법사는 하는 일이 없습니다.
     </p>
+
+    <div class="trap">
+      <h4><span class="trap-tag">주의</span>설치본(.exe installer)을 굳이 만들려면</h4>
+      <p>
+        <code>npm run dist:win:installer</code>입니다. 다만 <b>일반 계정에서는 마지막
+        단계에서 실패합니다</b>:
+      </p>
+      <pre>ERROR: Cannot create symbolic link : A required privilege is not held by the client.
+       ...winCodeSign\...\darwin\10.12\lib\libcrypto.dylib</pre>
+      <p>
+        electron-builder가 서명 도구를 내려받아 푸는데, 그 압축 파일 안에 <b>macOS용
+        심볼릭 링크</b>가 들어 있고 윈도우에서 심볼릭 링크를 만들려면 권한이 필요합니다.
+        <b>프로그램 자체는 이미 다 만들어진 뒤</b>에 나는 오류라, 이 메시지를 봤더라도
+        <code>dist\win-unpacked\</code>에는 멀쩡한 실행 파일이 있습니다.
+      </p>
+      <p style="margin-bottom:0">
+        정 필요하면 둘 중 하나: <b>개발자 모드를 켜거나</b>(설정 → 개인 정보 및 보안 →
+        개발자용 → 개발자 모드), <b>관리자 권한 터미널</b>에서 실행하세요.
+      </p>
+    </div>
 
     <h3>소스에서 확인용으로 켜기</h3>
     <pre>npm run dev</pre>

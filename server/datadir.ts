@@ -52,3 +52,21 @@ export function dataPathCandidates(name: string): string[] {
       return true
     })
 }
+
+/**
+ * Where the planet maps live: a `public` folder beside the exe.
+ *
+ * They cannot travel inside the package. The renderer is loaded from an asar
+ * archive, which is sealed — a map bundled at build time works, but one dropped
+ * in afterwards has nowhere to go, and swapping a map would mean rebuilding the
+ * whole application. For files this big, that is the wrong trade twice over: it
+ * puts a hundred megabytes into an installer that then cannot be corrected.
+ *
+ * So the hub serves them over its own port from a folder next to the exe, and
+ * an operator swaps a map by replacing a file. In dev this is the project's own
+ * `public`, which is also where Vite serves it from — so the same URL works in
+ * both, and the renderer tries the bundled path first regardless.
+ */
+export function mapsDir(): string {
+  return join(dataDir(), 'public')
+}

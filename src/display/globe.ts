@@ -29,27 +29,28 @@ import type {
 import { projectNorm, wrapLon, nearestRouteIndex, isPlausibleCoord } from '@shared/projection'
 import { marsSubsolar } from '@shared/probes'
 import {
+  EARTH_MIPMAPS,
+  EARTH_NIGHT_URL,
   EARTH_TEXTURE_URL,
-  MARS_DAY_PERIOD_MS,
-  MARS_NIGHT_FLOOR,
-  MARS_SATURATION,
   JUPITER_NIGHT_FLOOR,
   JUPITER_POLE_FADE_DEG,
   JUPITER_TEXTURE_URL,
+  MAP_BASE_URL,
+  MARS_DAY_PERIOD_MS,
+  MARS_NIGHT_FLOOR,
+  MARS_SATURATION,
   MARS_TEXTURE_URL,
-  EARTH_NIGHT_URL,
-  EARTH_MIPMAPS,
-  WEATHER_WIND_PARTICLES,
-  WEATHER_WIND_TAIL,
-  WEATHER_WIND_LIFE,
   OBSERVER_LAT,
   OBSERVER_LON,
+  WEATHER_CLOUD_OPACITY,
+  WEATHER_FRAME_HOLD_MS,
   WEATHER_WIND_GAMMA,
+  WEATHER_WIND_LIFE,
+  WEATHER_WIND_PARTICLES,
   WEATHER_WIND_REF,
   WEATHER_WIND_SPEED,
-  WEATHER_WIND_WIDTH,
-  WEATHER_CLOUD_OPACITY,
-  WEATHER_FRAME_HOLD_MS
+  WEATHER_WIND_TAIL,
+  WEATHER_WIND_WIDTH
 } from '@shared/config'
 import { PLANE_DATA_URI } from '@shared/plane'
 import { categoryKey } from '../common/flightClass'
@@ -2310,7 +2311,19 @@ export class Globe {
    * exact configured .jpg. */
   private textureCandidates(url: string): string[] {
     const base = url.replace(/\.(jpe?g|png|webp)$/i, '')
-    return [url, `${base}.jpg`, `${base}.jpeg`, `${base}.png`, `${base}.webp`]
+    const names = [url, `${base}.jpg`, `${base}.jpeg`, `${base}.png`, `${base}.webp`]
+    /*
+     * The bundled path first, then the hub's.
+     *
+     * In development the first list wins immediately — Vite serves `public` at
+     * the root. In a packaged build those all 404 inside the asar and the hub's
+     * copy answers, which is the whole point: the maps live in a folder beside
+     * the exe where an operator can replace them without a rebuild. See
+     * mapsDir() and serveMap() on the server.
+     *
+     * Failing over costs four 404s on a loopback socket, once, at startup.
+     */
+    return [...names, ...names.map((n) => `${MAP_BASE_URL}/${n}`)]
   }
 
   private tryLoadEarth(): void {

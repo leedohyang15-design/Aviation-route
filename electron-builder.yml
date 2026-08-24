@@ -6,18 +6,34 @@ directories:
 files:
   - out/**
   - package.json
-# Bundle the app resources into an asar archive.
+  # The planet maps do NOT travel inside the package.
+  #
+  # Vite copies `public/` into the renderer output, which would put a hundred
+  # megabytes of photographs inside a sealed asar — where they cannot be
+  # replaced, so swapping a map would mean rebuilding and reinstalling the whole
+  # application. They live in a `public` folder beside the exe instead and the
+  # hub serves them (see mapsDir() and serveMap()). The flags and the SVG stay:
+  # they are small, they never change, and nothing about them is site-specific.
+  - '!out/renderer/*.jpg'
+  - '!out/renderer/*.jpeg'
+  - '!out/renderer/*.png'
+  - '!out/renderer/*.webp'
 asar: true
-# Windows: an NSIS installer (needs Windows/wine) plus a portable unpacked build
-# (win-unpacked/Aviation Route.exe) that `--dir` produces cross-platform.
 win:
+  # A FOLDER, not an installer, and that is the recommendation rather than a
+  # limitation.
+  #
+  # An exhibit is deployed by copying a directory onto a machine, and the maps
+  # have to be dropped in beside the exe afterwards anyway — an installer adds a
+  # wizard in front of that and nothing else. It also avoids a real trap: the
+  # nsis and portable targets pull down electron-builder's code-signing tools,
+  # whose archive contains macOS symlinks, and extracting those on Windows needs
+  # a privilege a normal account does not have. The build then fails at the very
+  # last step with "Cannot create symbolic link", long after the exe itself was
+  # finished. Run `npm run dist:win` for the installer if you want one, from an
+  # Administrator terminal or with Developer Mode on.
   target:
-    - nsis
-    - portable
-nsis:
-  oneClick: false
-  perMachine: false
-  allowToChangeInstallationDirectory: true
+    - dir
 mac:
   target: dmg
   category: public.app-category.education

@@ -19,6 +19,18 @@ export const HUB_PORT = Number(readEnv('HUB_PORT') ?? 8787)
 export const HUB_URL = readEnv('HUB_URL') ?? `ws://127.0.0.1:${HUB_PORT}`
 
 /**
+ * Where the hub serves the planet maps from.
+ *
+ * Same port as the socket, a different path. The maps cannot ride inside the
+ * packaged app — the renderer is loaded out of a sealed asar archive, so a map
+ * dropped in afterwards would have nowhere to go and swapping one would mean
+ * rebuilding — so they sit in a `public` folder beside the exe and the hub hands
+ * them out. The renderer tries the bundled path first, so development is
+ * unaffected.
+ */
+export const MAP_BASE_URL = readEnv('MAP_BASE_URL') ?? `http://127.0.0.1:${HUB_PORT}/maps`
+
+/**
  * Poll interval (ms) for OpenSky. The free tier is 4000 credits/day and a
  * worldwide /states/all request costs 4 credits, so only ~1000 requests/day.
  *   15s → ~960 credits/hour → budget gone in ~4h (too fast for an exhibit).

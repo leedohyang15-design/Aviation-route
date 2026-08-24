@@ -14,3 +14,16 @@ aviation-route-tle.txt
 
 # Weather imagery cached next to a packaged build at runtime
 aviation-route-weather.json
+
+# Operator settings written next to a packaged build at runtime — CONTAINS KEYS
+aviation-route-settings.json
+
+# Rover positions cached next to a packaged build at runtime
+aviation-route-mars.json
+
+# The planet maps. Too big for the repository, and site-specific: they go in a
+# `public` folder beside the exe, not into the package. See mapsDir().
+public/*.jpg
+public/*.jpeg
+public/*.png
+public/*.webp
