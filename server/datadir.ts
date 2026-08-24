@@ -1,5 +1,5 @@
 // Where the exhibit keeps the files an operator is meant to see and keep: the
-// diagnostic log, the route cache, the orbital elements.
+// diagnostic log, settings, and the route/TLE/weather caches.
 //
 // The obvious answer — next to the executable — is right for a packaged build
 // and wrong everywhere else. `process.execPath` is whatever binary is running:
@@ -11,8 +11,20 @@
 // The working directory isn't a safe answer either: a packaged app launched
 // from a shortcut can start anywhere, including a directory it may not write to.
 // So pick by which situation we're actually in.
+//
+// "Next to the executable" turned out to be wrong for packaged builds too,
+// just less obviously. `electron-builder`'s output directory (`dist/`, per
+// electron-builder.yml) is deleted and recreated on every build, and the exe
+// lives inside it — so shipping a bug fix (rebuild, copy the folder over the
+// old one) silently erased every setting the operator had entered, including
+// API keys, along with the caches. `app.getPath('userData')` is Electron's
+// answer to exactly this: an OS-managed per-app folder that a rebuild never
+// touches. Planet map images are the one exception — see mapsDir() below —
+// because those are meant to be found and swapped by hand next to the app,
+// and are legitimately part of a given build rather than operator state.
 
 import { basename, dirname, join } from 'node:path'
+import { app } from 'electron'
 
 /**
  * True only for a real packaged build. Three things have to hold at once:
@@ -26,10 +38,22 @@ function isPackaged(): boolean {
   return !/^electron(\.exe)?$/i.test(basename(process.execPath))
 }
 
-/** Directory for operator-visible files: the project root in dev, beside the
- * executable once packaged. */
-export function dataDir(): string {
+/** Folder beside the running binary: the project root in dev, beside the exe
+ * once packaged. For mapsDir() below, and for `.env` — both are meant to be
+ * found and placed by hand next to the app, not operator state that a
+ * rebuild would otherwise destroy, so they stay out of dataDir()'s move to
+ * userData. */
+export function exeAdjacentDir(): string {
   return isPackaged() ? dirname(process.execPath) : process.cwd()
+}
+
+/** Directory for operator state: the project root in dev, an OS-managed
+ * per-app folder once packaged (see the file header for why not beside the
+ * exe). `app.getPath('userData')` needs no OS call and works before the
+ * Electron `ready` event, so it's safe to reach for this as early as
+ * `boot-env.ts`'s module-scope `loadEnv()` call. */
+export function dataDir(): string {
+  return isPackaged() ? app.getPath('userData') : process.cwd()
 }
 
 /** Full path for one of those files. */
@@ -40,11 +64,13 @@ export function dataPath(name: string): string {
 /**
  * Every place a file might reasonably be, the one we'd write to first. Used
  * when READING, so a cache written by an older build (or by a differently
- * launched run) is still found instead of silently starting from nothing.
+ * launched run) is still found instead of silently starting from nothing —
+ * including one written under the old exe-adjacent scheme, before a rebuild
+ * would have destroyed it.
  */
 export function dataPathCandidates(name: string): string[] {
   const seen = new Set<string>()
-  return [dataDir(), process.cwd(), dirname(process.execPath)]
+  return [dataDir(), process.cwd(), exeAdjacentDir()]
     .map((dir) => join(dir, name))
     .filter((p) => {
       if (seen.has(p)) return false
@@ -68,5 +94,5 @@ export function dataPathCandidates(name: string): string[] {
  * both, and the renderer tries the bundled path first regardless.
  */
 export function mapsDir(): string {
-  return join(dataDir(), 'public')
+  return join(exeAdjacentDir(), 'public')
 }

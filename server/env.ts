@@ -5,11 +5,16 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { opsLog } from './log'
-import { dataPathCandidates } from './datadir'
+import { exeAdjacentDir } from './datadir'
 
 export function loadEnv(file = '.env'): void {
+  // `.env` is meant to be placed by hand, same as the planet maps — it does
+  // NOT move to dataDir()'s userData folder with the rest of operator state,
+  // or an operator following this project's own docs would drop it beside
+  // the exe and the app would never find it.
   const dirs = [
-    ...dataPathCandidates('').map((p) => p.replace(/[\\/]$/, '')), // cwd + exe dir
+    exeAdjacentDir(),
+    process.cwd(),
     (process as { resourcesPath?: string }).resourcesPath ?? '' // app resources dir
   ].filter(Boolean) as string[]
   // Windows Notepad silently saves ".env" as ".env.txt" (hidden extension), so
