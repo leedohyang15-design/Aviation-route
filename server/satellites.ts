@@ -226,10 +226,28 @@ export function startElementRefresh(onLoaded: (n: number) => void): void {
     }
     elementFailures = n > 0 ? 0 : elementFailures + 1
     if (elementStopped) return
+    /*
+     * Start the backoff at a QUARTER HOUR, not a minute.
+     *
+     * A minute is the right first retry for a service that wants to be asked
+     * often. Celestrak is the opposite: the elements change about every two
+     * hours, it says so in the body of its own refusal, and it firewalls
+     * clients that keep asking anyway. The exhibit found that edge for real —
+     * a one-minute floor, doubling slowly, turned into dozens of requests
+     * inside the first hour, and Celestrak stopped answering with its polite
+     * "GP data has not updated" note and started returning a flat
+     * "403 - Forbidden: Access is denied" to every group. Retrying harder was
+     * making the outage last longer.
+     *
+     * Fifteen minutes to two hours costs at most a quarter hour of delay once
+     * the far end recovers, which nobody will notice on a wall that shows
+     * yesterday's orbits perfectly well, and it keeps the exhibit inside what
+     * the service asks for.
+     */
+    const FLOOR = 15 * 60_000
+    const CEIL = 2 * 3600_000
     const wait =
-      elementFailures > 0
-        ? Math.min(TLE_MAX_AGE_MS, 60_000 * 2 ** (elementFailures - 1))
-        : TLE_MAX_AGE_MS
+      elementFailures > 0 ? Math.min(CEIL, FLOOR * 2 ** (elementFailures - 1)) : TLE_MAX_AGE_MS
     if (elementFailures > 0) {
       opsLog(
         `[sat] no elements yet — trying again in ${Math.round(wait / 60_000)}분 ` +

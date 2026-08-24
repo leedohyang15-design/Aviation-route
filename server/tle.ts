@@ -115,10 +115,39 @@ async function fetchTle(url: string): Promise<string> {
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    const why = body.trim().replace(/\s+/g, ' ').slice(0, 200)
-    throw new Error(`HTTP ${res.status}${why ? ` — ${why}` : ''}`)
+    throw new Error(`HTTP ${res.status}${body ? ` — ${summarise(body)}` : ''}`)
   }
   return res.text()
+}
+
+/**
+ * The gist of an error body, in one line.
+ *
+ * Celestrak's informative refusals are plain text and worth printing whole.
+ * Its hard blocks are an IIS error PAGE — a full HTML document, doctype and
+ * stylesheet and all — and printing the first 200 characters of that fills
+ * the log with `<meta http-equiv=...` and never reaches the sentence that
+ * matters. So HTML is reduced to its <title>, which is exactly the one useful
+ * line ("403 - Forbidden: Access is denied").
+ */
+function summarise(body: string): string {
+  const flat = body.trim()
+  if (/^\s*<(!doctype|html)/i.test(flat)) {
+    const title = /<title[^>]*>([^<]+)<\/title>/i.exec(flat)?.[1]?.trim()
+    return title ? `${title} (서버가 HTML 오류 페이지를 보냈습니다)` : 'HTML 오류 페이지'
+  }
+  return flat.replace(/\s+/g, ' ').slice(0, 200)
+}
+
+/**
+ * True for the refusal that means "you already have this", which names the
+ * group it is refusing and is therefore worth answering by asking for a
+ * DIFFERENT group. Any other refusal — an IIS block page, a 500, a timeout —
+ * is about us or about the whole service, and trying six more URLs against a
+ * server that just said no is how a soft block becomes a hard one.
+ */
+function isGroupRateLimit(message: string): boolean {
+  return /has not updated|last successful download/i.test(message)
 }
 
 /**
@@ -139,6 +168,13 @@ async function download(): Promise<string> {
     const primary = (err as Error).message
     if (!TLE_FALLBACK_URLS.length) throw err
     opsLog(`[tle] ${primary}`)
+    // Only the "you already downloaded this group" refusal is worth walking
+    // around; everything else means asking again — six more times — is part of
+    // the problem rather than the way out.
+    if (!isGroupRateLimit(primary)) {
+      opsLog('[tle] 그룹별 제한이 아니라 서버가 통째로 거절한 것이라 우회하지 않습니다')
+      throw err
+    }
     opsLog(`[tle] 기본 목록이 막혀 다른 그룹 ${TLE_FALLBACK_URLS.length}개로 우회합니다`)
 
     const seen = new Set<string>()
