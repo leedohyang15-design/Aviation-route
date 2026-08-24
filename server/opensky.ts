@@ -9,7 +9,7 @@
 
 import type { Aircraft, FlightDetail } from '../src/shared/types'
 import type { FlightFeed } from './feed'
-import { OPENSKY_POLL_INTERVAL_MS } from '../src/shared/config'
+import { settings } from './settings'
 import {
   greatCirclePoints,
   greatCircleDistanceKm,
@@ -150,7 +150,7 @@ export function createOpenSkyFeed(): FlightFeed {
       onStatus(true)
       onSnapshot(aircraft)
       if (remaining != null) console.log(`[opensky] ${aircraft.length} aircraft, ${remaining} credits left`)
-      return OPENSKY_POLL_INTERVAL_MS
+      return settings().openskyPollMs
     } catch (err) {
       onStatus(false)
       // "fetch failed" is undici's generic wrapper; the real reason (DNS,
@@ -160,9 +160,9 @@ export function createOpenSkyFeed(): FlightFeed {
       const cause = e.cause?.code || e.cause?.message
       opsLog(
         `[opensky] poll error: ${e.message}${cause ? ` — cause: ${cause}` : ''}. ` +
-          `Mock fallback covers the screen; retrying in ${OPENSKY_POLL_INTERVAL_MS / 1000}s.`
+          `Mock fallback covers the screen; retrying in ${settings().openskyPollMs / 1000}s.`
       )
-      return OPENSKY_POLL_INTERVAL_MS
+      return settings().openskyPollMs
     } finally {
       clearTimeout(to)
     }
@@ -208,8 +208,9 @@ export function createOpenSkyFeed(): FlightFeed {
       // the last one is still current: each /states/all is 4 of the day's 4000
       // credits, and the mode tabs are buttons a visitor can press repeatedly.
       const since = Date.now() - lastPollAt
-      if (lastPollAt && since < OPENSKY_POLL_INTERVAL_MS) {
-        timer = setTimeout(loop, OPENSKY_POLL_INTERVAL_MS - since)
+      const pollMs = settings().openskyPollMs
+      if (lastPollAt && since < pollMs) {
+        timer = setTimeout(loop, pollMs - since)
       } else {
         void loop()
       }

@@ -9,7 +9,8 @@
 
 import * as sat from 'satellite.js'
 import type { Satellite, SatelliteDetail, GeoPoint } from '../src/shared/types'
-import { SAT_TICK_MS, SAT_SLICE_MS, OBSERVER_LAT, OBSERVER_LON } from '../src/shared/config'
+import { SAT_SLICE_MS, OBSERVER_LAT, OBSERVER_LON } from '../src/shared/config'
+import { settings } from './settings'
 import { isPlausibleCoord } from '../src/shared/projection'
 import { loadTles, type TleRecord } from './tle'
 import { opsLog } from './log'
@@ -292,7 +293,7 @@ export function startSatellites(onSnapshot: (s: Satellite[]) => void): void {
     // Aim for a steady period: a full catalogue takes a second or two to
     // propagate, and adding the interval on top of that would stretch the gap
     // between updates instead of holding it.
-    const wait = Math.max(50, SAT_TICK_MS - (Date.now() - started))
+    const wait = Math.max(50, settings().satTickMs - (Date.now() - started))
     timer = setTimeout(() => {
       // Cleared as it fires, so `timer` always means "a wake-up is pending"
       // rather than "one was scheduled at some point".

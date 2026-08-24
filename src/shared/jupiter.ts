@@ -11,7 +11,7 @@
 // are arithmetic, the histories are settled, and the two spacecraft on their
 // way have departure dates that already happened.
 
-import { JUPITER_MAP_LAT_LIMIT } from './config'
+import { draw as drawSettings } from './live-settings'
 
 /* ------------------------------------------------------------------ *
  * The planet
@@ -247,7 +247,7 @@ export function westToRendererLon(lonWest: number): number {
  * A real Jupiter latitude, onto the latitude scale this tab's frame uses.
  *
  * Jupiter's map has no picture past about 60 degrees, so the frame carries
- * only the range the file actually has — see JUPITER_MAP_LAT_LIMIT. That means
+ * only the range the file actually has — see the settings screen. That means
  * the background is on its own latitude scale, and anything plotted on top of
  * it has to be on the same one or it drifts off the cloud band it belongs to.
  * Everything here is at or near the equator, so the shift is a few pixels; it
@@ -258,7 +258,7 @@ export function westToRendererLon(lonWest: number): number {
  * of Jupiter's equator, and that is true whatever this frame's scale is.
  */
 export function toMapLat(lat: number): number {
-  return (lat * 90) / JUPITER_MAP_LAT_LIMIT
+  return (lat * 90) / drawSettings().jupiterMapLatLimit
 }
 
 /*

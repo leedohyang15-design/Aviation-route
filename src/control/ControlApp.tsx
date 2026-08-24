@@ -17,6 +17,7 @@ import type { SelectionAnchor } from '../display/globe'
 import { SatelliteSearch } from './SatelliteSearch'
 import { FlightSearch } from './FlightSearch'
 import { BootCurtain } from '../common/BootCurtain'
+import { SettingsPanel } from './SettingsPanel'
 
 /**
  * The heading, which is about whatever tab is open.
@@ -266,6 +267,11 @@ function placeCard(a: SelectionAnchor): Placement {
   }
 }
 
+/** How long the gear must be held before the settings screen opens. Long
+ *  enough that a visitor never gets there by poking at it, short enough that an
+ *  operator who knows about it is not standing there waiting. */
+const GEAR_HOLD_MS = 1500
+
 export function ControlApp(): JSX.Element {
   const {
     send,
@@ -282,7 +288,10 @@ export function ControlApp(): JSX.Element {
     weather,
     weatherAt,
     marsLive,
-    weatherSource
+    weatherSource,
+    settings,
+    log,
+    watchLog
   } = useHub('control')
   const mode = state.mode
   const isSat = mode === 'satellite'
@@ -384,6 +393,29 @@ export function ControlApp(): JSX.Element {
   const [attract, setAttract] = useState(false)
   // False until every planet map has landed; see BootCurtain.
   const [mapsReady, setMapsReady] = useState(false)
+  /*
+   * The settings screen, and the hold that opens it.
+   *
+   * A long press rather than a tap: this button sits on a touchscreen in front
+   * of children, and anything that opens on a tap will be opened. See the note
+   * at the top of SettingsPanel.tsx.
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [holding, setHolding] = useState(false)
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startHold = (): void => {
+    setHolding(true)
+    holdTimer.current = setTimeout(() => {
+      setHolding(false)
+      setSettingsOpen(true)
+    }, GEAR_HOLD_MS)
+  }
+  const cancelHold = (): void => {
+    setHolding(false)
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = null
+  }
+  useEffect(() => cancelHold, [])
   /** Whether the ten finished missions are showing. Collapses again on a tab
    *  change, so the next visitor meets the short row the first one did. */
   const [showPast, setShowPast] = useState(false)
@@ -624,6 +656,29 @@ export function ControlApp(): JSX.Element {
   return (
     <div className="control-root">
       <BootCurtain ready={mapsReady} />
+
+      {/* Operator only. See SettingsPanel.tsx for why this is a hold. */}
+      <button
+        className={'gear-btn' + (holding ? ' holding' : '')}
+        aria-label="설정 (1.5초 길게 누르기)"
+        title="설정 — 1.5초 길게 누르세요"
+        onPointerDown={startHold}
+        onPointerUp={cancelHold}
+        onPointerLeave={cancelHold}
+        onPointerCancel={cancelHold}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        ⚙
+      </button>
+      {settingsOpen && (
+        <SettingsPanel
+          view={settings}
+          send={send}
+          log={log}
+          watchLog={watchLog}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       <MapView
         mode={state.mode}
         satellites={satVisible}

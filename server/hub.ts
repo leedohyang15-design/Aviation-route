@@ -12,19 +12,27 @@ import type {
   WeatherFrame,
   ExhibitMode,
   PresentationState,
-  ServerMessage
+  ServerMessage,
+  Settings
 } from '../src/shared/types'
-import { DEFAULT_PRESENTATION_STATE } from '../src/shared/types'
+import { DEFAULT_PRESENTATION_STATE, SETTINGS_NEED_RESTART } from '../src/shared/types'
 import { hasOpenSkyCredentials, onDetailEnriched } from './opensky'
 import { createFlightFeed, type PausableFeed } from './resilient'
-import { HUB_PORT, SAT_REPLAY_MAX_AGE_MS } from '../src/shared/config'
+import { SAT_REPLAY_MAX_AGE_MS } from '../src/shared/config'
+import {
+  load as loadSettings,
+  reset as resetSettings,
+  settings,
+  update as updateSettings,
+  view as settingsView
+} from './settings'
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
 import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
 import { tleFetchedAt } from './tle'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
-import { opsLog } from './log'
+import { onLogLine, opsLog, recentLog } from './log'
 import {
   hasRoute,
   onRouteResolved,
@@ -75,7 +83,13 @@ export function selectFeed(): PausableFeed {
   return feed
 }
 
-export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hub {
+/*
+ * The settings file is read before anything else in the process needs a value
+ * from it — the port this very server binds to is one of them.
+ */
+loadSettings()
+
+export function startHub(port = settings().hubPort, feed: PausableFeed = selectFeed()): Hub {
   // Yesterday's answers are almost all still valid, so start from the saved
   // cache instead of re-asking adsbdb for every callsign.
   loadRouteCache()
@@ -248,6 +262,33 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     if (Date.now() - lastOrbitAt > ORBIT_REFRESH_MS) {
       lastOrbitAt = Date.now()
       broadcast({ type: 'route', icao24: state.selected, points: d?.track ?? null })
+    }
+  }
+
+  /**
+   * Make a settings change take effect NOW, for the things that can.
+   *
+   * Most of these are read at the point of use, so nothing has to be done —
+   * the next satellite tick simply waits the new interval. The two exceptions
+   * are loops already asleep on an old timer: bouncing them is what turns a
+   * five-minute weather interval into a one-minute one without waiting out the
+   * old five minutes first.
+   */
+  function applySettingChanges(changed: (keyof Settings)[]): void {
+    if (changed.includes('satTickMs') && state.mode === 'satellite') {
+      stopSatellites()
+      startSatellites(onSatellites)
+    }
+    if (changed.includes('weatherPollMs') || changed.includes('weatherMaxAgeMs')) {
+      stopWeather()
+      startWeather(onWeather)
+      if (state.mode === 'weather') replayWeather()
+    }
+    const needRestart = changed.filter((k) =>
+      (SETTINGS_NEED_RESTART as readonly string[]).includes(k)
+    )
+    if (needRestart.length) {
+      opsLog(`[settings] ${needRestart.join(', ')} — takes effect when the exhibit is restarted`)
     }
   }
 
@@ -495,10 +536,30 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
     }
   )
 
+  /*
+   * Which sockets want the log, and the one hook that feeds them.
+   *
+   * A single listener fanning out to a set, rather than one listener per
+   * socket: opsLog runs on the hub's only thread and is called from inside
+   * poll loops, so the work it does per line has to stay flat no matter how
+   * many windows are open.
+   */
+  const logWatchers = new Set<WebSocket>()
+  onLogLine((line) => {
+    for (const ws of logWatchers) {
+      if (ws.readyState === ws.OPEN) send(ws, { type: 'log', line })
+    }
+  })
+
   wss.on('connection', (ws) => {
     console.log(`[hub] window connected (${wss.clients.size} total)`)
     // Bring the new window fully up to date immediately.
     send(ws, { type: 'state', state })
+    // What the operator can change, and what it is set to now. Sent to every
+    // window, not just the control one: the dome reads the same grading and
+    // Jupiter numbers, and a dome that missed this message would quietly draw
+    // a different planet from the one on the touchscreen.
+    send(ws, { type: 'settings', settings: settingsView() })
     // Two objects at most, and only when there is something to say.
     if (marsLive().length) send(ws, { type: 'marsLive', data: marsLive() })
     if (state.mode === 'weather') {
@@ -528,8 +589,20 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
       } catch {
         return
       }
+      // Subscribing is about THIS socket, so it cannot go through
+      // applyCommand, which only sees the message.
+      if (msg.type === 'watchLog') {
+        if (msg.on) {
+          logWatchers.add(ws)
+          send(ws, { type: 'logHistory', lines: recentLog() })
+        } else {
+          logWatchers.delete(ws)
+        }
+        return
+      }
       applyCommand(msg)
     })
+    ws.on('close', () => logWatchers.delete(ws))
   })
 
   /** Whether this id names something on the layer currently being shown. */
@@ -656,6 +729,33 @@ export function startHub(port = HUB_PORT, feed: PausableFeed = selectFeed()): Hu
         state.hiddenWeather = msg.layers
         broadcast({ type: 'state', state })
         return
+      case 'setSettings': {
+        /*
+         * Apply, persist, and tell every window — including the one that asked.
+         *
+         * Echoing back to the sender is deliberate rather than wasteful: the
+         * settings screen shows what the HUB holds, not what was typed into it,
+         * so a value the hub clamped or refused (a poll interval below the
+         * credit floor, a key pinned by the environment) corrects itself on
+         * screen instead of leaving the operator believing an edit that never
+         * happened.
+         */
+        const changed = updateSettings(msg.patch)
+        if (changed.length) applySettingChanges(changed)
+        // Broadcast even when nothing changed: that is the case where the hub
+        // refused or clamped the edit, and the screen has to be corrected.
+        broadcast({ type: 'settings', settings: settingsView() })
+        return
+      }
+      case 'watchLog':
+        // Handled where the socket is in scope; see the connection handler.
+        return
+      case 'resetSettings': {
+        const changed = resetSettings()
+        applySettingChanges(changed)
+        broadcast({ type: 'settings', settings: settingsView() })
+        return
+      }
     }
   }
 

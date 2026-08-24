@@ -346,6 +346,123 @@ export interface MarsLiveWire {
   at: number
 }
 
+/* ------------------------------------------------------------------ *
+ * The operator's log
+ * ------------------------------------------------------------------ */
+
+/** How loud a line is. A heuristic on the text — see classify() in server/log.ts
+ *  — used for a colour and a filter chip, never for a decision. */
+export type LogLevel = 'info' | 'warn' | 'bad'
+
+/** One line of the operator's log, as the 기록 tab shows it. */
+export interface LogLine {
+  /** Monotonic within a run. Lets a window tell "this is new" from "this one
+   *  gained a repeat" without comparing text. */
+  id: number
+  /** When it was written (or last repeated), epoch ms. */
+  at: number
+  text: string
+  /** The `[tag]` at the front — the subsystem, and the filter chips. */
+  tag: string
+  level: LogLevel
+  /** How many times this exact line has repeated in a row. 1 is the normal
+   *  case; a failing poll overnight is how it gets to 400. */
+  count: number
+}
+
+/* ------------------------------------------------------------------ *
+ * Operator settings
+ * ------------------------------------------------------------------ */
+
+/**
+ * The values an operator can change without a rebuild.
+ *
+ * Everything here used to be a constant in shared/config.ts, which meant that
+ * tuning the exhibit — even by one number — needed a developer, a toolchain and
+ * a new build. On a museum floor that is the difference between "fixed on
+ * Tuesday" and "fixed next month". So these live in a file beside the exe and
+ * are edited from the settings screen.
+ *
+ * NOT everything from config.ts is here, on purpose. This is the list from the
+ * handover note's table: the values somebody actually reaches for. The rest are
+ * decisions rather than settings — the icon sizes, the attract timings, the
+ * projection — and exposing them would only offer new ways to break the
+ * exhibit.
+ */
+export interface Settings {
+  /* — 데이터 갱신 — */
+  /** OpenSky poll interval, ms. The credit budget is sized for this. */
+  openskyPollMs: number
+  /** How often satellite positions are recomputed, ms. */
+  satTickMs: number
+  /** How often the weather source is checked, ms. */
+  weatherPollMs: number
+  /** Older than this, a weather picture is not shown at all, ms. */
+  weatherMaxAgeMs: number
+
+  /* — 화면 — */
+  /** Degrees of latitude Jupiter's map actually has a picture of. */
+  jupiterMapLatLimit: number
+  /** One Jupiter rotation on screen, ms. 0 stops the spin. */
+  jupiterDayPeriodMs: number
+  /** Gamma lift on the Mars map. 1 = untouched, higher = brighter mid-tones. */
+  marsLift: number
+  /** Per-channel multiplier on the Mars map, RGB. [1,1,1] = untouched. */
+  marsTint: [number, number, number]
+
+  /* — 연결 (재시작 필요) — */
+  /** Port the in-process hub listens on. */
+  hubPort: number
+  openskyClientId: string
+  openskyClientSecret: string
+  maptilerKey: string
+}
+
+/** Which settings only take effect after a restart. Shown in the UI so nobody
+ *  changes the port and then reports that nothing happened. */
+export const SETTINGS_NEED_RESTART = [
+  'hubPort',
+  'openskyClientId',
+  'openskyClientSecret',
+  'maptilerKey'
+] as const
+
+/**
+ * What the WINDOWS are allowed to see.
+ *
+ * The secrets are never sent — not once, not masked-but-recoverable. A window
+ * can WRITE a new key and can be told whether one is present and what its last
+ * four characters are, which is everything the settings screen needs to show
+ * "this is configured" without the value ever being in a place a screenshot,
+ * a log line or a devtools inspector could take it from.
+ */
+export interface SettingsView extends Omit<
+  Settings,
+  'openskyClientId' | 'openskyClientSecret' | 'maptilerKey'
+> {
+  secrets: Record<'openskyClientId' | 'openskyClientSecret' | 'maptilerKey', SecretState>
+  /** Absolute folder the exe reads and writes its files in. Read-only here —
+   *  the settings file itself lives in it, so it cannot move itself. */
+  dataDir: string
+  /** The log file's full path. Built on the server, which is the only side that
+   *  knows whether this machine's separator is a slash or a backslash. */
+  logPath: string
+  /** True once a restart-only value has been changed but not yet applied. */
+  restartPending: boolean
+  /** Where each value came from, so the screen can say when a .env is winning. */
+  source: Partial<Record<keyof Settings, 'file' | 'env' | 'default'>>
+}
+
+/** A secret, described rather than disclosed. */
+export interface SecretState {
+  set: boolean
+  /** Last four characters, or '' when not set. Enough to tell two keys apart. */
+  tail: string
+  /** True when the value is coming from the environment rather than the file,
+   *  in which case the settings screen cannot overwrite it. */
+  fromEnv: boolean
+}
+
 export type ServerMessage =
   | { type: 'aircraft'; mode: 'full' | 'delta'; data: Aircraft[]; removed?: string[]; serverTime: number }
   | { type: 'state'; state: PresentationState }
@@ -386,6 +503,13 @@ export type ServerMessage =
        * Lets the UI say "connecting" instead of implying a config problem. */
       credentials: boolean
     }
+  /** The current settings, as the windows are allowed to see them. Sent on
+   *  connect and again after every change. */
+  | { type: 'settings'; settings: SettingsView }
+  /** The log so far, sent once when a window asks to watch it. */
+  | { type: 'logHistory'; lines: LogLine[] }
+  /** One line, as it happens. Only to windows that asked. */
+  | { type: 'log'; line: LogLine }
 
 /** Commands clients send to the hub. The hub applies them to PresentationState. */
 export type ClientMessage =
@@ -402,3 +526,21 @@ export type ClientMessage =
    * a decoded field actually contains — are only knowable where the image is
    * decoded, and the exe has no console to print them to. */
   | { type: 'note'; text: string }
+  /**
+   * Change settings. A partial: only the named keys are written, so two
+   * operators on two screens cannot clobber each other's untouched fields.
+   * An empty string for a secret means "leave it alone"; to clear one, send
+   * the literal '-'.
+   */
+  | { type: 'setSettings'; patch: Partial<Settings> }
+  /** Drop everything the settings file owns and go back to the built-in
+   *  defaults (and whatever `.env` still pins). */
+  | { type: 'resetSettings' }
+  /**
+   * Start or stop receiving log lines.
+   *
+   * Off by default and asked for only while the 기록 tab is open. The dome has
+   * no use for them, and a window that is not looking at the log should not be
+   * re-rendering every time a satellite pass is logged.
+   */
+  | { type: 'watchLog'; on: boolean }

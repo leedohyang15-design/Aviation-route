@@ -12,6 +12,7 @@
 // view, eased toward the target set by setView() (driven by the control map).
 
 import * as THREE from 'three'
+import { draw as drawSettings, onSettingsChange } from '@shared/live-settings'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
@@ -30,12 +31,8 @@ import { marsSubsolar } from '@shared/probes'
 import {
   EARTH_TEXTURE_URL,
   MARS_DAY_PERIOD_MS,
-  MARS_LIFT,
   MARS_NIGHT_FLOOR,
   MARS_SATURATION,
-  MARS_TINT,
-  JUPITER_DAY_PERIOD_MS,
-  JUPITER_MAP_LAT_LIMIT,
   JUPITER_NIGHT_FLOOR,
   JUPITER_POLE_FADE_DEG,
   JUPITER_TEXTURE_URL,
@@ -281,6 +278,19 @@ const MIN_SPAN = 0.1 // most the control map may zoom in (≈10×) — down to c
    There are four of them on an otherwise empty planet, they are the only thing
    on this tab a visitor is meant to press, and a ball at the diamond's size
    read as a speck rather than as a world. */
+/**
+ * Where Jupiter's sun is, for a rotation compressed to `periodMs` on screen.
+ *
+ * Zero means stopped, which the setting documents and the arithmetic did not —
+ * a modulo by zero is NaN, and a NaN sun longitude turns the whole planet
+ * black. Guarded here rather than at the settings screen, because a value can
+ * also arrive from a hand-edited file.
+ */
+function jupiterSunLon(periodMs: number): number {
+  if (!Number.isFinite(periodMs) || periodMs <= 0) return 180
+  return wrapLon(180 - ((Date.now() % periodMs) / periodMs) * 360)
+}
+
 /* Both of those were still too small, and this is measured rather than argued
    about: rendered at the dome's real 1664x838, a landing site came out TEN
    pixels across and a moon fourteen. Ten pixels is a speck on a monitor and
@@ -619,6 +629,8 @@ export class Globe {
   private lastDrawMs = 0
   /** How many icons the last frame actually drew — see the note in the loop. */
   private lastDrawnCount = -1
+  /** Unsubscribes the settings hook; called from dispose(). */
+  private dropSettingsListener: (() => void) | null = null
 
   /**
    * Say it in the log AND in the console — the console is for a developer at a
@@ -1337,6 +1349,18 @@ export class Globe {
     this.placeMesh = label()
     this.originFlag = label() // country flag above the origin marker
     this.destFlag = label() // country flag above the destination marker
+
+    /*
+     * A settings change has to reach the uniforms that are only written when
+     * the planet changes — the Mars grading and Jupiter's latitude span. Without
+     * this, moving a slider does nothing until the operator leaves the tab and
+     * comes back, which reads as a settings screen that is broken.
+     */
+    this.dropSettingsListener = onSettingsChange(() => {
+      if (this.planet === 'mars') this.applyMarsGrading()
+      this.bgUniforms.uLatSpan.value =
+        this.planet === 'jupiter' ? drawSettings().jupiterMapLatLimit : 90
+    })
 
     this.tryLoadEarth()
     /*
@@ -2362,15 +2386,53 @@ export class Globe {
    * GPU memory each, and re-decoding a 2:1 photograph to save that is a bad
    * trade on a machine that will run for months without a restart.
    */
+  /**
+   * The Mars map's grading, from the settings rather than from a constant.
+   *
+   * Desaturating a red image only makes it a duller red. What moves it off
+   * blood-red is lifting green and blue against red, and what brings the
+   * terrain back without blowing the polar caps is a gamma — which is why the
+   * two knobs on the settings screen are a TINT and a LIFT rather than the
+   * brightness/contrast pair somebody would expect.
+   *
+   * Separated out so a change can be applied without leaving the tab. These
+   * uniforms are otherwise only written when the planet changes, so an operator
+   * sliding the lift while looking at Mars would have seen nothing happen until
+   * they switched away and back.
+   */
+  private applyMarsGrading(announce = false): void {
+    const { marsLift, marsTint } = drawSettings()
+    this.bgUniforms.uSaturation.value = MARS_SATURATION
+    this.bgUniforms.uTint.value = new THREE.Vector3(
+      marsTint[0] ?? 1,
+      marsTint[1] ?? 1,
+      marsTint[2] ?? 1
+    )
+    this.bgUniforms.uLift.value = marsLift
+    this.bgUniforms.uBrightness.value = 1
+    // Say what is being applied. Three numbers tuned for a projector nobody
+    // here can see need to be readable from the machine that has one — which
+    // means the LOG, not a console the exe does not have.
+    if (announce) {
+      this.note(
+        `[mars] grading: saturation ${MARS_SATURATION}, tint ${marsTint.join('/')}, ` +
+          `lift ${marsLift} — 설정 화면의 화성 밝기/색조에서 바꿉니다`
+      )
+    }
+  }
+
   setPlanet(planet: Planet): void {
     if (planet === this.planet) return
     this.planet = planet
     /*
-     * How much latitude this planet's frame covers. See JUPITER_MAP_LAT_LIMIT:
-     * Jupiter's map has no picture past about 60 degrees, so its frame carries
-     * the range the file actually has rather than a black cap over the rest.
+     * How much latitude this planet's frame covers. See the settings screen's
+     * "목성 지도 위도 범위": Jupiter's map has no picture past about 60 degrees,
+     * so its frame carries the range the file actually has rather than a black
+     * cap over the rest. Read live, because an operator who changes it should
+     * see the planet change.
      */
-    this.bgUniforms.uLatSpan.value = planet === 'jupiter' ? JUPITER_MAP_LAT_LIMIT : 90
+    this.bgUniforms.uLatSpan.value =
+      planet === 'jupiter' ? drawSettings().jupiterMapLatLimit : 90
     if (planet === 'earth') {
       this.bgUniforms.uMap.value = this.earthTex
       this.bgUniforms.uHasMap.value = this.earthTex ? 1 : 0
@@ -2432,24 +2494,7 @@ export class Globe {
       this.loadJupiter()
       return
     }
-    // See MARS_TINT: desaturating a red image only makes it a duller red. What
-    // moves it off blood-red is lifting green and blue against red, and what
-    // brings the terrain back without blowing the polar caps is a gamma.
-    this.bgUniforms.uSaturation.value = MARS_SATURATION
-    this.bgUniforms.uTint.value = new THREE.Vector3(
-      MARS_TINT[0] ?? 1,
-      MARS_TINT[1] ?? 1,
-      MARS_TINT[2] ?? 1
-    )
-    this.bgUniforms.uLift.value = MARS_LIFT
-    this.bgUniforms.uBrightness.value = 1
-    // Say what is being applied. Three numbers tuned for a projector nobody
-    // here can see need to be readable from the machine that has one — which
-    // means the LOG, not a console the exe does not have.
-    this.note(
-      `[mars] grading: saturation ${MARS_SATURATION}, tint ${MARS_TINT.join('/')}, ` +
-        `lift ${MARS_LIFT} — MARS_LIFT for darker/brighter, MARS_TINT for redder/less red`
-    )
+    this.applyMarsGrading(true)
     // No city lights and no terminator: see MARS_TEXTURE_URL for why the
     // shadow would be a fiction on a multi-year mosaic.
     this.bgUniforms.uHasNight.value = 0
@@ -4257,7 +4302,7 @@ export class Globe {
       this.sunLon =
         this.nightHourOverride != null
           ? wrapLon(360 - 15 * (this.nightHourOverride - 12))
-          : wrapLon(180 - ((Date.now() % JUPITER_DAY_PERIOD_MS) / JUPITER_DAY_PERIOD_MS) * 360)
+          : jupiterSunLon(drawSettings().jupiterDayPeriodMs)
       this.bgUniforms.uSunLon.value = this.sunLon
       this.bgUniforms.uSunDecl.value = this.sunDecl
       this.sinDecl = 0
@@ -4854,6 +4899,8 @@ export class Globe {
 
   dispose(): void {
     this.stop()
+    this.dropSettingsListener?.()
+    this.dropSettingsListener = null
     this.inputCleanup?.()
     this.inputCleanup = null
     if (this.viewEmitTimer) {

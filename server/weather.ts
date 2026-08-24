@@ -23,8 +23,6 @@ import {
   WEATHER_FRAME_COUNT,
   WEATHER_WIND_FRAMES,
   WEATHER_MAX_SERIES_MB,
-  WEATHER_CACHE_MAX_AGE_MS,
-  WEATHER_POLL_MS,
   WEATHER_TIMEOUT_MS,
   WEATHER_ZOOM,
   WEATHER_CLOUD_SOURCE,
@@ -38,6 +36,7 @@ import {
 } from '../src/shared/config'
 import { fetchWithTimeout } from './http'
 import { dataPath, dataPathCandidates } from './datadir'
+import { settings } from './settings'
 import { opsLog } from './log'
 
 const CACHE_NAME = 'aviation-route-weather.json'
@@ -147,7 +146,7 @@ export function weatherFrames(): WeatherFrame[] {
  */
 export function haveFreshFrames(): boolean {
   const frames = weatherFrames()
-  return frames.length > 0 && Date.now() - seriesTime(frames) <= WEATHER_CACHE_MAX_AGE_MS
+  return frames.length > 0 && Date.now() - seriesTime(frames) <= settings().weatherMaxAgeMs
 }
 
 function loadCache(): void {
@@ -1260,7 +1259,8 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
       running = false
       return
     }
-    const wait = failures ? Math.min(WEATHER_POLL_MS, 30_000 * 2 ** (failures - 1)) : WEATHER_POLL_MS
+    const pollMs = settings().weatherPollMs
+    const wait = failures ? Math.min(pollMs, 30_000 * 2 ** (failures - 1)) : pollMs
     timer = setTimeout(() => void loop(), wait)
     ;(timer as unknown as { unref?: () => void }).unref?.()
   }

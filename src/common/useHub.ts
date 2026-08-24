@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bus } from '@shared/bus'
 import { HUB_URL } from '@shared/config'
+import { applySettings } from '@shared/live-settings'
 import {
   DEFAULT_PRESENTATION_STATE,
   type Aircraft,
@@ -20,6 +21,8 @@ import {
   type PresentationState,
   type Satellite,
   type SatelliteDetail,
+  type LogLine,
+  type SettingsView,
   type WeatherFrame
 } from '@shared/types'
 
@@ -37,6 +40,14 @@ export interface HubView {
   /** When the element set behind those positions was downloaded, epoch ms. */
   tleAt: number | null
   satDetail: SatelliteDetail | null
+  /** What the operator can change, as the hub allows a window to see it.
+   *  Null until the hub's first message. */
+  settings: SettingsView | null
+  /** The operator log, oldest first. Empty until watchLog(true) is called —
+   *  a window that is not showing the log does not carry it. */
+  log: LogLine[]
+  /** Start or stop receiving log lines. */
+  watchLog: (on: boolean) => void
   /** The newest animation series for each weather layer, in loop order. */
   weather: { cloud: WeatherFrame[]; rain: WeatherFrame[]; wind: WeatherFrame[] }
   /** How old the newest weather picture is, in whole minutes (null = none yet). */
@@ -96,6 +107,8 @@ export function useHub(role: 'control' | 'display'): HubView {
     rain: [],
     wind: []
   })
+  const [settings, setSettings] = useState<SettingsView | null>(null)
+  const [log, setLog] = useState<LogLine[]>([])
   const busRef = useRef<Bus | null>(null)
 
   useEffect(() => {
@@ -129,6 +142,44 @@ export function useHub(role: 'control' | 'display'): HubView {
         case 'satDetail':
           setSatDetail(msg.detail)
           break
+        case 'logHistory':
+          setLog(msg.lines)
+          break
+        case 'log':
+          setLog((prev) => {
+            /*
+             * A repeat updates the row it repeats, it does not add one.
+             *
+             * The hub counts identical consecutive lines rather than sending
+             * them again, so the same id arriving twice means "that one now
+             * says x2". Appending it would undo the counting and put the four
+             * hundred copies straight back on screen.
+             */
+            const last = prev[prev.length - 1]
+            if (last && last.id === msg.line.id) {
+              const next = prev.slice()
+              next[next.length - 1] = msg.line
+              return next
+            }
+            // Same cap the hub keeps, so a window left open all week does not
+            // grow without bound.
+            const next = prev.length >= 2000 ? prev.slice(prev.length - 1999) : prev.slice()
+            next.push(msg.line)
+            return next
+          })
+          break
+        case 'settings':
+          /*
+           * Into the module store FIRST, then into React.
+           *
+           * The three.js frame loop reads the module store sixty times a second
+           * and never sees React state at all, so the order here decides
+           * whether the very next frame draws the new numbers or the old ones.
+           * The React copy is only for the settings screen's own inputs.
+           */
+          applySettings(msg.settings)
+          setSettings(msg.settings)
+          break
         case 'marsLive':
           setMarsLive(Object.fromEntries(msg.data.map((r) => [r.id, r])))
           break
@@ -157,11 +208,19 @@ export function useHub(role: 'control' | 'display'): HubView {
   }, [role])
 
   const send = useCallback((msg: ClientMessage) => busRef.current?.send(msg), [])
+  const watchLog = useCallback((on: boolean) => {
+    busRef.current?.send({ type: 'watchLog', on })
+    if (!on) setLog([])
+  }, [])
 
   return {
     send,
     aircraft,
     state,
+    /** What the operator can change. Null until the hub's first message. */
+    settings,
+    log,
+    watchLog,
     connected,
     source,
     credentials,
