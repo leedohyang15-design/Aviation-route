@@ -938,6 +938,14 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
    * vanishes at 11:00.
    */
   const livePieces = new Map<number, number>()
+  /*
+   * A step's density ratios, one sensor at a time, so the loop that fetches a
+   * step's five sensors in parallel can log them as ONE line instead of up to
+   * five — this runs every step, every poll, and five separate lines per step
+   * would push everything else out of the 기록 tab's window within a day.
+   * Cleared by the caller at the start of each step.
+   */
+  const stepRatios: string[] = []
   const fetchSlot = async (
     name: string,
     lon: number,
@@ -1015,9 +1023,24 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
         return false
       }
       const live = liveDensity.get(lon)
-      if (live && (density < live * 0.25 || density > live * 4)) {
+      const ratio = live ? density / live : null
+      /*
+       * The ratio goes on record whether or not it trips the reject test.
+       *
+       * The threshold below (0.25x-4x) is deliberately loose, because ordinary
+       * weather varies that much between an empty ocean and a storm. What it
+       * cannot catch is a hole the size of a single storm sitting inside an
+       * otherwise normal, detailed picture — that shifts the sensor's average
+       * density by some smaller factor the threshold is not tight enough to
+       * call implausible, so a step with exactly that hole is accepted. Ratio
+       * is what turns the next occurrence into evidence instead of a fourth
+       * guess: whatever number the sensor over the missing storm actually had,
+       * accepted or not, is now in the log.
+       */
+      if (ratio != null) stepRatios.push(`${lon}°:${ratio.toFixed(2)}x`)
+      if (ratio != null && (ratio < 0.25 || ratio > 4)) {
         opsLog(
-          `[weather] cloud: ${name} at ${time} is ${(density / live).toFixed(2)}× the detail of ` +
+          `[weather] cloud: ${name} at ${time} is ${ratio.toFixed(2)}× the detail of ` +
             `its live picture — that does not look like ${lon}°'s imagery, so the step is refused`
         )
         lastTileError = `implausible step — ${name} at ${time}`
@@ -1134,6 +1157,7 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
       continue
     }
     const stamp = new Date(at).toISOString().replace(/\.\d+Z$/, 'Z')
+    stepRatios.length = 0
     /*
      * The five sensors at once, not one after another.
      *
@@ -1175,6 +1199,9 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
     if (sameSensors && tiles.length) {
       cloudSteps.set(at, tiles)
       series.push({ ...nowFrame, time: at, tiles })
+      // See stepRatios above: one line, every accepted step, so a hole small
+      // enough to pass every check still leaves its number in the log.
+      if (stepRatios.length) opsLog(`[weather] cloud: ${stamp} accepted — ${stepRatios.join(', ')}`)
     } else if (shared) {
       /*
        * Hold the previous picture rather than dropping the step.
