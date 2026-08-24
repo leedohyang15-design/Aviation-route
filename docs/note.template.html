@@ -1243,131 +1243,206 @@ npm run dist:win</pre>
   </section>
 
   <!-- ────────────────────────────────────────────────────────────────── 11 -->
-  <section id="editing">
+  <section id="modifying">
     <div class="sec-head">
       <span class="sec-no">11</span>
-      <h2>이 노트 고치기</h2>
-      <span class="sec-latin">Editing this note</span>
+      <h2>프로그램 고치기</h2>
+      <span class="sec-latin">Changing the program</span>
     </div>
 
     <p class="lede">
-      프로그램을 고치면 이 노트도 같이 고쳐야 합니다. 안 고치면 다음 사람이 <b>틀린 설명을
-      믿고</b> 시간을 씁니다 — 실제로 저장 위치를 옮긴 뒤 4장 설명이 하루 동안 거짓말을
-      하고 있었습니다.
+      숫자 몇 개를 바꾸는 일이라면 <b>설정 화면으로 충분합니다</b>(5장) — 여기까지 올 필요가
+      없습니다. 이 장은 <b>소스를 고쳐야 하는 일</b>, 그러니까 화면에 없는 값을 바꾸거나,
+      항목을 더하거나, 동작 자체를 바꿔야 할 때를 위한 것입니다.
     </p>
 
+    <h3>준비</h3>
+    <p>
+      Node.js가 설치된 PC와 소스 폴더가 필요합니다. 편집기는 아무거나 되지만
+      <b>VS Code</b>를 권합니다 — 타입 오류를 저장하는 즉시 빨간 줄로 알려주기 때문에,
+      잘못 고친 것을 빌드까지 가기 전에 알 수 있습니다.
+    </p>
+    <pre><span class="dim"># 처음 한 번만</span>
+npm install
+
+<span class="dim"># 고치는 동안 켜 두는 것 — 저장하면 화면이 바로 바뀝니다</span>
+npm run dev
+
+<span class="dim"># 다 고쳤으면 반드시 이 순서로</span>
+npm run typecheck   <span class="dim"># 타입이 맞는지 (제일 먼저 걸러집니다)</span>
+npm run build       <span class="dim"># 진짜로 빌드되는지</span>
+npm run dist:win    <span class="dim"># 배포용 실행 파일</span></pre>
+
     <div class="trap">
-      <h4><span class="trap-tag">먼저</span>Word 파일과 HTML을 직접 고치지 마세요</h4>
+      <h4><span class="trap-tag">먼저</span>고치기 전에 되돌릴 수 있게 해 두세요</h4>
       <p style="margin:0">
-        <code>기술개발노트.docx</code>와 <code>기술개발노트.html</code>은 <b>둘 다
-        만들어진 결과물</b>입니다. 여기에 쓴 내용은 다음에 다시 만들 때 <b>말없이
-        사라집니다.</b> 원본은 <code>docs/note.template.html</code> 하나뿐이고,
-        나머지는 전부 거기서 나옵니다.
+        <code>git status</code>로 지금 상태가 깨끗한지 보고, 고친 뒤에는
+        <code>git diff</code>로 <b>내가 바꾼 것만</b> 바뀌었는지 확인하세요. 잘못됐으면
+        <code>git checkout 파일이름</code>으로 그 파일만 되돌립니다. 이게 없으면
+        「어제는 됐는데」에서 빠져나올 방법이 없습니다.
       </p>
     </div>
 
-    <h3>고치는 순서</h3>
+    <h3>어느 파일이 무엇을 하나</h3>
     <p>
-      Node.js가 설치된 PC에서, 소스 폴더에서 합니다. 글만 고칠 거면
-      <code>npm install</code>은 처음 한 번이면 됩니다.
+      크게 <b>셋</b>으로 나뉩니다. 데이터를 받아오는 쪽(<span class="mono">server/</span>),
+      화면에 그리는 쪽(<span class="mono">src/</span>), 그리고 둘 다 보는 값과 약속
+      (<span class="mono">src/shared/</span>)입니다.
     </p>
-
-    <pre><span class="dim"># 1) 글을 고친다 — 메모장 말고 편집기로 (UTF-8 유지)</span>
-docs\note.template.html
-
-<span class="dim"># 2) 읽는 파일 두 개를 다시 만든다</span>
-npm run note        <span class="dim"># → docs\기술개발노트.html  (웹·공유용)</span>
-npm run note:docx   <span class="dim"># → docs\기술개발노트.docx  (워드·인쇄용)</span>
-
-<span class="dim"># 3) 셋 다 커밋한다 — 원본과 결과물이 어긋나면 안 됩니다</span>
-git add docs
-git commit -m "노트: 무엇을 왜 고쳤는지"</pre>
-
-    <p>
-      <code>note.template.html</code>은 <b>평범한 HTML</b>이라 특별한 도구가 필요 없습니다.
-      본문은 <code>&lt;p&gt;</code>, 굵게는 <code>&lt;b&gt;</code>, 파일명·명령어는
-      <code>&lt;code&gt;</code>, 검은 상자는 <code>&lt;pre&gt;</code>로 씁니다. 기존 문단을
-      복사해서 글자만 바꾸는 게 가장 안전합니다.
-    </p>
-
-    <h3>자주 하는 손질</h3>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>하고 싶은 것</th><th>어디를 고치나</th></tr>
+          <tr><th>파일</th><th>무엇</th><th>언제 여나</th></tr>
         </thead>
         <tbody>
           <tr>
-            <td class="k">문장 하나 고치기</td>
-            <td>해당 <code>&lt;p&gt;</code>를 찾아 고칩니다. <code>Ctrl+F</code>로 화면에 보이는 문장을 그대로 검색하면 나옵니다.</td>
+            <td class="k mono">src/shared/config.ts</td>
+            <td>주소·주기·크기 같은 <b>상수 전부</b>. 대부분의 수정은 여기서 끝납니다.</td>
+            <td>값 하나 바꾸고 싶을 때 <b>제일 먼저</b></td>
           </tr>
           <tr>
-            <td class="k">함정 하나 추가</td>
-            <td>8장에서 <code>&lt;div class="trap"&gt;</code> 한 덩어리를 통째로 복사해 붙이고, <code>trap-tag</code> 번호와 내용을 바꿉니다. <b>증상 · 원인 · 대응</b> 세 단락 구조를 지키세요.</td>
+            <td class="k mono">src/shared/types.ts</td>
+            <td>허브와 창이 주고받는 <b>메시지 약속</b>. 여기를 고치면 양쪽 다 고쳐야 합니다.</td>
+            <td>새 데이터를 창에 보낼 때</td>
           </tr>
           <tr>
-            <td class="k">장(챕터) 추가</td>
-            <td><code>&lt;section&gt;</code> 한 덩어리를 복사해 <code>&lt;/main&gt;</code> 앞에 붙이고, <code>sec-no</code>·<code>&lt;h2&gt;</code>·<code>id</code>를 바꿉니다. 번호는 앞 장에서 이어지게 하세요.</td>
+            <td class="k mono">server/hub.ts</td>
+            <td>모든 것의 <b>중심</b>. 탭이 바뀌면 무엇을 켜고 끌지, 무엇을 언제 보낼지.</td>
+            <td>탭 동작·폴링을 바꿀 때</td>
           </tr>
           <tr>
-            <td class="k">사진 교체·추가</td>
-            <td>아래 「사진 넣기」를 보세요.</td>
+            <td class="k mono">server/opensky.ts<br>server/routes.ts</td>
+            <td>비행기 위치, 편명 → 공항.</td>
+            <td>비행기 탭 관련</td>
           </tr>
           <tr>
-            <td class="k">구조 그림 수정</td>
-            <td>아래 「구조 그림」을 보세요. 여기만 손이 조금 더 갑니다.</td>
+            <td class="k mono">server/tle.ts<br>server/satellites.ts</td>
+            <td>궤도 정보 받기, 위성 위치 계산.</td>
+            <td>위성 탭 관련</td>
+          </tr>
+          <tr>
+            <td class="k mono">server/weather.ts</td>
+            <td>구름·비·바람 영상. <b>제일 복잡한 파일</b>입니다.</td>
+            <td>날씨 탭 관련</td>
+          </tr>
+          <tr>
+            <td class="k mono">src/display/globe.ts</td>
+            <td>지구본을 실제로 그리는 곳. <b>5,000줄짜리</b>이고 다섯 탭이 전부 여기를 씁니다.</td>
+            <td>보이는 것을 바꿀 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">src/control/ControlApp.tsx</td>
+            <td>터치스크린 화면 전체 — 탭, 칩, 목록, 설명.</td>
+            <td>조작 화면을 바꿀 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">src/display/DisplayApp.tsx</td>
+            <td>돔 화면. 조작이 없어서 훨씬 단순합니다.</td>
+            <td>돔에 뜨는 글자를 바꿀 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">src/control/control.css</td>
+            <td>터치 화면의 색·크기 전부.</td>
+            <td>모양만 바꿀 때</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <h3>사진 넣기</h3>
+    <h3>자주 하는 수정</h3>
+
+    <h4>1) 화성 착륙지 추가·수정</h4>
     <p>
-      사진은 <code>docs\images\</code>에 <b>JPG</b>로 두고, 본문에서는 파일 이름만
-      <code>{{이름}}</code> 형태로 부릅니다. 예를 들어
-      <code>docs\images\13-settings-keys.jpg</code>는 이렇게 씁니다:
+      <code>src/shared/probes.ts</code>의 <code>MARS_PROBES</code> 배열에 한 덩어리를
+      더합니다. <b>기존 항목을 복사해서 고치는 것이 가장 안전합니다</b> — 필요한 칸이
+      많고, 하나라도 빠지면 타입 오류로 걸립니다.
     </p>
-    <pre>&lt;figure&gt;
-  &lt;img src="{{13-settings-keys}}" alt="설정 화면의 키와 포트"&gt;
-  &lt;figcaption&gt;&lt;b&gt;키와 포트.&lt;/b&gt; 여기 값은 다시 시작해야 적용됩니다.&lt;/figcaption&gt;
-&lt;/figure&gt;</pre>
     <p>
-      <code>npm run note</code>가 그 자리에 사진을 통째로 밀어 넣습니다 — 그래서 완성된
-      HTML은 <b>파일 하나만 보내도</b> 사진이 다 보입니다. 이름이 틀리면 조용히 넘어가지
-      않고 <b>어느 파일이 없는지 말하면서 멈춥니다.</b>
-    </p>
-    <p style="margin-bottom:0">
-      화면 사진은 프로그램을 띄워 놓고 <b>창을 그대로 캡처</b>하면 됩니다. 가로 1600px
-      안팎이면 충분하고, 파일이 너무 크면 노트 전체가 무거워지니 JPG 품질을 조금 낮춰
-      저장하세요.
+      주의할 것 둘. <code>lonEast</code>는 <b>0~360 동경</b>입니다(−180~180이 아닙니다).
+      그리고 <code>ended</code>는 <b>마지막 교신 날짜</b>지 발표 날짜가 아닙니다 —
+      화면의 「몇 솔 일했나」가 이 날짜로 계산되기 때문에, 발표일을 넣으면 오퍼튜니티가
+      실제 5,111솔 대신 5,350솔로 나옵니다.
     </p>
 
-    <h3>구조 그림</h3>
+    <h4>2) 항공사·공항 이름 추가</h4>
     <p>
-      2장의 흐름도는 사진이 아니라 <b>템플릿 안에 직접 그려져 있는</b>
-      <code>&lt;svg&gt;</code>입니다. 글자만 바꾸는 정도면 그 안의
-      <code>&lt;text&gt;</code>를 찾아 고치면 됩니다.
-    </p>
-    <p>
-      다만 Word 파일은 그림을 그릴 수 없어서, 이 흐름도만은 <b>미리 그림으로 구워 둔</b>
-      <code>docs\images\diagram.png</code>를 씁니다. <b>SVG를 고쳤으면 이 PNG도 다시
-      만들어야</b> 워드 쪽에 반영됩니다 — 안 그러면 HTML과 Word가 서로 다른 그림을
-      보여줍니다.
-    </p>
-    <p style="margin-bottom:0">
-      다시 만드는 방법은 <code>scripts\build-note-docx.mjs</code> 맨 위 주석에 적어
-      두었습니다. 급하면 <b>완성된 HTML을 브라우저로 열어 그 그림 부분만 화면 캡처</b>해서
-      같은 이름으로 덮어써도 됩니다.
+      편명 앞 세 자리로 항공사를 찾습니다. <code>src/common/airlines.ts</code>에
+      <code>KAL: '대한항공'</code> 형태로 한 줄 더하면 끝입니다. 공항은
+      <code>src/common/airports.ts</code>이고 방식이 같습니다.
+      <b>없어도 프로그램은 멀쩡히 돕니다</b> — 코드가 그대로 보일 뿐입니다.
     </p>
 
-    <h3>다 고친 뒤</h3>
+    <h4>3) 갱신 주기·주소 같은 값</h4>
+    <p>
+      <code>src/shared/config.ts</code>에 전부 모여 있고, 각 값 위에 <b>왜 그 숫자인지</b>
+      주석이 붙어 있습니다. <b>주석을 먼저 읽으세요</b> — 대부분은 이유가 있어서 그 값이고,
+      특히 비행기 갱신 주기는 크레딧과 직결됩니다(함정 06).
+    </p>
+
+    <h4>4) 설정 화면에 항목 추가</h4>
+    <p>
+      값을 소스가 아니라 <b>화면에서</b> 바꾸게 하려면 네 군데를 같이 고쳐야 합니다.
+      하나라도 빠뜨리면 타입 오류가 나므로, 컴파일만 통과하면 대체로 맞습니다.
+    </p>
+    <ol>
+      <li><code>src/shared/types.ts</code> — <code>Settings</code>에 칸을 더합니다. 껐다 켜야 적용되는 값이면 <code>SETTINGS_NEED_RESTART</code>에도 이름을 넣습니다.</li>
+      <li><code>server/settings.ts</code> — 기본값, 허용 범위(<code>min</code>/<code>max</code>), <code>.env</code> 이름, 그리고 창에 보낼 목록에 각각 한 줄씩.</li>
+      <li><code>src/control/SettingsPanel.tsx</code> — <code>NumField</code> 하나를 더합니다. <b>hint에 「왜 이 값인지」를 반드시 쓰세요</b>, 다음 사람이 보는 유일한 설명입니다.</li>
+      <li>화면이 <b>즉시</b> 반응해야 하는 값이면 <code>src/shared/live-settings.ts</code>에도 넣습니다 — 지구본은 React 바깥에서 돌아서, 여기 없으면 다시 켜야 반영됩니다.</li>
+    </ol>
+
+    <h4>5) 색·글자 크기</h4>
     <p style="margin-bottom:0">
-      <b>Word 파일을 한 번 열어서 넘겨 보세요.</b> 화면에서 멀쩡해 보여도 종이에서는
-      표가 잘리거나 그림이 페이지를 넘어가는 일이 있습니다. 실제로 이 노트의 4장 오류도
-      Word로 만들어 페이지를 넘겨보다 발견했습니다.
+      터치 화면은 <code>src/control/control.css</code>, 돔은
+      <code>src/display/display.css</code>입니다. 지구본 안의 색(비행기 아이콘, 궤도선,
+      구름 같은 것)은 CSS가 아니라 <code>globe.ts</code> 안에 있습니다 — 그리는 주체가
+      브라우저가 아니라 WebGL이라서 그렇습니다.
+    </p>
+
+    <div class="trap">
+      <h4><span class="trap-tag">주의</span>돔과 컨트롤은 같은 렌더러를 씁니다</h4>
+      <p style="margin:0">
+        <code>globe.ts</code>를 고치면 <b>두 화면이 같이 바뀝니다.</b> 컨트롤에서 예쁘라고
+        고친 것이 돔에서는 프로젝터 밝기 때문에 안 보일 수 있으니, <b>돔 쪽을 반드시 같이
+        확인</b>하세요. 한쪽만 바꾸려면 <code>interactive</code> 옵션으로 갈라져 있는
+        기존 코드를 따라 하면 됩니다.
+      </p>
+    </div>
+
+    <h3>고친 뒤 확인</h3>
+    <p>
+      <code>npm run typecheck</code>와 <code>npm run build</code>가 <b>둘 다</b> 조용히
+      끝나야 합니다. 그 다음 <code>npm run dev</code>로 <b>다섯 탭을 전부</b> 눌러 보세요 —
+      한 탭을 고치다 다른 탭을 깨뜨리는 일이 흔합니다(다섯이 같은 렌더러를 씁니다).
+    </p>
+    <p style="margin-bottom:0">
+      마지막으로 <b>기록 탭</b>을 열어 빨간 줄이 없는지 봅니다. 화면이 멀쩡해 보여도
+      기록에는 실패가 찍혀 있는 경우가 있고, 이 프로그램에서 그것이 유일한 관측
+      수단입니다(7장).
+    </p>
+
+    <h3>노트도 같이 고치세요</h3>
+    <p>
+      프로그램을 고쳤으면 이 노트도 고쳐야 합니다. 안 고치면 다음 사람이 <b>틀린 설명을
+      믿고</b> 시간을 씁니다 — 실제로 저장 위치를 옮긴 뒤 4장 설명이 하루 동안 거짓말을
+      하고 있었습니다.
+    </p>
+    <p>
+      원본은 <code>docs/note.template.html</code> <b>하나뿐</b>입니다.
+      <code>기술개발노트.html</code>과 <code>기술개발노트.docx</code>는 <b>만들어진
+      결과물</b>이라, 거기에 직접 쓴 내용은 다음에 다시 만들 때 말없이 사라집니다.
+    </p>
+    <pre><span class="dim"># 글을 고친 뒤, 읽는 파일 두 개를 다시 만든다</span>
+npm run note        <span class="dim"># → docs\기술개발노트.html  (웹·공유용)</span>
+npm run note:docx   <span class="dim"># → docs\기술개발노트.docx  (워드·인쇄용)</span></pre>
+    <p style="margin-bottom:0">
+      사진은 <code>docs\images\</code>에 JPG로 두고 본문에서 <code>{{이름}}</code>으로
+      부릅니다. 2장의 흐름도만은 Word가 그림을 못 그려서
+      <code>docs\images\diagram.png</code>로 미리 구워 두었으니, <b>SVG를 고쳤으면 그
+      PNG도 다시 만들어야</b> 둘이 같은 그림을 보여줍니다(방법은
+      <code>scripts\build-note-docx.mjs</code> 맨 위 주석에).
     </p>
   </section>
-
 
 </main>
 

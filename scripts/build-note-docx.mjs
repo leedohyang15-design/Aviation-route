@@ -515,16 +515,24 @@ function render(b, sink, opts = {}) {
       })
       break
     }
-    case 'list':
+    case 'list': {
+      /*
+       * A numbered list needs its OWN numbering instance, not a shared one.
+       * Word continues a definition wherever it is reused, so pointing every
+       * <ol> at a single reference made the fourth list in a chapter start at
+       * 10 — the count carried over from every list before it. One instance
+       * per list is what makes each restart at 1.
+       */
+      let ref = 'bul'
+      if (b.ordered) {
+        ref = `num${orderedLists.length}`
+        orderedLists.push(ref)
+      }
       b.items.forEach((item) =>
-        sink(
-          para(toTextRuns(item), {
-            after: 60,
-            numbering: { reference: b.ordered ? 'num' : 'bul', level: 0 }
-          })
-        )
+        sink(para(toTextRuns(item), { after: 60, numbering: { reference: ref, level: 0 } }))
       )
       break
+    }
     case 'dl':
       b.items.forEach((it) => {
         sink(para(toTextRuns(it.dt, { allBold: true, color: ACCENT }), { after: 20, indent: { left: 200 } }))
@@ -601,7 +609,9 @@ function render(b, sink, opts = {}) {
       const cols = Math.max(b.head[0]?.length ?? 0, ...b.rows.map((r) => r.length), 1)
       const widths = []
       if (b.rows.some((r) => r[0]?.key) && cols > 1) {
-        const first = Math.round(CONTENT * 0.18)
+        // Wide enough for a file path — the widest key column in the note is
+        // `src/control/ControlApp.tsx`, and at 18% it broke mid-word.
+        const first = Math.round(CONTENT * 0.24)
         widths.push(first)
         for (let i = 1; i < cols; i++) widths.push(Math.round((CONTENT - first) / (cols - 1)))
       } else {
@@ -716,6 +726,8 @@ toBlocks(parseHtml(template), blocks)
 
 const children = []
 const push = (p) => children.push(p)
+/** One numbering reference per ordered list, filled in while rendering. */
+const orderedLists = []
 let stepNo = 0
 for (const b of blocks) {
   if (b.type === 'h1') stepNo = 0
@@ -742,7 +754,10 @@ const doc = new Document({
   numbering: {
     config: [
       { reference: 'bul', levels: [level(LevelFormat.BULLET, '·')] },
-      { reference: 'num', levels: [level(LevelFormat.DECIMAL, '%1.')] }
+      ...orderedLists.map((reference) => ({
+        reference,
+        levels: [level(LevelFormat.DECIMAL, '%1.')]
+      }))
     ]
   },
   styles: { default: { document: { run: { font: KO, size: 19, color: INK } } } },
