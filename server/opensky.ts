@@ -7,9 +7,10 @@
 //
 // Only ONE process should ever poll — that is exactly what the hub is for.
 
+import { settings } from './settings'
 import type { Aircraft, FlightDetail } from '../src/shared/types'
 import type { FlightFeed } from './feed'
-import { settings } from './settings'
+
 import {
   greatCirclePoints,
   greatCircleDistanceKm,
@@ -43,8 +44,23 @@ const enum S {
 
 type RawState = (number | string | boolean | null)[]
 
+/**
+ * The credentials, from wherever they actually are.
+ *
+ * NOT `process.env` directly, which is what this used to read and why keys
+ * typed into the settings screen did nothing at all: they were saved to the
+ * settings file and then nobody looked at it. `settings()` covers both — the
+ * environment still wins, so an install with a `.env` is unaffected, and an
+ * install without one gets the keys the operator typed.
+ */
+function creds(): { id: string; secret: string } {
+  const s = settings()
+  return { id: s.openskyClientId.trim(), secret: s.openskyClientSecret.trim() }
+}
+
 export function hasOpenSkyCredentials(): boolean {
-  return Boolean(process.env.OPENSKY_CLIENT_ID && process.env.OPENSKY_CLIENT_SECRET)
+  const { id, secret } = creds()
+  return Boolean(id && secret)
 }
 
 export function createOpenSkyFeed(): FlightFeed {
@@ -61,10 +77,11 @@ export function createOpenSkyFeed(): FlightFeed {
     const now = Date.now()
     if (token && now < tokenExpiry - 30_000) return token
 
+    const { id, secret } = creds()
     const body = new URLSearchParams({
       grant_type: 'client_credentials',
-      client_id: process.env.OPENSKY_CLIENT_ID as string,
-      client_secret: process.env.OPENSKY_CLIENT_SECRET as string
+      client_id: id,
+      client_secret: secret
     })
     const res = await fetch(TOKEN_URL, {
       method: 'POST',

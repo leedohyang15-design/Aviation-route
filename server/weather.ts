@@ -16,7 +16,6 @@ import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import type { WeatherDecode, WeatherFrame, WeatherLayer } from '../src/shared/types'
 import {
-  MAPTILER_KEY,
   MAPTILER_TILE_BASE,
   MAPTILER_VARIABLES,
   MAPTILER_WEATHER_INDEX,
@@ -88,7 +87,10 @@ const ATTRIBUTION = '© MapTiler · NASA GIBS · EUMETSAT'
  * impossible to freeze wrong even if a bundler ever reorders the two.
  */
 function mtKey(): string {
-  return process.env.MAPTILER_KEY?.trim() || MAPTILER_KEY
+  // Through settings(), not process.env — see creds() in opensky.ts. The
+  // environment still wins inside settings(), so a .env keeps working; a key
+  // typed into the settings screen now works too, which it did not before.
+  return settings().maptilerKey.trim()
 }
 function mtIndexUrl(): string {
   return process.env.MAPTILER_WEATHER_INDEX || MAPTILER_WEATHER_INDEX
@@ -1232,8 +1234,8 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
     mtKey()
       ? `[weather] source: MapTiler ...${mtKey().slice(-4)} for rain and wind, geostationary ` +
         `satellites for cloud — ${WEATHER_FRAME_COUNT} keyframes, rain=${MAPTILER_VARIABLES.rain}`
-      : '[weather] source: geostationary satellites for cloud only. No MAPTILER_KEY reached the ' +
-        'hub, so there is no rain and no wind — put MAPTILER_KEY="..." in the .env beside the exe.'
+      : '[weather] source: geostationary satellites for cloud only. MapTiler 키가 없어 비와 ' +
+        '바람이 빠집니다 — 설정 화면(톱니바퀴 길게 누르기)의 "MapTiler 키"에 넣고 다시 시작하세요.'
   )
 
 

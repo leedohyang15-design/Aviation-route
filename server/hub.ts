@@ -82,7 +82,7 @@ export function selectFeed(): PausableFeed {
   opsLog(
     hasOpenSkyCredentials()
       ? '[hub] OpenSky credentials present — using live data'
-      : '[hub] no OPENSKY_CLIENT_ID/SECRET — no aircraft. Satellites and weather still work.'
+      : '[hub] OpenSky 키 없음 — 비행기 탭이 빕니다. 설정 화면에서 넣고 다시 시작하세요.'
   )
   return feed
 }

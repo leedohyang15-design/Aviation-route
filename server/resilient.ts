@@ -35,8 +35,8 @@ export function createFlightFeed(): PausableFeed {
 
   if (!upstream) {
     opsLog(
-      '[feed] no OPENSKY_CLIENT_ID/SECRET — the sky stays empty. ' +
-        'Put them in the .env beside the exe; satellites and weather work without them.'
+      '[feed] OpenSky 키가 없어 하늘이 비어 있습니다 — 설정 화면(톱니바퀴 길게 누르기)의 ' +
+        '"연결과 키"에 넣고 다시 시작하세요. 위성·화성·목성은 키 없이도 동작합니다.'
     )
   }
 
