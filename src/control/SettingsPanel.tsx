@@ -515,6 +515,16 @@ export function SettingsPanel({ view, send, onClose, log, watchLog }: Props): JS
           </section>
 
           <section>
+            <h3>빌드 정보</h3>
+            <p className="set-path">{view.buildId}</p>
+            <p className="set-hint">
+              지금 켜져 있는 exe가 정확히 어느 커밋으로 만들어졌는지입니다. 버그를 다시
+              확인할 때는 고친 커밋과 이 값이 같은지부터 확인하세요 — 다르면 아직 예전
+              exe가 돌고 있는 겁니다.
+            </p>
+          </section>
+
+          <section>
             <h3>초기화</h3>
             <button
               className="set-reset"

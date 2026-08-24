@@ -278,6 +278,9 @@ export function view(): SettingsView {
     },
     dataDir: dataDir(),
     logPath: LOG_PATH,
+    // Only defined under electron-vite's build (main/renderer); `npm run hub`
+    // runs server/standalone.ts straight through tsx, no Vite involved.
+    buildId: typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev (tsx, no build id)',
     restartPending: dirtyRestart.size > 0,
     source
   }

@@ -450,6 +450,10 @@ export interface SettingsView extends Omit<
   /** The log file's full path. Built on the server, which is the only side that
    *  knows whether this machine's separator is a slash or a backslash. */
   logPath: string
+  /** Git short hash + build timestamp, baked in at build time. Lets a bug
+   *  report and its fix be checked against the SAME commit instead of two
+   *  people assuming they mean the same exe. */
+  buildId: string
   /** True once a restart-only value has been changed but not yet applied. */
   restartPending: boolean
   /** Where each value came from, so the screen can say when a .env is winning. */
