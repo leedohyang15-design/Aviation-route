@@ -34,7 +34,7 @@ import {
 import { MARS_PROBES } from '../src/shared/probes'
 import { isTargetId } from '../src/shared/mars-future'
 import { GALILEAN, GALILEO_PROBE } from '../src/shared/jupiter'
-import { tleFetchedAt } from './tle'
+import { tleFetchedAt, tleLastError } from './tle'
 import { startMars, stopMars, marsLive } from './mars'
 import { withDeadline } from './http'
 import { mapsDir } from './datadir'
@@ -53,7 +53,9 @@ import { isKnownFlight } from '../src/common/flightClass'
 import { forceWeatherRefresh, haveFreshFrames, startWeather, stopWeather, weatherFrames } from './weather'
 import {
   initSatellites,
+  startElementRefresh,
   startSatellites,
+  stopElementRefresh,
   stopSatellites,
   snapshot as satSnapshot,
   snapshotAgeMs as satSnapshotAgeMs,
@@ -153,8 +155,22 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
   loadRouteCache()
   // Lookups run on their own clock, independent of the OpenSky poll cycle.
   startRouteResolver()
-  // Orbital elements load in the background; satellite mode waits on nothing.
-  void initSatellites()
+  /*
+   * Orbital elements load in the background; satellite mode waits on nothing.
+   *
+   * A real loop, not a fire-and-forget call — the failure case (Celestrak
+   * unreachable, no cache to fall back on) used to leave the tab at zero
+   * satellites for the rest of the process's life, since nothing was ever
+   * going to ask again until an operator noticed and pressed 새로고침 by hand.
+   * This retries with backoff on its own and settles onto Celestrak's own
+   * daily cadence once it succeeds. The propagation loop (startSatellites)
+   * reads `entries` fresh every tick, so elements arriving in the background
+   * reach a window that is already sitting on the satellite tab without
+   * either loop needing to know about the other.
+   */
+  startElementRefresh((n) => {
+    if (n > 0) opsLog(`[sat] ${n} satellites available to the exhibit`)
+  })
   // Bind explicitly to the IPv4 loopback so it always matches the windows'
   // ws://127.0.0.1 client (avoids IPv6/dual-stack mismatch and the Windows
   // firewall prompt that a 0.0.0.0 bind would trigger).
@@ -324,7 +340,13 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
   let lastOrbitAt = 0
   const onSatellites = () => {
     if (state.mode !== 'satellite') return
-    broadcast({ type: 'satellites', data: satSnapshot(), serverTime: Date.now(), tleAt: tleFetchedAt() })
+    broadcast({
+      type: 'satellites',
+      data: satSnapshot(),
+      serverTime: Date.now(),
+      tleAt: tleFetchedAt(),
+      tleError: tleLastError()
+    })
     if (!state.selected) return
     const d = satDetail(state.selected)
     broadcast({ type: 'satDetail', detail: d })
@@ -739,7 +761,13 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
       for (const frame of currentWeatherFrames()) sendWeatherFrame(ws, frame)
     } else if (state.mode === 'satellite') {
       const sats = satSnapshot()
-      send(ws, { type: 'satellites', data: sats, serverTime: Date.now(), tleAt: tleFetchedAt() })
+      send(ws, {
+        type: 'satellites',
+        data: sats,
+        serverTime: Date.now(),
+        tleAt: tleFetchedAt(),
+        tleError: tleLastError()
+      })
       if (state.selected) {
         const d = satDetail(state.selected)
         send(ws, { type: 'satDetail', detail: d })
@@ -977,6 +1005,7 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
     close() {
       feed.stop()
       stopSatellites()
+      stopElementRefresh()
       stopWeather()
       stopMars()
       stopRouteResolver()

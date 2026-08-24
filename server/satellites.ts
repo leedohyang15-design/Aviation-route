@@ -9,7 +9,7 @@
 
 import * as sat from 'satellite.js'
 import type { Satellite, SatelliteDetail, GeoPoint } from '../src/shared/types'
-import { SAT_SLICE_MS, OBSERVER_LAT, OBSERVER_LON } from '../src/shared/config'
+import { SAT_SLICE_MS, OBSERVER_LAT, OBSERVER_LON, TLE_MAX_AGE_MS } from '../src/shared/config'
 import { settings } from './settings'
 import { isPlausibleCoord } from '../src/shared/projection'
 import { loadTles, type TleRecord } from './tle'
@@ -183,6 +183,70 @@ export async function initSatellites(path?: string, force = false): Promise<numb
   entries = next
   opsLog(`[sat] ${entries.length} satellites ready for propagation`)
   return entries.length
+}
+
+let elementTimer: ReturnType<typeof setTimeout> | null = null
+let elementStopped = true
+let elementFailures = 0
+
+/**
+ * Keep the element set current, on its own clock — separate from the position
+ * loop, and the reason this exists at all.
+ *
+ * `initSatellites` used to be called exactly once, at startup, with nothing
+ * behind it: fire-and-forget, no retry, no reschedule. That is fine on the
+ * happy path — Celestrak answers, elements load, done for the day — and it is
+ * a dead end on the unhappy one. A Celestrak request that 403s with no cached
+ * elements to fall back on left the tab at zero satellites for the rest of
+ * the process's life: nothing was ever going to ask again, whether the block
+ * was a five-minute hiccup or a five-hour one, until an operator noticed and
+ * pressed 새로고침 by hand. "지금 다시 받기" was the only recovery path there
+ * was, for a failure that has nothing to do with anyone being at the screen.
+ *
+ * So this is a loop, on the same shape as the weather and Mars pollers: try,
+ * and if it comes back with zero satellites, try again soon with backoff
+ * rather than waiting out the full day. Once it succeeds, it settles onto the
+ * ordinary daily cadence — Celestrak's own refresh rate — because that is as
+ * often as the elements actually change.
+ */
+export function startElementRefresh(onLoaded: (n: number) => void): void {
+  elementStopped = false
+  if (elementTimer) return
+  const loop = async (): Promise<void> => {
+    if (elementStopped) return
+    let n = 0
+    try {
+      n = await initSatellites()
+    } catch (err) {
+      // initSatellites itself does not throw (loadTles swallows its own
+      // failures into an empty array), but nothing stops that from changing
+      // later, and a silent catch here would recreate the exact bug this
+      // exists to fix.
+      opsLog(`[sat] element refresh failed: ${(err as Error).message}`)
+    }
+    elementFailures = n > 0 ? 0 : elementFailures + 1
+    if (elementStopped) return
+    const wait =
+      elementFailures > 0
+        ? Math.min(TLE_MAX_AGE_MS, 60_000 * 2 ** (elementFailures - 1))
+        : TLE_MAX_AGE_MS
+    if (elementFailures > 0) {
+      opsLog(
+        `[sat] no elements yet — trying again in ${Math.round(wait / 60_000)}분 ` +
+          `(attempt ${elementFailures + 1})`
+      )
+    }
+    elementTimer = setTimeout(() => void loop(), wait)
+    ;(elementTimer as unknown as { unref?: () => void }).unref?.()
+    onLoaded(n)
+  }
+  void loop()
+}
+
+export function stopElementRefresh(): void {
+  elementStopped = true
+  if (elementTimer) clearTimeout(elementTimer)
+  elementTimer = null
 }
 
 /**

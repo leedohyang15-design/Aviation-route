@@ -61,8 +61,16 @@ const TLE_STALE_MS = 26 * 3600_000
  * "실시간" had no way to tell those apart, and neither did an operator trying to
  * work out why a pass time looked off.
  */
-function satSourceText(tleAt: number | null): string {
-  if (tleAt == null) return 'Celestrak · 궤도 정보 불러오는 중'
+function satSourceText(tleAt: number | null, tleError: string | null): string {
+  if (tleAt == null) {
+    // A real, standing failure looks nothing like "still loading" — the fetch
+    // already happened and already gave up. Saying so is the difference
+    // between an operator waiting for something that will never arrive and an
+    // operator who knows to check the connection or press 새로고침.
+    return tleError == null
+      ? 'Celestrak · 궤도 정보 불러오는 중'
+      : `Celestrak에 연결하지 못했어요 — 자동으로 다시 시도하는 중`
+  }
   const hours = Math.floor((Date.now() - tleAt) / 3600_000)
   const age = hours < 1 ? '방금' : hours < 24 ? `${hours}시간 전` : `${Math.floor(hours / 24)}일 전`
   return `Celestrak 궤도 정보 ${age} · 위치는 실시간 계산`
@@ -284,6 +292,7 @@ export function ControlApp(): JSX.Element {
     detail,
     satellites,
     tleAt,
+    tleError,
     satDetail,
     weather,
     weatherAt,
@@ -777,7 +786,7 @@ export function ControlApp(): JSX.Element {
             : isMars
             ? 'NASA · ESA · 소련 · 중국 — 착륙 기록'
             : isSat
-            ? satSourceText(tleAt)
+            ? satSourceText(tleAt, tleError)
             : statusText}
         </div>
         </div>

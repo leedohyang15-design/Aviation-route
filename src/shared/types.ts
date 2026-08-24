@@ -484,6 +484,18 @@ export type ServerMessage =
        * right between messages.
        */
       tleAt: number | null
+      /**
+       * Why there is nothing on screen, when there is nothing on screen.
+       *
+       * `tleAt` alone cannot say this: a download that fails with no cache to
+       * fall back on leaves `tleAt` at null forever, which looks identical to
+       * "hasn't tried yet" — the tab says "불러오는 중" for a load that already
+       * gave up and will not try again until the next scheduled attempt, hours
+       * away, or a manual 새로고침. Null here means either everything is fine
+       * or a fetch genuinely has not landed yet; a string means it has landed,
+       * and failed outright.
+       */
+      tleError: string | null
     }
   | { type: 'satDetail'; detail: SatelliteDetail | null }
   | { type: 'weather'; frame: WeatherFrame }

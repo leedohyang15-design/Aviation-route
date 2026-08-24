@@ -39,6 +39,9 @@ export interface HubView {
   satellites: Satellite[]
   /** When the element set behind those positions was downloaded, epoch ms. */
   tleAt: number | null
+  /** Why the satellite tab is empty, when it is empty and not just loading.
+   *  See the ServerMessage field this mirrors. */
+  tleError: string | null
   satDetail: SatelliteDetail | null
   /** What the operator can change, as the hub allows a window to see it.
    *  Null until the hub's first message. */
@@ -99,6 +102,7 @@ export function useHub(role: 'control' | 'display'): HubView {
   const [detail, setDetail] = useState<FlightDetail | null>(null)
   const [satellites, setSatellites] = useState<Satellite[]>([])
   const [tleAt, setTleAt] = useState<number | null>(null)
+  const [tleError, setTleError] = useState<string | null>(null)
   const [satDetail, setSatDetail] = useState<SatelliteDetail | null>(null)
   /** Live rover positions, keyed by probe id. Empty until the daily check lands. */
   const [marsLive, setMarsLive] = useState<Record<string, MarsLiveWire>>({})
@@ -138,6 +142,7 @@ export function useHub(role: 'control' | 'display'): HubView {
           // value moves once a day, so setting it unconditionally would
           // re-render the whole control window for nothing.
           setTleAt((prev) => (prev === msg.tleAt ? prev : msg.tleAt))
+          setTleError((prev) => (prev === msg.tleError ? prev : msg.tleError))
           break
         case 'satDetail':
           setSatDetail(msg.detail)
@@ -228,6 +233,7 @@ export function useHub(role: 'control' | 'display'): HubView {
     detail,
     satellites,
     tleAt,
+    tleError,
     satDetail,
     marsLive,
     weather,

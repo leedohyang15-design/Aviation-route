@@ -38,6 +38,23 @@ export function tleFetchedAt(): number | null {
   return fetchedAt
 }
 
+/**
+ * What actually went wrong on the last attempt, or null once something is on
+ * screen.
+ *
+ * `fetchedAt` alone cannot say this: it starts at null and STAYS null when a
+ * download fails with no cache to fall back on, which is indistinguishable
+ * from "hasn't tried yet" to anything reading it. On screen that is a tab that
+ * says "궤도 정보 불러오는 중" forever, because loading never actually starts
+ * again until the next scheduled attempt — hours away — or somebody presses
+ * 새로고침. A visitor has no way to tell "about to arrive" from "never coming"
+ * by looking at the same three words.
+ */
+let lastError: string | null = null
+export function tleLastError(): string | null {
+  return lastError
+}
+
 function findCache(explicit?: string): { path: string; data: { text: string; age: number } } | null {
   for (const p of explicit ? [explicit] : dataPathCandidates(CACHE_NAME)) {
     const data = readCache(p)
@@ -98,6 +115,7 @@ export async function loadTles(explicitPath?: string, force = false): Promise<Tl
   if (!force && cached && cached.age < TLE_MAX_AGE_MS) {
     const recs = parseTle(cached.text)
     fetchedAt = Date.now() - cached.age
+    lastError = null
     opsLog(`[tle] ${recs.length} satellites from cache (${Math.round(cached.age / 3600_000)}h old)`)
     return recs
   }
@@ -116,17 +134,23 @@ export async function loadTles(explicitPath?: string, force = false): Promise<Tl
       opsLog(`[tle] could not cache to disk: ${(err as Error).message}`)
     }
     fetchedAt = Date.now()
+    lastError = null
     opsLog(`[tle] downloaded ${recs.length} satellites from Celestrak`)
     return recs
   } catch (err) {
     // Loud, not silent: a satellite mode with no satellites should say why.
-    opsLog(`[tle] download failed: ${(err as Error).message}`)
+    const reason = (err as Error).message
+    opsLog(`[tle] download failed: ${reason}`)
     if (cached) {
       const recs = parseTle(cached.text)
       fetchedAt = Date.now() - cached.age
+      // A stale cache is still SOMETHING on screen, with its own age already
+      // shown — not the dead end lastError exists to flag.
+      lastError = null
       opsLog(`[tle] falling back to cached set (${Math.round(cached.age / 3600_000)}h old, ${recs.length} satellites)`)
       return recs
     }
+    lastError = reason
     opsLog('[tle] no cached elements either — satellite mode will be empty')
     return []
   }
