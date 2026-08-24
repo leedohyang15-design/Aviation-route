@@ -3769,18 +3769,24 @@ export class Globe {
         return Math.max(lum, sat * 0.85)
       }
 
-      /** Sensors whose picture carried no usable contrast this frame. */
-      const flat: number[] = []
+      // Resample every patch to its footprint on the world canvas once, then
+      // read it as numbers. Whole pixels: the wrapped copy has to land on the
+      // same sub-pixel phase as the unwrapped one or they disagree at 180.
+      const px = (lon: number): number => Math.round(((lon + 180) / 360) * W)
+      const py = (lat: number): number => Math.round(((90 - lat) / 180) * H)
+      interface Piece {
+        centerLon: number
+        src: Uint8ClampedArray
+        x0: number
+        y0: number
+        pw: number
+        ph: number
+      }
+      const pieces: Piece[] = []
       for (const [i, t] of patches.entries()) {
         const img = imgs.get(i)
         if (!img) continue
         const [west, south, east, north] = t.bbox as [number, number, number, number]
-        const centerLon = t.centerLon as number
-        // Resample the patch to its footprint on the world canvas once, then
-        // read it as numbers. Whole pixels: the wrapped copy has to land on the
-        // same sub-pixel phase as the unwrapped one or they disagree at 180.
-        const px = (lon: number): number => Math.round(((lon + 180) / 360) * W)
-        const py = (lat: number): number => Math.round(((90 - lat) / 180) * H)
         const x0 = px(west)
         const y0 = py(north)
         const pw = px(east) - x0
@@ -3791,17 +3797,45 @@ export class Globe {
         tmp.height = ph
         const tctx = tmp.getContext('2d')!
         tctx.drawImage(img, 0, 0, pw, ph)
-        const src = tctx.getImageData(0, 0, pw, ph).data
+        pieces.push({ centerLon: t.centerLon as number, src: tctx.getImageData(0, 0, pw, ph).data, x0, y0, pw, ph })
+      }
 
-        // This sensor's own distribution, from a coarse sample of its valid
-        // pixels — enough for two percentiles and far cheaper than all of them.
+      /*
+       * Group by centerLon before normalising, not after.
+       *
+       * A disc that straddles the antimeridian is fetched as two separate
+       * pieces — server/weather.ts's spansFor() — because a single WMS request
+       * cannot wrap past +/-180. Both pieces carry the same centerLon (it is
+       * still one physical sensor), but until this grouping they were stretched
+       * one at a time: each half's median/p98 came only from ITS OWN pixels, so
+       * two halves of the same cloud field could get two different stretches
+       * and disagree exactly at the join, drawing a visible seam down the
+       * sensor's own split line. Pooling every piece that shares a centerLon
+       * into one histogram before computing lo/hi gives both halves the same
+       * stretch, so there is nothing left to disagree about at the seam.
+       */
+      const byCenter = new Map<number, Piece[]>()
+      for (const p of pieces) {
+        const list = byCenter.get(p.centerLon)
+        if (list) list.push(p)
+        else byCenter.set(p.centerLon, [p])
+      }
+
+      /** Sensors whose picture carried no usable contrast this frame. */
+      const flat: number[] = []
+      for (const [centerLon, group] of byCenter) {
+        // This sensor's own distribution, pooled across every piece it was
+        // split into, from a coarse sample of its valid pixels — enough for
+        // two percentiles and far cheaper than all of them.
         const hist = new Int32Array(64)
         let counted = 0
-        for (let k = 0; k < pw * ph; k += 7) {
-          const o = k * 4
-          if (!src[o + 3]) continue
-          hist[Math.min(63, (cloudness(src[o], src[o + 1], src[o + 2]) * 64) | 0)]++
-          counted++
+        for (const { src, pw, ph } of group) {
+          for (let k = 0; k < pw * ph; k += 7) {
+            const o = k * 4
+            if (!src[o + 3]) continue
+            hist[Math.min(63, (cloudness(src[o], src[o + 1], src[o + 2]) * 64) | 0)]++
+            counted++
+          }
         }
         if (!counted) continue
         const at = (frac: number): number => {
@@ -3837,30 +3871,32 @@ export class Globe {
         }
         const hi = lo + spread
 
-        for (let j = 0; j < ph; j++) {
-          const y = y0 + j
-          if (y < 0 || y >= H) continue
-          const lat = (90 - ((y + 0.5) / H) * 180) * RAD
-          const cosLat = Math.cos(lat)
-          for (let i2 = 0; i2 < pw; i2++) {
-            const o = (j * pw + i2) * 4
-            const a = src[o + 3]
-            if (!a) continue // outside the disc: the sensor has no opinion here
-            const xw = x0 + i2
-            // The world wraps, so a patch that runs off one edge comes back on
-            // the other. Modulo, rather than drawing the picture three times.
-            const x = ((xw % W) + W) % W
-            const lonDeg = -180 + ((x + 0.5) / W) * 360
-            const cosD = cosLat * Math.cos((lonDeg - centerLon) * RAD)
-            let w = (cosD - FAR) / (NEAR - FAR)
-            if (w <= 0) continue
-            if (w > 1) w = 1
-            w = w * w * (3 - 2 * w) * (a / 255)
-            let c = (cloudness(src[o], src[o + 1], src[o + 2]) - lo) / (hi - lo)
-            c = c < 0 ? 0 : c > 1 ? 1 : c
-            const k = y * W + x
-            wacc[k] += w
-            acc[k] += c * w
+        for (const { src, x0, y0, pw, ph } of group) {
+          for (let j = 0; j < ph; j++) {
+            const y = y0 + j
+            if (y < 0 || y >= H) continue
+            const lat = (90 - ((y + 0.5) / H) * 180) * RAD
+            const cosLat = Math.cos(lat)
+            for (let i2 = 0; i2 < pw; i2++) {
+              const o = (j * pw + i2) * 4
+              const a = src[o + 3]
+              if (!a) continue // outside the disc: the sensor has no opinion here
+              const xw = x0 + i2
+              // The world wraps, so a patch that runs off one edge comes back on
+              // the other. Modulo, rather than drawing the picture three times.
+              const x = ((xw % W) + W) % W
+              const lonDeg = -180 + ((x + 0.5) / W) * 360
+              const cosD = cosLat * Math.cos((lonDeg - centerLon) * RAD)
+              let w = (cosD - FAR) / (NEAR - FAR)
+              if (w <= 0) continue
+              if (w > 1) w = 1
+              w = w * w * (3 - 2 * w) * (a / 255)
+              let c = (cloudness(src[o], src[o + 1], src[o + 2]) - lo) / (hi - lo)
+              c = c < 0 ? 0 : c > 1 ? 1 : c
+              const k = y * W + x
+              wacc[k] += w
+              acc[k] += c * w
+            }
           }
         }
       }
