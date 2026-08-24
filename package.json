@@ -15,6 +15,7 @@
     "test:projection": "tsx server/../scripts/test-projection.ts",
     "test:mars": "tsx scripts/test-mars-future.ts",
     "test:jupiter": "tsx scripts/test-jupiter.ts",
+    "note": "node scripts/build-note.mjs",
     "test:flights": "tsx scripts/test-opensky-flights.ts",
     "pack:win": "npm run build && electron-builder --win --dir",
     "dist:win": "npm run build && electron-builder --win",

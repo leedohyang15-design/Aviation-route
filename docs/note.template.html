@@ -1,0 +1,1025 @@
+<title>돔 전시 프로그램 인수인계</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  /* ── Tokens ───────────────────────────────────────────────────────────────
+     Two hues, and each one means something. Teal is the exhibit's satellite
+     light and carries structure — sections, links, rules. Amber is its
+     aircraft light and is reserved for the traps: if something on this page is
+     amber, it cost somebody a day. Neutrals are pulled toward blue, the way
+     the dome is.                                                             */
+  :root {
+    --ground: #eef1f5;
+    --surface: #ffffff;
+    --surface-2: #f6f8fa;
+    --ink: #101821;
+    --ink-2: #3d4d5e;
+    --muted: #64778a;
+    --rule: #d3dbe4;
+    --rule-soft: #e3e9f0;
+    --accent: #0d6f80;
+    --accent-soft: #e2f1f4;
+    --warn: #9a5410;
+    --warn-soft: #fbf0e2;
+    --warn-rule: #e0b483;
+    --code-bg: #0e161f;
+    --code-ink: #cbd8e4;
+    --shadow: 0 1px 2px rgba(16, 24, 33, .06), 0 8px 24px rgba(16, 24, 33, .06);
+  }
+  /* Dark comes in two doorways — the OS default (nothing stamped on :root) and
+     the explicit toggle — so the token block is written for both. Every colour
+     below is defined on the bare :root first; these two only REDEFINE tokens,
+     which is what keeps the un-stamped state from rendering one theme's text on
+     the other theme's ground. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0a0f16; --surface: #111a24; --surface-2: #16212d;
+      --ink: #e7eef6; --ink-2: #b3c3d3; --muted: #8598aa;
+      --rule: #26343f; --rule-soft: #1c2833;
+      --accent: #55cddf; --accent-soft: #10303a;
+      --warn: #eda45b; --warn-soft: #2b2013; --warn-rule: #6b4a24;
+      --code-bg: #070c12; --code-ink: #c3d2e0;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0a0f16; --surface: #111a24; --surface-2: #16212d;
+    --ink: #e7eef6; --ink-2: #b3c3d3; --muted: #8598aa;
+    --rule: #26343f; --rule-soft: #1c2833;
+    --accent: #55cddf; --accent-soft: #10303a;
+    --warn: #eda45b; --warn-soft: #2b2013; --warn-rule: #6b4a24;
+    --code-bg: #070c12; --code-ink: #c3d2e0;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans KR", -apple-system, "Malgun Gothic", sans-serif;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.75;
+    word-break: keep-all;
+  }
+
+  code, kbd, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  /* ── Masthead ─────────────────────────────────────────────────────────── */
+  .masthead {
+    background: var(--surface);
+    border-bottom: 1px solid var(--rule);
+    padding: 56px 24px 40px;
+  }
+  .masthead-in { max-width: 1180px; margin: 0 auto; }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: .06em;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .h1-sub {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    letter-spacing: .16em;
+    color: var(--muted);
+    margin: 0 0 24px;
+  }
+  .standfirst {
+    font-size: 18px;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0;
+    font-weight: 300;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    margin-top: 28px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule-soft);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  /* ── Page frame ───────────────────────────────────────────────────────── */
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px 96px; }
+
+  section { padding-top: 64px; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 10px;
+    margin-bottom: 28px;
+  }
+  .sec-no {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: .06em;
+  }
+  h2 { font-size: clamp(22px, 3vw, 27px); font-weight: 600; margin: 0; letter-spacing: -.015em; }
+  .sec-latin {
+    margin-left: auto;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: .16em;
+    color: var(--muted);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 40px 0 10px;
+    letter-spacing: -.01em;
+  }
+  h3:first-of-type { margin-top: 0; }
+  h4 { font-size: 15px; font-weight: 600; margin: 26px 0 6px; color: var(--ink-2); }
+
+  p { margin: 0 0 16px; max-width: 74ch; }
+  .lede { color: var(--ink-2); }
+
+  ul, ol { margin: 0 0 18px; padding-left: 22px; max-width: 74ch; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--muted); }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  strong { font-weight: 600; }
+
+  code {
+    font-size: .89em;
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    padding: .1em .35em;
+    color: var(--ink);
+  }
+
+  /* ── Data table ───────────────────────────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--surface);
+    margin: 0 0 20px;
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  thead th {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.k { font-weight: 600; white-space: nowrap; }
+  td .mono { font-size: 13px; color: var(--ink-2); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ── Machine text ─────────────────────────────────────────────────────── */
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 6px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0 0 18px;
+    border: 1px solid var(--rule);
+  }
+  pre b { color: #7ee0ef; font-weight: 500; }
+  pre i { color: #f0a55c; font-style: normal; }
+  pre .dim { color: #6e8194; }
+
+  /* ── Trap ─────────────────────────────────────────────────────────────── */
+  .trap {
+    background: var(--warn-soft);
+    border: 1px solid var(--warn-rule);
+    border-left: 4px solid var(--warn);
+    border-radius: 0 6px 6px 0;
+    padding: 18px 22px;
+    margin: 0 0 18px;
+  }
+  .trap h4 {
+    margin: 0 0 10px;
+    color: var(--warn);
+    font-size: 15.5px;
+    font-weight: 600;
+  }
+  .trap p, .trap ul { max-width: none; }
+  .trap p:last-child, .trap ul:last-child, .trap pre:last-child { margin-bottom: 0; }
+  .trap pre { border-color: var(--warn-rule); }
+  .trap-tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: .14em;
+    color: var(--warn);
+    border: 1px solid var(--warn-rule);
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin-right: 8px;
+    vertical-align: 2px;
+  }
+
+  /* ── Figures ──────────────────────────────────────────────────────────── */
+  figure { margin: 0 0 28px; }
+  figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: #05070c;
+    box-shadow: var(--shadow);
+  }
+  figcaption {
+    font-size: 13.5px;
+    color: var(--muted);
+    margin-top: 10px;
+    max-width: 74ch;
+  }
+  figcaption b { color: var(--ink-2); font-weight: 500; }
+  .figs {
+    display: grid;
+    gap: 28px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    margin-bottom: 28px;
+  }
+  .figs figure { margin: 0; }
+
+  /* ── Architecture diagram ─────────────────────────────────────────────── */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 26px 20px;
+    overflow-x: auto;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow);
+  }
+  .diagram svg { display: block; margin: 0 auto; min-width: 640px; }
+
+  /* ── Key/value list ───────────────────────────────────────────────────── */
+  .kv {
+    display: grid;
+    grid-template-columns: minmax(170px, max-content) 1fr;
+    gap: 2px 24px;
+    margin: 0 0 20px;
+    font-size: 14.5px;
+  }
+  .kv dt {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    color: var(--accent);
+    padding: 7px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .kv dd {
+    margin: 0;
+    padding: 7px 0;
+    border-top: 1px solid var(--rule-soft);
+    color: var(--ink-2);
+  }
+  .kv dt:first-of-type, .kv dd:first-of-type { border-top: 0; }
+
+  /* ── Checklist ────────────────────────────────────────────────────────── */
+  .steps { counter-reset: step; list-style: none; padding: 0; max-width: 74ch; }
+  .steps > li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 40px;
+    margin-bottom: 18px;
+  }
+  .steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 2px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    display: grid;
+    place-items: center;
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    margin-top: 80px;
+    padding: 28px 24px 60px;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  footer div { max-width: 1180px; margin: 0 auto; }
+
+  @media (max-width: 640px) {
+    .sec-latin { display: none; }
+    .kv { grid-template-columns: 1fr; gap: 0; }
+    .kv dd { padding-top: 0; border-top: 0; padding-bottom: 12px; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="masthead-in">
+    <p class="kicker">기술개발 노트 · 인수인계</p>
+    <h1>돔 전시 프로그램 — 하늘과 행성</h1>
+    <p class="h1-sub">DOME EXHIBIT · AVIATION-ROUTE</p>
+    <p class="standfirst">
+      과학관 돔 프로젝터와 관람객 터치스크린 두 화면으로 도는 실시간 전시 프로그램입니다.
+      지금 하늘을 나는 비행기, 지구를 도는 위성, 오늘의 날씨, 화성의 착륙지, 목성의 달 —
+      다섯 가지를 같은 렌더러 하나로 그립니다. 이 문서는 프로그램을 넘겨받아 운영하고
+      고칠 사람을 위한 것이고, 특히 <b>7장(함정)</b>은 실제로 시간을 쓴 것들만 적었습니다.
+    </p>
+    <div class="meta">
+      <span><b>저장소</b> leedohyang15-design/Aviation-route</span>
+      <span><b>브랜치</b> claude/science-museum-flight-tracker-ui-r7x8mv</span>
+      <span><b>구성</b> Electron + Vite + React 18 + TypeScript + three.js</span>
+      <span><b>대상</b> Windows 전시 PC 1대 / 모니터 2대</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ────────────────────────────────────────────────────────────────── 1 -->
+  <section id="overview">
+    <div class="sec-head">
+      <span class="sec-no">01</span>
+      <h2>개요</h2>
+      <span class="sec-latin">Overview</span>
+    </div>
+
+    <p class="lede">
+      하드웨어는 PC 한 대와 모니터 두 대입니다. 한 대는 <b>돔 프로젝터</b>로 나가고, 한 대는
+      관람객이 만지는 <b>터치스크린</b>입니다. 인터넷 연결이 필요하며, 끊겨도 프로그램은
+      죽지 않고 마지막에 받아둔 자료로 계속 돕니다.
+    </p>
+
+    <p>본 프로그램은 다음 두 가지 목적을 위해 개발되었습니다.</p>
+    <ol>
+      <li>실시간 항공·우주·기상 데이터를 받아와 <b>정사각도법(equirectangular) 영상</b>으로 돔에 투사한다.</li>
+      <li>관람객이 터치스크린으로 직접 돌려보고 눌러서, 고른 대상의 설명을 <b>두 화면에 동시에</b> 띄운다.</li>
+    </ol>
+
+    <h3>1) 두 개의 창</h3>
+    <p>
+      Electron 창 두 개가 뜹니다. 둘은 <b>완전히 같은 렌더러</b>를 쓰고, 설정만 다릅니다.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>창</th><th>파일</th><th>크기</th><th>역할</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">DISPLAY (돔)</td>
+            <td><span class="mono">display.html</span></td>
+            <td class="mono num">1664 × 838 고정</td>
+            <td>돔 프로젝터로 나가는 2:1 프레임. 좌상단에 고정되고 나머지 영역은 검게 둡니다. 조작 불가.</td>
+          </tr>
+          <tr>
+            <td class="k">CONTROL (터치)</td>
+            <td><span class="mono">control.html</span></td>
+            <td class="mono">창 크기에 맞춤</td>
+            <td>같은 지구본을 그리되 드래그·확대·선택이 됩니다. 탭·칩·검색 등 조작 UI가 여기 있습니다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>2) 다섯 개의 탭</h3>
+    <p>
+      <b>비행기 · 위성 · 날씨 · 화성 · 목성.</b> 탭은 터치스크린에서 누르고, 누르는 즉시
+      돔도 같이 바뀝니다. 두 창이 각자 판단하는 게 아니라, 아래 허브가 상태를 정하고
+      양쪽에 알려주기 때문입니다.
+    </p>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 2 -->
+  <section id="architecture">
+    <div class="sec-head">
+      <span class="sec-no">02</span>
+      <h2>구조</h2>
+      <span class="sec-latin">Architecture</span>
+    </div>
+
+    <p class="lede">
+      가장 중요한 규칙 하나: <b>허브(hub)가 유일한 진실의 원천</b>입니다. 지금 어떤 탭인지,
+      무엇이 선택돼 있는지, 어떤 데이터가 최신인지는 전부 허브가 들고 있고, 두 창은 그걸
+      받아 그리기만 합니다. 창끼리는 직접 대화하지 않습니다.
+    </p>
+
+    <div class="diagram">
+      <svg viewBox="0 0 900 452" width="900" height="452" role="img"
+           aria-label="외부 데이터 소스가 허브로 들어오고, 허브가 웹소켓으로 돔 창과 컨트롤 창에 같은 상태를 보내는 구조도">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="IBM Plex Sans KR, sans-serif" font-size="12">
+
+          <!-- external sources -->
+          <text x="20" y="26" fill="var(--muted)">외부 (인터넷)</text>
+          <g fill="var(--surface-2)" stroke="var(--rule)">
+            <rect x="20" y="40" width="176" height="36" rx="4"/>
+            <rect x="20" y="86" width="176" height="36" rx="4"/>
+            <rect x="20" y="132" width="176" height="36" rx="4"/>
+            <rect x="20" y="178" width="176" height="36" rx="4"/>
+          </g>
+          <g fill="var(--ink-2)" font-size="12.5">
+            <text x="34" y="63" font-family="IBM Plex Mono, monospace">OpenSky · adsbdb</text>
+            <text x="34" y="109" font-family="IBM Plex Mono, monospace">Celestrak (TLE)</text>
+            <text x="34" y="155" font-family="IBM Plex Mono, monospace">MapTiler · NASA GIBS</text>
+            <text x="34" y="201">NASA/JPL 로버 위치</text>
+          </g>
+
+          <!-- hub -->
+          <rect x="300" y="66" width="230" height="150" rx="6"
+                fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="415" y="98" text-anchor="middle" fill="var(--accent)"
+                font-size="13" font-weight="600" letter-spacing="1.2">HUB</text>
+          <g fill="var(--ink-2)" font-size="11.5" text-anchor="middle">
+            <text x="415" y="124" font-family="IBM Plex Mono, monospace">server/hub.ts</text>
+            <text x="415" y="146" font-family="IBM Plex Mono, monospace">ws://127.0.0.1:8787</text>
+            <text x="415" y="176">현재 탭 · 선택 · 최신 데이터</text>
+            <text x="415" y="196">디스크 캐시 · 운영 로그</text>
+          </g>
+
+          <!-- windows -->
+          <g fill="var(--surface-2)" stroke="var(--rule)">
+            <rect x="640" y="46" width="240" height="72" rx="4"/>
+            <rect x="640" y="164" width="240" height="72" rx="4"/>
+          </g>
+          <g font-size="12.5">
+            <text x="660" y="72" fill="var(--ink)" font-weight="600">DISPLAY · 돔</text>
+            <text x="660" y="94" fill="var(--muted)" font-size="11.5">1664×838 · 조작 없음</text>
+            <text x="660" y="190" fill="var(--ink)" font-weight="600">CONTROL · 터치</text>
+            <text x="660" y="212" fill="var(--muted)" font-size="11.5">드래그 · 확대 · 선택</text>
+          </g>
+
+          <!-- arrows in -->
+          <g stroke="var(--rule)" fill="none" stroke-width="1.4" color="var(--muted)">
+            <path d="M196 58 C 248 58, 248 96, 296 96" marker-end="url(#ar)"/>
+            <path d="M196 104 C 248 104, 248 126, 296 126" marker-end="url(#ar)"/>
+            <path d="M196 150 C 248 150, 248 156, 296 156" marker-end="url(#ar)"/>
+            <path d="M196 196 C 248 196, 248 186, 296 186" marker-end="url(#ar)"/>
+          </g>
+
+          <!-- arrows out -->
+          <g stroke="var(--accent)" fill="none" stroke-width="1.6" color="var(--accent)">
+            <path d="M532 110 C 590 110, 590 82, 636 82" marker-end="url(#ar)"/>
+            <path d="M532 172 C 590 172, 590 200, 636 200" marker-end="url(#ar)"/>
+          </g>
+          <!-- control -> hub (input) -->
+          <g stroke="var(--warn)" fill="none" stroke-width="1.4" stroke-dasharray="4 3" color="var(--warn)">
+            <path d="M700 240 C 700 304, 460 304, 440 222" marker-end="url(#ar)"/>
+          </g>
+          <text x="566" y="300" fill="var(--warn)" font-size="11.5">탭 · 선택 · 시점 (컨트롤만 보냄)</text>
+
+          <!-- footnote row -->
+          <g fill="var(--muted)" font-size="11">
+            <text x="20" y="266">허브는 Electron 메인 프로세스 안에서 돕니다 (별도 실행 파일 아님)</text>
+          </g>
+
+          <!-- local-only lane -->
+          <line x1="20" y1="322" x2="880" y2="322" stroke="var(--rule-soft)"/>
+          <text x="20" y="352" fill="var(--muted)">인터넷을 쓰지 않는 것</text>
+          <g fill="var(--surface-2)" stroke="var(--rule)">
+            <rect x="20" y="366" width="270" height="34" rx="4"/>
+            <rect x="306" y="366" width="270" height="34" rx="4"/>
+            <rect x="592" y="366" width="288" height="34" rx="4"/>
+          </g>
+          <g fill="var(--ink-2)" font-size="12">
+            <text x="34" y="388">화성 착륙지 12곳 (probes.ts)</text>
+            <text x="320" y="388">목성의 달 4개 (jupiter.ts)</text>
+            <text x="606" y="388">행성 지도 이미지 (public/)</text>
+          </g>
+          <text x="20" y="426" fill="var(--muted)" font-size="11">
+            이 셋은 창이 직접 들고 있어서, 네트워크가 완전히 끊겨도 그대로 동작합니다.
+          </text>
+        </g>
+      </svg>
+    </div>
+    <p style="font-size:13.5px;color:var(--muted);max-width:74ch">
+      실선(청록)은 허브가 두 창에 밀어주는 방향, 점선(주황)은 컨트롤 창에서 허브로 올라가는
+      조작입니다. <b>돔 창은 아무것도 보내지 않습니다</b> — 그래서 돔이 멋대로 다른 화면을
+      띄우는 일이 구조적으로 없습니다.
+    </p>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 3 -->
+  <section id="sources">
+    <div class="sec-head">
+      <span class="sec-no">03</span>
+      <h2>데이터 출처</h2>
+      <span class="sec-latin">Data sources</span>
+    </div>
+
+    <p class="lede">
+      탭마다 출처와 주기가 다릅니다. <b>키가 필요한 것은 두 개뿐</b>이고, 나머지는 키 없이
+      돌아갑니다. 어떤 것이 끊겼을 때 화면이 어떻게 되는지가 마지막 열입니다.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>탭</th><th>출처</th><th>갱신 주기</th><th>키</th><th>끊겼을 때</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">비행기</td>
+            <td>OpenSky <span class="mono">/states/all</span><br><span class="mono">노선은 adsbdb</span></td>
+            <td class="num">90초<br><span class="mono">노선 0.3초당 1건</span></td>
+            <td>필요</td>
+            <td>하늘이 빕니다. 노선 캐시는 디스크에 남아 다음에 재사용됩니다.</td>
+          </tr>
+          <tr>
+            <td class="k">위성</td>
+            <td>Celestrak TLE<br><span class="mono">SGP4로 위치 계산</span></td>
+            <td class="num">하루 1회 내려받기<br><span class="mono">위치는 2초마다 계산</span></td>
+            <td>불필요</td>
+            <td>캐시된 궤도 정보로 계속 돕니다. 화면에 “N일 전 정보”라고 표시됩니다.</td>
+          </tr>
+          <tr>
+            <td class="k">날씨</td>
+            <td>MapTiler (비·바람)<br>NASA GIBS (구름)</td>
+            <td class="num">5분</td>
+            <td>MapTiler만 필요</td>
+            <td>90분 넘은 그림은 <b>일부러 안 띄웁니다</b>. “불러오는 중”이 뜹니다.</td>
+          </tr>
+          <tr>
+            <td class="k">화성</td>
+            <td>착륙지 12곳은 코드에 내장<br>로버 현재 위치만 NASA/JPL</td>
+            <td class="num">하루 1회</td>
+            <td>불필요</td>
+            <td>착륙지는 그대로 뜹니다. 로버는 마지막으로 알려진 위치에 섭니다.</td>
+          </tr>
+          <tr>
+            <td class="k">목성</td>
+            <td><b>없음.</b> 전부 계산<br><span class="mono">shared/jupiter.ts</span></td>
+            <td class="num">실시간 계산</td>
+            <td>불필요</td>
+            <td>영향 없음. 건물 전원만 있으면 됩니다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>디스크에 남는 파일</h3>
+    <p>
+      실행 파일 옆(개발 중에는 프로젝트 폴더)에 만들어집니다. 지워도 되지만, 지우면 다음
+      실행 때 처음부터 다시 받아옵니다.
+    </p>
+    <dl class="kv">
+      <dt>aviation-route.log</dt><dd>운영 로그. 문제가 생기면 <b>여기부터 봅니다</b> (6장).</dd>
+      <dt>aviation-route-tle.txt</dt><dd>위성 궤도 정보 캐시.</dd>
+      <dt>aviation-route-routes.json</dt><dd>편명 → 출발/도착 공항 캐시.</dd>
+      <dt>aviation-route-weather.json</dt><dd>마지막 기상 영상.</dd>
+      <dt>aviation-route-mars.json</dt><dd>로버 위치·주행 경로 캐시.</dd>
+    </dl>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 4 -->
+  <section id="setup">
+    <div class="sec-head">
+      <span class="sec-no">04</span>
+      <h2>설치와 설정</h2>
+      <span class="sec-latin">Setup</span>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <h4 style="margin-top:0">키 파일 만들기 — <span class="mono">.env</span></h4>
+        <p>프로젝트 루트(배포판은 exe 옆)에 <code>.env</code> 파일을 만들고 아래 세 줄을 넣습니다.</p>
+        <pre><span class="dim"># .env — 이 파일은 절대 저장소에 올리지 않습니다 (.gitignore에 등록돼 있음)</span>
+OPENSKY_CLIENT_ID="..."
+OPENSKY_CLIENT_SECRET="..."
+MAPTILER_KEY="..."</pre>
+        <div class="trap" style="margin-top:14px">
+          <h4><span class="trap-tag">보안</span>키를 남에게 넘기지 마세요</h4>
+          <p style="margin:0">
+            빌드 폴더나 압축본을 누구에게 전달할 때는 <code>.env</code>가 들어 있지 않은지
+            반드시 확인합니다. 로그에도 키는 찍히지 않게 해두었습니다(끝 네 자리만 표시).
+          </p>
+        </div>
+      </li>
+
+      <li>
+        <h4>행성 지도 넣기 — <span class="mono">public/</span></h4>
+        <p>
+          용량이 커서 저장소에 없습니다. 아래 네 개를 <code>public/</code>에 직접 넣어야 합니다.
+          모두 <b>가로:세로가 정확히 2:1</b>인 정사각도법 이미지여야 합니다.
+        </p>
+        <dl class="kv">
+          <dt>earth_equirect.jpg</dt><dd>지구 낮 지도</dd>
+          <dt>earth_night.jpg</dt><dd>지구 밤 불빛 (없으면 밤이 그냥 어두워집니다)</dd>
+          <dt>mars_equirect.jpg</dt><dd>화성 지도</dd>
+          <dt>jupiter_equirect.jpg</dt><dd>목성 지도</dd>
+        </dl>
+        <p style="margin-bottom:0">
+          없으면 그 탭은 <b>격자(wireframe)</b>로 대체되고 로그에 그렇게 적힙니다. 크기는
+          <b>가로 8192px 이하</b>를 권장합니다 — 이유는 7장 첫 번째 함정에 있습니다.
+        </p>
+      </li>
+
+      <li>
+        <h4>실행</h4>
+        <pre><span class="dim"># 개발 (창이 두 배로 뜹니다 — 7장 마지막 함정 참고)</span>
+npm install
+npm run dev
+
+<span class="dim"># 전시용 빌드</span>
+npm run pack:win     <span class="dim"># 폴더로</span>
+npm run dist:win     <span class="dim"># 설치본으로</span></pre>
+      </li>
+
+      <li>
+        <h4>화면 배치</h4>
+        <p style="margin-bottom:0">
+          돔 창은 <b>1664×838 프레임을 창의 좌상단에 고정</b>해서 그립니다. 프로젝터로 보내는
+          모니터에 이 창을 전체화면으로 올려두면 되고, 나머지 여백은 검은색이라 그대로 두면
+          됩니다. 컨트롤 창은 터치스크린 쪽에 전체화면으로 둡니다.
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 5 -->
+  <section id="screens">
+    <div class="sec-head">
+      <span class="sec-no">05</span>
+      <h2>화면</h2>
+      <span class="sec-latin">Screens</span>
+    </div>
+
+    <p class="lede">
+      아래는 실제 동작 화면입니다. 다만 <b>지도 이미지가 없는 개발 환경에서 촬영</b>했기 때문에,
+      지구는 격자로, 목성은 대체 이미지로 나옵니다 — 전시 PC에서는 그 자리에 실제 사진이
+      들어갑니다. UI·배치·글자는 실물과 같습니다.
+    </p>
+
+    <figure>
+      <img src="{{01-boot}}" alt="검은 화면 가운데 '여행 준비 중이에요'라는 문구와 점선 항로 위를 지나는 비행기 아이콘">
+      <figcaption>
+        <b>켤 때 나오는 로딩 화면.</b> 행성 지도 네 장을 GPU에 올리는 동안(전시 PC 기준 약 6초)
+        창이 멈춰 있기 때문에, 반쯤 그려진 지구 대신 이 카드를 먼저 띄웁니다. 비행기는
+        <b>CSS transform</b>으로만 움직이므로 그 멈춘 몇 초 동안에도 계속 납니다 —
+        자바스크립트로 돌리는 애니메이션은 하필 그때 같이 멈춥니다.
+      </figcaption>
+    </figure>
+
+    <figure>
+      <img src="{{02-control-satellite}}" alt="위성 탭. 지구본 위에 청록색과 주황색 점이 가득하고, 상단에 궤도별 칩과 검색창">
+      <figcaption>
+        <b>위성 탭 (컨트롤 화면).</b> 상단 숫자는 지금 화면에 떠 있는 개수, 그 옆 작은 글씨는
+        <b>궤도 정보를 언제 받아왔는지</b>입니다. 칩으로 궤도 종류를 끄고 켤 수 있고
+        (여기서는 스타링크가 꺼져 있습니다), 이름으로 검색할 수도 있습니다.
+        가로로 지나는 주황색 선은 정지궤도대입니다.
+      </figcaption>
+    </figure>
+
+    <div class="figs">
+      <figure>
+        <img src="{{06-control-jupiter-card}}" alt="목성 탭에서 가니메데를 선택해 오른쪽에 상세 카드가 열린 모습">
+        <figcaption>
+          <b>목성 탭 · 달을 선택한 상태.</b> 카드 안의 원 그림은 지금 이 순간 네 달이 목성
+          둘레 어디에 있는지를 <b>위에서 내려다본</b> 것이고, 궤도 크기는 실제 비율입니다.
+        </figcaption>
+      </figure>
+      <figure>
+        <img src="{{07-dome-jupiter-card}}" alt="돔 화면에 목성 지도와 달 아이콘, 왼쪽 아래에 설명 판">
+        <figcaption>
+          <b>같은 순간의 돔 화면.</b> 돔에는 글자를 최소한만 올립니다 — 멀리서 읽히는 건
+          제목과 큰 숫자 하나뿐이라, 자세한 내용은 터치스크린 쪽 카드가 맡습니다.
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="figs">
+      <figure>
+        <img src="{{08-control-mars}}" alt="화성 탭. 다이아몬드 모양 착륙지 표시가 지도 위에 흩어져 있음">
+        <figcaption>
+          <b>화성 탭.</b> 색이 상태를 나타냅니다 — 아직 일하는 탐사선, 임무가 끝난 것,
+          앞으로 갈 후보지. 칩은 세 줄로 나뉘어 있습니다.
+        </figcaption>
+      </figure>
+      <figure>
+        <img src="{{09-control-weather}}" alt="날씨 탭. 지도는 비어 있고 상단에 '기상 영상 불러오는 중' 배지">
+        <figcaption>
+          <b>날씨 탭이 비어 있을 때.</b> 이 상태가 정상적으로 표시되는 것이 중요합니다 —
+          오래된 그림을 오늘 날씨인 척 띄우지 않고, 대신 <b>“불러오는 중”</b>이라고 말합니다.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 6 -->
+  <section id="log">
+    <div class="sec-head">
+      <span class="sec-no">06</span>
+      <h2>로그 읽는 법</h2>
+      <span class="sec-latin">Reading the log</span>
+    </div>
+
+    <p class="lede">
+      배포된 exe에는 콘솔이 없습니다. <b>화면에 뭔가 이상하면 로그가 유일한 관측 수단</b>이고,
+      그래서 화면이 하는 일은 거의 전부 한 줄씩 로그에 남게 해두었습니다.
+      파일은 <code>aviation-route.log</code>이고, 화면(렌더러)에서 나온 줄에는 끝에
+      <code>&lt;dome#1&gt;</code>처럼 <b>어느 창이 말한 것인지</b>가 붙습니다.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>줄</th><th>뜻</th><th>봐야 할 때</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k mono">[boot]</td>
+            <td>지도 네 장이 다 올라간 시각. 로딩 화면이 걷히는 순간입니다.</td>
+            <td>켜는 데 오래 걸릴 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">[layer]</td>
+            <td>지금 화면에 아이콘을 <b>몇 개 그리고 있는지</b>. 개수가 바뀔 때만 찍힙니다.</td>
+            <td>아이콘이 안 보일 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">[stall]</td>
+            <td>프레임이 끊긴 구간. 렉의 원인을 가려줍니다.</td>
+            <td>화면이 버벅일 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">[hub] mode →</td>
+            <td>탭을 눌렀을 때 <b>허브가 그 탭에 보낼 게 있었는지</b>.</td>
+            <td>탭이 비어 있을 때</td>
+          </tr>
+          <tr>
+            <td class="k mono">[weather] [sat]<br>[tle] [opensky]<br>[routes] [mars]</td>
+            <td>각 데이터 수집기의 상태. 실패는 <b>반드시</b> 이유와 함께 남습니다.</td>
+            <td>특정 탭만 이상할 때</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>가장 자주 쓰는 두 줄</h3>
+    <p>이 둘은 짝입니다. <b>하나는 “보냈는가”, 하나는 “그렸는가”</b>를 답합니다.</p>
+    <pre><b>[hub] mode → satellite</b> — 16091 elements loaded, snapshot of 5331 from 0.7s ago
+<b>[layer] earth/satellite</b> — drawing 5331 of 5331 (was 0), mesh visible, icon ok</pre>
+    <p>
+      아이콘이 안 보인다는 신고가 들어오면 이 두 줄을 봅니다.
+      <code>drawing 0 of 5331</code>이면 데이터는 왔는데 안 그려진 것이고,
+      <code>drawing 0 of 0</code>이면 애초에 오지 않은 것입니다. 원인도 고칠 곳도 완전히 다릅니다.
+    </p>
+
+    <h4>렉을 판정하는 줄</h4>
+    <pre><span class="dim"># 남이 스레드를 막은 경우 — 공백은 길고 그리기는 짧습니다</span>
+[stall] <i>2708ms</i> with no frame (+5 more) — last draw <b>1ms</b>, 5141 objects
+
+<span class="dim"># 렌더러 자신이 느린 경우</span>
+[stall] the renderer itself took <i>2411ms</i> to draw one frame — 5141 objects</pre>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 7 -->
+  <section id="traps">
+    <div class="sec-head">
+      <span class="sec-no">07</span>
+      <h2>함정</h2>
+      <span class="sec-latin">Traps &amp; gotchas</span>
+    </div>
+
+    <p class="lede">
+      전부 <b>실제로 겪고 시간을 쓴 것</b>들입니다. 같은 곳에 다시 빠지지 않도록,
+      증상 → 원인 → 대응 순으로 적었습니다.
+    </p>
+
+    <div class="trap">
+      <h4><span class="trap-tag">01</span>화성 지도가 켤 때마다 2초를 잡아먹습니다</h4>
+      <p><b>증상</b> — 켤 때 창이 몇 초간 멈춥니다. 로그에 <code>[mars] uploaded to GPU in 2134ms</code>.</p>
+      <p>
+        <b>원인</b> — 지도가 가로 23,040px인데 이 PC의 GPU는 16,384px까지만 받습니다.
+        three.js가 <b>CPU에서 캔버스로 통째로 다시 그려서</b> 줄인 다음 올립니다.
+        창마다 따로 합니다.
+      </p>
+      <p><b>대응</b> — 지도 파일을 8192×4096으로 줄입니다. 프레임이 1664px이고 최대 확대가 세계의 1/10이라 화면에서 차이가 보이지 않습니다. 윈도우 기본 기능만으로:</p>
+      <pre>Add-Type -AssemblyName System.Drawing
+$p = "C:\path\to\public\mars_equirect.jpg"
+$src = [System.Drawing.Image]::FromFile($p)
+$dst = New-Object System.Drawing.Bitmap 8192, 4096
+$g = [System.Drawing.Graphics]::FromImage($dst)
+$g.InterpolationMode = 'HighQualityBicubic'
+$g.DrawImage($src, 0, 0, 8192, 4096)
+$src.Dispose(); $g.Dispose()
+$dst.Save("$p.new", [System.Drawing.Imaging.ImageFormat]::Jpeg)
+$dst.Dispose(); Move-Item "$p.new" $p -Force</pre>
+    </div>
+
+    <div class="trap">
+      <h4><span class="trap-tag">02</span>목성 지도는 극지방이 없습니다</h4>
+      <p>
+        <b>증상</b> — 목성 위아래에 검은 띠, 또는 그 경계에 무지개색 줄무늬가 생깁니다.
+      </p>
+      <p>
+        <b>원인</b> — 목성은 항상 적도면 근처에서만 촬영되기 때문에 공개된 지도는
+        <b>남북 60° 부근에서 끊깁니다.</b> 파일은 2:1을 맞추려고 그 바깥을 검게 채워 놓은
+        것이고, 검정과 구름이 만나는 경계에서 JPEG 링잉(무지개색)이 생깁니다.
+      </p>
+      <p>
+        <b>대응</b> — <code>JUPITER_MAP_LAT_LIMIT</code>(현재 <b>58</b>)로 해결돼 있습니다.
+        목성 탭은 위아래 90°가 아니라 <b>58°까지만</b> 프레임에 담아서, 지도가 가진 그림이
+        화면을 꽉 채우게 합니다. 지도를 다른 파일로 바꾸면 이 값을 그 파일에 맞게
+        (실제 끊기는 위도보다 1~2° 안쪽으로) 고쳐야 합니다. 극지방까지 있는 지도라면 90.
+      </p>
+      <p style="margin-bottom:0">
+        ※ 검은 부분을 <b>지우거나 늘려서 메우는</b> 방식은 두 번 시도했고 둘 다 원래 문제보다
+        나빴습니다(행성 위가 잘려 보이거나, 세로 줄무늬가 번짐). 다시 시도하지 마세요.
+      </p>
+    </div>
+
+    <div class="trap">
+      <h4><span class="trap-tag">03</span>날씨 탭이 몇 분 동안 비어 있었습니다</h4>
+      <p>
+        <b>증상</b> — 켠 직후 날씨 탭이 계속 “불러오는 중”. 로그에는 비·바람을 이미 받았다고 찍혀 있음.
+      </p>
+      <p>
+        <b>원인</b> — 레이어는 <b>다 같이</b> 나가게 돼 있었습니다(이번 시각 비를 지난 시각 구름
+        위에 그리면 안 되니까). 그런데 구름은 위성사진 20장이라 몇 분이 걸리고, 그동안 비가
+        <b>아무도 못 보는 낡은 그림을 위해</b> 붙잡혀 있었습니다.
+      </p>
+      <p style="margin-bottom:0">
+        <b>대응</b> — 화면이 비어 있을 때는 각 레이어가 도착하는 즉시 올라갑니다. 같은 폴링에서
+        나온 것들이라 서로 어긋나지 않습니다. <b>화면에 뭔가 떠 있을 때만</b> 원래의 동시 교체
+        규칙이 적용됩니다.
+      </p>
+    </div>
+
+    <div class="trap">
+      <h4><span class="trap-tag">04</span>90분 넘은 기상 영상은 일부러 안 띄웁니다</h4>
+      <p style="margin-bottom:0">
+        오후 4시에 켰는데 오전 10시 하늘이 뜨는 건 <b>낡은 그림이 아니라 틀린 그림</b>이라서,
+        <code>WEATHER_CACHE_MAX_AGE_MS</code>(90분)를 넘으면 표시하지 않고 “불러오는 중”을
+        보여줍니다. 빈 화면을 보고 “고장났나” 하기 전에, 로그의
+        <code>[hub] mode → weather</code> 줄을 먼저 확인하세요. 거기에 이유가 적혀 있습니다.
+      </p>
+    </div>
+
+    <div class="trap">
+      <h4><span class="trap-tag">05</span>위성 루프가 스스로 멈출 수 있었습니다</h4>
+      <p>
+        <b>증상</b> — 위성 탭에 아무것도 안 뜨고, 다시 들어가도 마찬가지.
+      </p>
+      <p>
+        <b>원인</b> — 한 번 계산하는 데 시간이 걸려서, 탭을 나갔다 들어오는 동작이 그 계산
+        <b>도중에</b> 들어가면 루프가 둘이 되거나 내부 플래그가 <code>실행 중</code>으로 박혀
+        버렸습니다. 그러면 이후 모든 재시작 요청이 무시됩니다.
+      </p>
+      <p style="margin-bottom:0">
+        <b>대응</b> — 세대 번호(generation)로 정리했습니다. 시작할 때마다 새 번호를 받고,
+        멈출 때 현재 번호를 태우며, 번호가 낡은 루프는 조용히 빠져나갑니다.
+        <b>비슷한 시작/정지 루프를 새로 만들 때 같은 실수를 하기 쉽습니다</b> —
+        <code>server/satellites.ts</code>의 주석을 참고하세요.
+      </p>
+    </div>
+
+    <div class="trap">
+      <h4><span class="trap-tag">06</span>OpenSky 크레딧은 하루 4,000입니다</h4>
+      <p style="margin-bottom:0">
+        전 세계 요청 한 번에 4크레딧이라 하루 약 1,000번입니다. 그래서 폴링 주기가
+        <b>90초</b>고, 그 사이는 비행기를 <b>추측 항법(dead reckoning)</b>으로 움직여
+        부드럽게 보이게 합니다. 주기를 줄이면 몇 시간 만에 크레딧이 바닥나 <b>하늘이 빕니다.</b>
+        비행기 외의 탭에 있는 동안에는 폴링이 자동으로 멈춥니다(로그: <code>[feed] paused</code>).
+      </p>
+    </div>
+
+    <div class="trap">
+      <h4><span class="trap-tag">07</span>개발 모드에서는 창이 두 배로 뜹니다</h4>
+      <p style="margin-bottom:0">
+        <code>npm run dev</code>에서는 React StrictMode가 창마다 렌더러를 <b>두 개</b> 만듭니다.
+        지도를 네 번 읽고 네 번 올리므로 <b>켜는 시간과 렉이 실제의 두 배</b>로 보입니다.
+        로그에 <code>&lt;dome#1&gt;</code>과 <code>&lt;dome#2&gt;</code>가 같이 찍히거나
+        <code>window connected (4 total)</code>이 보이면 이 상태입니다.
+        <b>성능은 반드시 <code>pack:win</code> 빌드에서 판단하세요.</b>
+      </p>
+    </div>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 8 -->
+  <section id="config">
+    <div class="sec-head">
+      <span class="sec-no">08</span>
+      <h2>자주 건드리는 설정값</h2>
+      <span class="sec-latin">Configuration</span>
+    </div>
+
+    <p class="lede">
+      전부 <code>src/shared/config.ts</code> 한 파일에 모여 있고, 값마다 <b>왜 그 숫자인지</b>
+      주석이 붙어 있습니다. 바꾸기 전에 그 주석을 먼저 읽으세요 — 대부분은 이유가 있어서
+      그 값입니다. 환경변수(<code>.env</code>)로도 덮어쓸 수 있습니다.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>이름</th><th>기본값</th><th>무엇</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="k mono">HUB_PORT</td><td class="mono num">8787</td><td>내부 통신 포트. 다른 프로그램과 겹칠 때만 바꿉니다.</td></tr>
+          <tr><td class="k mono">OPENSKY_POLL_INTERVAL_MS</td><td class="mono num">90,000</td><td>비행기 갱신 주기. <b>줄이지 마세요</b> (함정 06).</td></tr>
+          <tr><td class="k mono">SAT_TICK_MS</td><td class="mono num">2,000</td><td>위성 위치를 다시 계산하는 주기.</td></tr>
+          <tr><td class="k mono">WEATHER_POLL_MS</td><td class="mono num">300,000</td><td>기상 영상 확인 주기 (5분).</td></tr>
+          <tr><td class="k mono">WEATHER_CACHE_MAX_AGE_MS</td><td class="mono num">5,400,000</td><td>이보다 오래된 그림은 안 띄웁니다 (90분, 함정 04).</td></tr>
+          <tr><td class="k mono">JUPITER_MAP_LAT_LIMIT</td><td class="mono num">58</td><td>목성 지도가 실제로 담고 있는 위도 범위 (함정 02).</td></tr>
+          <tr><td class="k mono">MARS_LIFT / MARS_TINT</td><td class="mono">중립</td><td>화성 지도 밝기·색조. 프로젝터에 따라 조정.</td></tr>
+          <tr><td class="k mono">JUPITER_DAY_PERIOD_MS</td><td class="mono num">360,000</td><td>화면상 목성의 하루 (6분). 0이면 자전 정지.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ────────────────────────────────────────────────────────────────── 9 -->
+  <section id="next">
+    <div class="sec-head">
+      <span class="sec-no">09</span>
+      <h2>남은 일</h2>
+      <span class="sec-latin">Open items</span>
+    </div>
+
+    <p class="lede">
+      알고 있지만 아직 하지 않은 것들입니다. 급한 순서로 적었습니다.
+    </p>
+
+    <ol>
+      <li>
+        <b>화성 지도 줄이기</b> — 함정 01. 켜는 시간에서 가장 큰 한 덩어리이고,
+        명령어까지 다 준비돼 있어서 5분이면 끝납니다.
+      </li>
+      <li>
+        <b>전시 PC에서 <code>pack:win</code> 빌드로 성능 재측정</b> — 지금까지의 렉 관찰은
+        전부 개발 모드(창 2배)에서 나온 것이라 실제보다 나쁘게 보였습니다.
+      </li>
+      <li>
+        <b>항공사 이름 표</b> — 편명 앞자리로 항공사를 찾는 표가 231개 들어 있는데,
+        실제 전시 중에 얼마나 맞는지 확인하지 않았습니다.
+      </li>
+      <li>
+        <b>목성 달의 절대 위치</b> — 네 달의 <b>상대적인</b> 배치는 라플라스 공명으로
+        검증돼 있지만, “오늘 밤 어느 쪽에 보이는가”는 확인할 자료(위성 엄폐 시각표)에
+        접근하지 못해 <b>일부러 표시하지 않고</b> 있습니다. 그 표를 한 번만 열 수 있으면
+        1분 만에 맞출 수 있습니다.
+      </li>
+    </ol>
+
+    <h3>넘겨받은 사람에게</h3>
+    <p style="margin-bottom:0">
+      이 프로그램에서 가장 자주 틀리는 판단은 <b>화면만 보고 원인을 짐작하는 것</b>입니다.
+      목성의 줄무늬도, 사라진 아이콘도, 비어 있던 날씨 탭도 전부 처음 짐작은 틀렸고,
+      로그를 읽거나 실제로 재본 다음에야 맞았습니다. 그래서 로그가 이만큼 자세합니다 —
+      <b>고치기 전에 먼저 그 줄을 찾으세요.</b>
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  <div>
+    기술개발 노트 · 돔 전시 프로그램 (Aviation-route) ·
+    소스와 함께 <span class="mono">docs/기술개발노트.html</span>에 보관됩니다.
+  </div>
+</footer>
