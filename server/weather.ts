@@ -925,6 +925,19 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
   /** Compressed bytes per pixel of each sensor's live picture this poll — the
    * yardstick a past step of the same sensor is measured against. */
   const liveDensity = new Map<number, number>()
+  /*
+   * How many pieces each sensor's LIVE picture came in.
+   *
+   * A sensor whose view crosses the antimeridian is fetched as two spans, and a
+   * blank one of those is dropped as "the truth" — correct for the live
+   * picture, where the emptiness is geometry. For a PAST step it is not the
+   * truth, it is a hole: the same sensor that answered with two pieces a minute
+   * ago answering with one means half its sky is missing from that step, and
+   * the step is otherwise accepted because the sensor is still counted as
+   * present. On screen that is a typhoon that exists at 10:00 and at 12:00 and
+   * vanishes at 11:00.
+   */
+  const livePieces = new Map<number, number>()
   const fetchSlot = async (
     name: string,
     lon: number,
@@ -990,7 +1003,17 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
     const density = bytes / Math.max(1, pixels)
     if (!time) {
       liveDensity.set(lon, density)
+      livePieces.set(lon, parts.length)
     } else {
+      const wanted = livePieces.get(lon)
+      if (wanted != null && parts.length < wanted) {
+        opsLog(
+          `[weather] cloud: ${name} at ${time} came back with ${parts.length} of its ` +
+            `${wanted} pieces — half its sky is missing, so the step is refused`
+        )
+        lastTileError = `incomplete step — ${name} at ${time}`
+        return false
+      }
       const live = liveDensity.get(lon)
       if (live && (density < live * 0.25 || density > live * 4)) {
         opsLog(
@@ -1139,8 +1162,17 @@ async function fetchGibsCloud(timeline?: number[] | null): Promise<WeatherFrame[
       })
     )
     const tiles: WeatherFrame['tiles'] = perSlot.flat()
-    // Same sensors as now, or the loop flickers wherever they disagree.
-    if (new Set(tiles.map((t) => t.centerLon)).size === nowSensors.size && tiles.length) {
+    /*
+     * The same sensors as now — the same ONES, not merely as many.
+     *
+     * Comparing sizes lets a step through that swapped one sensor for another,
+     * which leaves a hole exactly where the missing one looked and puts a
+     * second copy of somewhere else beside it.
+     */
+    const stepSensors = new Set(tiles.map((t) => t.centerLon))
+    const sameSensors =
+      stepSensors.size === nowSensors.size && [...nowSensors].every((lon) => stepSensors.has(lon))
+    if (sameSensors && tiles.length) {
       cloudSteps.set(at, tiles)
       series.push({ ...nowFrame, time: at, tiles })
     } else if (shared) {

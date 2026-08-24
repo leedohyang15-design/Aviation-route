@@ -149,8 +149,8 @@ function fixAt(rec: sat.SatRec, when: Date): Fix | null {
 }
 
 /** Load the elements. Safe to call again later to refresh. */
-export async function initSatellites(path?: string): Promise<number> {
-  const tles: TleRecord[] = path ? await loadTles(path) : await loadTles()
+export async function initSatellites(path?: string, force = false): Promise<number> {
+  const tles: TleRecord[] = await loadTles(path, force)
   const next: Entry[] = []
   for (const t of tles) {
     try {

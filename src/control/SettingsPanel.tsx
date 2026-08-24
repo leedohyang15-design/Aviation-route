@@ -14,7 +14,7 @@
  * leaving somebody believing a change that never happened.
  */
 import { useEffect, useRef, useState } from 'react'
-import type { ClientMessage, LogLine, Settings, SettingsView } from '@shared/types'
+import type { ClientMessage, LogLine, RefreshTarget, Settings, SettingsView } from '@shared/types'
 import { SETTINGS_NEED_RESTART } from '@shared/types'
 import { LogView } from './LogView'
 import './settings.css'
@@ -109,13 +109,42 @@ const SCREEN_FIELDS: NumField[] = [
   }
 ]
 
+/** What can be re-fetched, in the order somebody reaches for it. The cadence
+ *  badge is there so nobody presses a button that would have fired anyway. */
+const REFRESH_ITEMS: { what: RefreshTarget; label: string; cadence: string; hint: string }[] = [
+  {
+    what: 'weather',
+    label: '날씨 영상',
+    cadence: '평소 5분마다',
+    hint: '구름 · 비 · 바람을 다시 받습니다. 구름은 위성사진 여러 장이라 1~2분 걸립니다.'
+  },
+  {
+    what: 'tle',
+    label: '위성 궤도 정보',
+    cadence: '평소 하루 한 번',
+    hint: 'Celestrak에서 다시 내려받습니다. 캐시가 아직 새것이어도 무시하고 받습니다. 화면의 "N일 전" 표시가 이 값입니다.'
+  },
+  {
+    what: 'mars',
+    label: '화성 로버 위치',
+    cadence: '평소 하루 한 번',
+    hint: '큐리오시티와 퍼서비어런스가 오늘 어디까지 갔는지 다시 확인합니다.'
+  },
+  {
+    what: 'routes',
+    label: '비행기 노선',
+    cadence: '늘 조금씩',
+    hint: '노선 찾기는 계속 돌고 있습니다. 이 버튼은 지금 화면에 있는 비행기를 먼저 찾도록 순서를 바꿉니다.'
+  }
+]
+
 function fmt(value: number, unit: Unit): string {
   const v = value / unit.per
   return unit.decimals != null ? v.toFixed(unit.decimals) : String(Math.round(v * 100) / 100)
 }
 
 export function SettingsPanel({ view, send, onClose, log, watchLog }: Props): JSX.Element {
-  const [tab, setTab] = useState<'settings' | 'log'>('settings')
+  const [tab, setTab] = useState<'settings' | 'refresh' | 'log'>('settings')
   /*
    * Subscribe while this panel is open, and only while it is open.
    *
@@ -148,6 +177,9 @@ export function SettingsPanel({ view, send, onClose, log, watchLog }: Props): JS
       return next
     })
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({})
+  /** Which refresh was just asked for, so its button says so instead of
+   *  inviting a second press while the first is still running. */
+  const [busy, setBusy] = useState<RefreshTarget | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -324,6 +356,14 @@ export function SettingsPanel({ view, send, onClose, log, watchLog }: Props): JS
           </button>
           <button
             role="tab"
+            aria-selected={tab === 'refresh'}
+            className={'panel-tab' + (tab === 'refresh' ? ' on' : '')}
+            onClick={() => setTab('refresh')}
+          >
+            새로고침
+          </button>
+          <button
+            role="tab"
             aria-selected={tab === 'log'}
             className={'panel-tab' + (tab === 'log' ? ' on' : '')}
             onClick={() => setTab('log')}
@@ -334,6 +374,63 @@ export function SettingsPanel({ view, send, onClose, log, watchLog }: Props): JS
         </div>
 
         {tab === 'log' && <LogView lines={log} path={view.logPath} />}
+
+        {tab === 'refresh' && (
+          <div className="settings-body">
+            <section>
+              <h3>
+                지금 다시 받기
+                <span className="sec-note">누르면 바로 시작하고, 진행 상황은 「기록」에 남습니다</span>
+              </h3>
+              <p className="set-hint" style={{ marginBottom: 16 }}>
+                각 자료는 원래 정해진 주기로 알아서 받아옵니다 — 궤도와 로버는 하루에 한 번,
+                날씨는 몇 분에 한 번. 여기 버튼은 <b>그 차례를 기다리지 않고 지금 받는</b>
+                것이고, 화면이 눈에 띄게 낡았을 때만 쓰면 됩니다.
+              </p>
+              {REFRESH_ITEMS.map((r) => (
+                <div className="set-row" key={r.what}>
+                  <div className="set-label">
+                    <label>{r.label}</label>
+                    <span className="set-badge changed">{r.cadence}</span>
+                  </div>
+                  <div className="set-control">
+                    <button
+                      className="set-apply"
+                      disabled={busy === r.what}
+                      onClick={() => {
+                        send({ type: 'refresh', what: r.what })
+                        setBusy(r.what)
+                        setTimeout(() => setBusy(null), 4000)
+                        flash(`${r.label} — 다시 받는 중입니다`)
+                      }}
+                    >
+                      {busy === r.what ? '요청함' : '지금 다시 받기'}
+                    </button>
+                  </div>
+                  <p className="set-hint">{r.hint}</p>
+                </div>
+              ))}
+            </section>
+
+            <section>
+              <h3>화면</h3>
+              <div className="set-row">
+                <div className="set-label">
+                  <label>두 창 다시 불러오기</label>
+                </div>
+                <div className="set-control">
+                  <button className="set-apply" onClick={() => location.reload()}>
+                    이 창 다시 불러오기
+                  </button>
+                </div>
+                <p className="set-hint">
+                  화면만 다시 그립니다. 데이터를 다시 받지는 않고, 받아둔 것은 그대로
+                  남습니다. 그림이 깨졌을 때 가장 먼저 해볼 일입니다.
+                </p>
+              </div>
+            </section>
+          </div>
+        )}
 
         {tab === 'settings' && view.restartPending && (
           <div className="settings-notice">

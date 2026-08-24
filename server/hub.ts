@@ -13,9 +13,11 @@ import type {
   ClientMessage,
   FlightDetail,
   WeatherFrame,
+  WeatherLayer,
   ExhibitMode,
   PresentationState,
   ServerMessage,
+  RefreshTarget,
   Settings
 } from '../src/shared/types'
 import { DEFAULT_PRESENTATION_STATE, SETTINGS_NEED_RESTART } from '../src/shared/types'
@@ -359,6 +361,49 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
     }
   }
 
+  /**
+   * Fetch something again, right now.
+   *
+   * Each of these normally runs on a clock measured in hours — daily for the
+   * orbits and the rovers, five-minutely for the weather — which is correct for
+   * an exhibit that runs unattended and useless for somebody standing in front
+   * of a tab that is visibly wrong. Restarting the whole exhibit was the only
+   * lever before this.
+   *
+   * Every one of them is a stop-and-start of a loop that polls immediately, so
+   * there is no second code path to keep in step with the first. Failures are
+   * already loud in the log, which is on the tab next door.
+   */
+  async function refresh(what: RefreshTarget): Promise<void> {
+    opsLog(`[hub] 새로고침: ${what}`)
+    switch (what) {
+      case 'weather':
+        stopWeather()
+        startWeather(onWeather)
+        return
+      case 'tle': {
+        // force: skip the freshness rule and actually go and ask Celestrak.
+        const n = await initSatellites(undefined, true)
+        opsLog(`[hub] 새로고침: 궤도 정보 ${n}개`)
+        if (state.mode === 'satellite') {
+          stopSatellites()
+          startSatellites(onSatellites)
+        }
+        return
+      }
+      case 'mars':
+        stopMars()
+        startMars(() => broadcast({ type: 'marsLive', data: marsLive() }))
+        return
+      case 'routes':
+        // Not a fetch — the resolver never stops. What an operator actually
+        // wants here is the aircraft ON SCREEN looked up first.
+        prioritiseRoutes(aircraft.map((a) => a.callsign).filter(Boolean))
+        opsLog(`[hub] 새로고침: 화면에 있는 ${aircraft.length}대의 노선을 먼저 찾습니다`)
+        return
+    }
+  }
+
   /** Drop the current selection and clear every trace of it on both windows. */
   function clearSelection(why: string): void {
     lastGoodDetail = null
@@ -497,9 +542,57 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
     if (sel?.callsign?.trim().toUpperCase() === callsign) void sendDetail(null)
   })
 
+  /*
+   * Which frames each window already has.
+   *
+   * A weather frame is several megabytes of base64, and the whole set is close
+   * to forty. They were re-sent in full every single time somebody pressed
+   * 날씨 — the hub stringified forty megabytes on its only thread and both
+   * windows parsed it, to arrive at exactly the picture they were already
+   * holding in memory. That is the wait when the tab opens.
+   *
+   * A window keeps its frames across a tab change (the React state survives;
+   * only the GPU textures are dropped and rebuilt), so the second visit needs
+   * nothing sent at all. Keyed by layer, moment and step, so a genuinely new
+   * poll still goes out. A WeakMap because the key is the socket: when it
+   * closes, the record goes with it.
+   */
+  const sentWeather = new WeakMap<WebSocket, Map<WeatherLayer, Set<string>>>()
+
+  function sendWeatherFrame(ws: WebSocket, frame: WeatherFrame): boolean {
+    let byLayer = sentWeather.get(ws)
+    if (!byLayer) {
+      byLayer = new Map()
+      sentWeather.set(ws, byLayer)
+    }
+    const step = frame.step ?? 0
+    /*
+     * Step 0 starts a new series — the same rule the WINDOW uses.
+     *
+     * Its receiver treats step 0 as "throw away what you had for this layer and
+     * start again", so that is exactly the moment this record has to be cleared
+     * too. Anything else and the two would disagree about what the window is
+     * holding, which is the only way this optimisation could ever drop a frame
+     * somebody needed.
+     */
+    if (step === 0) byLayer.set(frame.layer, new Set())
+    let seen = byLayer.get(frame.layer)
+    if (!seen) {
+      seen = new Set()
+      byLayer.set(frame.layer, seen)
+    }
+    const key = `${frame.time}:${step}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    send(ws, { type: 'weather', frame })
+    return true
+  }
+
   const onWeather = (frame: WeatherFrame) => {
     if (state.mode !== 'weather') return
-    broadcast({ type: 'weather', frame })
+    for (const ws of wss.clients) {
+      if (ws.readyState === ws.OPEN) sendWeatherFrame(ws, frame)
+    }
   }
 
   /**
@@ -545,7 +638,12 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
     if (!frames.length) return
     setImmediate(() => {
       if (state.mode !== 'weather') return
-      for (const f of frames) broadcast({ type: 'weather', frame: f })
+      let sent = 0
+      for (const ws of wss.clients) {
+        if (ws.readyState !== ws.OPEN) continue
+        for (const f of frames) if (sendWeatherFrame(ws, f)) sent++
+      }
+      if (sent) opsLog(`[weather] ${sent} frame(s) sent to the windows`)
     })
   }
 
@@ -632,7 +730,7 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
     if (state.mode === 'weather') {
       // Whatever is already assembled, so a window that connects (or reloads)
       // mid-session doesn't sit on a bare earth until the next poll.
-      for (const frame of currentWeatherFrames()) send(ws, { type: 'weather', frame })
+      for (const frame of currentWeatherFrames()) sendWeatherFrame(ws, frame)
     } else if (state.mode === 'satellite') {
       const sats = satSnapshot()
       send(ws, { type: 'satellites', data: sats, serverTime: Date.now(), tleAt: tleFetchedAt() })
@@ -814,6 +912,9 @@ export function startHub(port = settings().hubPort, feed: PausableFeed = selectF
         broadcast({ type: 'settings', settings: settingsView() })
         return
       }
+      case 'refresh':
+        void refresh(msg.what)
+        return
       case 'watchLog':
         // Handled where the socket is in scope; see the connection handler.
         return

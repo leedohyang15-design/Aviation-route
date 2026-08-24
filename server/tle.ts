@@ -88,11 +88,14 @@ function readCache(path: string): { text: string; age: number } | null {
  * only when there is no cache AND no network — the caller logs that loudly
  * rather than quietly showing an empty sky.
  */
-export async function loadTles(explicitPath?: string): Promise<TleRecord[]> {
+export async function loadTles(explicitPath?: string, force = false): Promise<TleRecord[]> {
   const hit = findCache(explicitPath)
   const cached = hit?.data ?? null
   const path = explicitPath ?? hit?.path ?? CACHE_PATH
-  if (cached && cached.age < TLE_MAX_AGE_MS) {
+  // `force` is the 새로고침 button: skip the freshness rule and go and ask.
+  // The stale-cache fallback below still applies if the download fails, so the
+  // worst case of pressing it is that nothing changes.
+  if (!force && cached && cached.age < TLE_MAX_AGE_MS) {
     const recs = parseTle(cached.text)
     fetchedAt = Date.now() - cached.age
     opsLog(`[tle] ${recs.length} satellites from cache (${Math.round(cached.age / 3600_000)}h old)`)

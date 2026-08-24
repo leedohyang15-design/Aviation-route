@@ -346,6 +346,9 @@ export interface MarsLiveWire {
   at: number
 }
 
+/** What the 새로고침 tab can ask the hub to fetch again. */
+export type RefreshTarget = 'weather' | 'tle' | 'mars' | 'routes'
+
 /* ------------------------------------------------------------------ *
  * The operator's log
  * ------------------------------------------------------------------ */
@@ -544,3 +547,12 @@ export type ClientMessage =
    * re-rendering every time a satellite pass is logged.
    */
   | { type: 'watchLog'; on: boolean }
+  /**
+   * Fetch something again, now, instead of waiting for its next turn.
+   *
+   * For an operator standing in front of a tab that is wrong: the weather is an
+   * hour behind, the orbits are three days old, a rover moved this morning.
+   * Each of these normally runs on a clock measured in hours, and the only
+   * previous way to hurry one was to restart the exhibit.
+   */
+  | { type: 'refresh'; what: RefreshTarget }
