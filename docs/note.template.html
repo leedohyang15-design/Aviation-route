@@ -1242,6 +1242,132 @@ npm run dist:win</pre>
     </p>
   </section>
 
+  <!-- ────────────────────────────────────────────────────────────────── 11 -->
+  <section id="editing">
+    <div class="sec-head">
+      <span class="sec-no">11</span>
+      <h2>이 노트 고치기</h2>
+      <span class="sec-latin">Editing this note</span>
+    </div>
+
+    <p class="lede">
+      프로그램을 고치면 이 노트도 같이 고쳐야 합니다. 안 고치면 다음 사람이 <b>틀린 설명을
+      믿고</b> 시간을 씁니다 — 실제로 저장 위치를 옮긴 뒤 4장 설명이 하루 동안 거짓말을
+      하고 있었습니다.
+    </p>
+
+    <div class="trap">
+      <h4><span class="trap-tag">먼저</span>Word 파일과 HTML을 직접 고치지 마세요</h4>
+      <p style="margin:0">
+        <code>기술개발노트.docx</code>와 <code>기술개발노트.html</code>은 <b>둘 다
+        만들어진 결과물</b>입니다. 여기에 쓴 내용은 다음에 다시 만들 때 <b>말없이
+        사라집니다.</b> 원본은 <code>docs/note.template.html</code> 하나뿐이고,
+        나머지는 전부 거기서 나옵니다.
+      </p>
+    </div>
+
+    <h3>고치는 순서</h3>
+    <p>
+      Node.js가 설치된 PC에서, 소스 폴더에서 합니다. 글만 고칠 거면
+      <code>npm install</code>은 처음 한 번이면 됩니다.
+    </p>
+
+    <pre><span class="dim"># 1) 글을 고친다 — 메모장 말고 편집기로 (UTF-8 유지)</span>
+docs\note.template.html
+
+<span class="dim"># 2) 읽는 파일 두 개를 다시 만든다</span>
+npm run note        <span class="dim"># → docs\기술개발노트.html  (웹·공유용)</span>
+npm run note:docx   <span class="dim"># → docs\기술개발노트.docx  (워드·인쇄용)</span>
+
+<span class="dim"># 3) 셋 다 커밋한다 — 원본과 결과물이 어긋나면 안 됩니다</span>
+git add docs
+git commit -m "노트: 무엇을 왜 고쳤는지"</pre>
+
+    <p>
+      <code>note.template.html</code>은 <b>평범한 HTML</b>이라 특별한 도구가 필요 없습니다.
+      본문은 <code>&lt;p&gt;</code>, 굵게는 <code>&lt;b&gt;</code>, 파일명·명령어는
+      <code>&lt;code&gt;</code>, 검은 상자는 <code>&lt;pre&gt;</code>로 씁니다. 기존 문단을
+      복사해서 글자만 바꾸는 게 가장 안전합니다.
+    </p>
+
+    <h3>자주 하는 손질</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>하고 싶은 것</th><th>어디를 고치나</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">문장 하나 고치기</td>
+            <td>해당 <code>&lt;p&gt;</code>를 찾아 고칩니다. <code>Ctrl+F</code>로 화면에 보이는 문장을 그대로 검색하면 나옵니다.</td>
+          </tr>
+          <tr>
+            <td class="k">함정 하나 추가</td>
+            <td>8장에서 <code>&lt;div class="trap"&gt;</code> 한 덩어리를 통째로 복사해 붙이고, <code>trap-tag</code> 번호와 내용을 바꿉니다. <b>증상 · 원인 · 대응</b> 세 단락 구조를 지키세요.</td>
+          </tr>
+          <tr>
+            <td class="k">장(챕터) 추가</td>
+            <td><code>&lt;section&gt;</code> 한 덩어리를 복사해 <code>&lt;/main&gt;</code> 앞에 붙이고, <code>sec-no</code>·<code>&lt;h2&gt;</code>·<code>id</code>를 바꿉니다. 번호는 앞 장에서 이어지게 하세요.</td>
+          </tr>
+          <tr>
+            <td class="k">사진 교체·추가</td>
+            <td>아래 「사진 넣기」를 보세요.</td>
+          </tr>
+          <tr>
+            <td class="k">구조 그림 수정</td>
+            <td>아래 「구조 그림」을 보세요. 여기만 손이 조금 더 갑니다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>사진 넣기</h3>
+    <p>
+      사진은 <code>docs\images\</code>에 <b>JPG</b>로 두고, 본문에서는 파일 이름만
+      <code>{{이름}}</code> 형태로 부릅니다. 예를 들어
+      <code>docs\images\13-settings-keys.jpg</code>는 이렇게 씁니다:
+    </p>
+    <pre>&lt;figure&gt;
+  &lt;img src="{{13-settings-keys}}" alt="설정 화면의 키와 포트"&gt;
+  &lt;figcaption&gt;&lt;b&gt;키와 포트.&lt;/b&gt; 여기 값은 다시 시작해야 적용됩니다.&lt;/figcaption&gt;
+&lt;/figure&gt;</pre>
+    <p>
+      <code>npm run note</code>가 그 자리에 사진을 통째로 밀어 넣습니다 — 그래서 완성된
+      HTML은 <b>파일 하나만 보내도</b> 사진이 다 보입니다. 이름이 틀리면 조용히 넘어가지
+      않고 <b>어느 파일이 없는지 말하면서 멈춥니다.</b>
+    </p>
+    <p style="margin-bottom:0">
+      화면 사진은 프로그램을 띄워 놓고 <b>창을 그대로 캡처</b>하면 됩니다. 가로 1600px
+      안팎이면 충분하고, 파일이 너무 크면 노트 전체가 무거워지니 JPG 품질을 조금 낮춰
+      저장하세요.
+    </p>
+
+    <h3>구조 그림</h3>
+    <p>
+      2장의 흐름도는 사진이 아니라 <b>템플릿 안에 직접 그려져 있는</b>
+      <code>&lt;svg&gt;</code>입니다. 글자만 바꾸는 정도면 그 안의
+      <code>&lt;text&gt;</code>를 찾아 고치면 됩니다.
+    </p>
+    <p>
+      다만 Word 파일은 그림을 그릴 수 없어서, 이 흐름도만은 <b>미리 그림으로 구워 둔</b>
+      <code>docs\images\diagram.png</code>를 씁니다. <b>SVG를 고쳤으면 이 PNG도 다시
+      만들어야</b> 워드 쪽에 반영됩니다 — 안 그러면 HTML과 Word가 서로 다른 그림을
+      보여줍니다.
+    </p>
+    <p style="margin-bottom:0">
+      다시 만드는 방법은 <code>scripts\build-note-docx.mjs</code> 맨 위 주석에 적어
+      두었습니다. 급하면 <b>완성된 HTML을 브라우저로 열어 그 그림 부분만 화면 캡처</b>해서
+      같은 이름으로 덮어써도 됩니다.
+    </p>
+
+    <h3>다 고친 뒤</h3>
+    <p style="margin-bottom:0">
+      <b>Word 파일을 한 번 열어서 넘겨 보세요.</b> 화면에서 멀쩡해 보여도 종이에서는
+      표가 잘리거나 그림이 페이지를 넘어가는 일이 있습니다. 실제로 이 노트의 4장 오류도
+      Word로 만들어 페이지를 넘겨보다 발견했습니다.
+    </p>
+  </section>
+
 
 </main>
 
