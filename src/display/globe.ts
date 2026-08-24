@@ -2335,10 +2335,28 @@ export class Globe {
         this.tuneTexture(tex)
         this.earthTex = tex
         this.uploadNow('earth', tex)
-        this.bgUniforms.uMap.value = tex
-        this.bgUniforms.uHasMap.value = 1
-        // Photographic maps carry their own graticule — drop the procedural grid.
-        this.bgUniforms.uShowGrid.value = 0
+        /*
+         * Only if earth is still the planet on screen.
+         *
+         * This load starts in the constructor, before anybody has picked a
+         * tab, and it is the single slowest texture in the exhibit — 789ms+ to
+         * upload, on top of the fetch and decode ahead of it. `loadPlanetMap`
+         * (Mars, Jupiter) already gates its apply on `this.planet === tag` for
+         * exactly this reason; this one did not, so a visitor who left earth
+         * for 화성 in the time this took got the tab, the chips, the callout —
+         * everything — switched to Mars except the one thing anybody actually
+         * looks at, because this callback clobbered `uMap` back to earth's
+         * unconditionally the moment it finally landed. Reloading a window
+         * while sitting on a planet other than earth is the reliable way to
+         * hit this: the fresh Globe starts this same slow fetch from zero
+         * every time, and the tab is often already elsewhere before it ends.
+         */
+        if (this.planet === 'earth') {
+          this.bgUniforms.uMap.value = tex
+          this.bgUniforms.uHasMap.value = 1
+          // Photographic maps carry their own graticule — drop the procedural grid.
+          this.bgUniforms.uShowGrid.value = 0
+        }
         this.hasEarthTexture = true
         /*
          * Say how big it is, like the other two maps do.
@@ -2377,8 +2395,11 @@ export class Globe {
         this.tuneTexture(tex)
         this.nightTex = tex
         this.uploadNow('night', tex)
-        this.bgUniforms.uNightMap.value = tex
-        this.bgUniforms.uHasNight.value = 1
+        // Same guard as the day texture just above, and the same reason.
+        if (this.planet === 'earth') {
+          this.bgUniforms.uNightMap.value = tex
+          this.bgUniforms.uHasNight.value = 1
+        }
         this.note(`[earth] loaded night texture`)
         this.mapSettled()
       },
