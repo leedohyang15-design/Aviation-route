@@ -12,7 +12,7 @@ import type { Satellite, SatelliteDetail, GeoPoint } from '../src/shared/types'
 import { SAT_SLICE_MS, OBSERVER_LAT, OBSERVER_LON, TLE_MAX_AGE_MS } from '../src/shared/config'
 import { settings } from './settings'
 import { isPlausibleCoord } from '../src/shared/projection'
-import { loadTles, type TleRecord } from './tle'
+import { loadTles, tleIsPartial, TLE_PARTIAL_MAX_AGE_MS, type TleRecord } from './tle'
 import { opsLog } from './log'
 
 const DEG = 180 / Math.PI
@@ -181,7 +181,28 @@ export async function initSatellites(path?: string, force = false): Promise<numb
     }
   }
   entries = next
-  opsLog(`[sat] ${entries.length} satellites ready for propagation`)
+  /*
+   * Say how the sky is DISTRIBUTED, not just how full it is.
+   *
+   * A count on its own hides the failure that matters here: the fallback
+   * groups are mostly navigation and weather birds in high orbits, so a
+   * partial set can report a healthy-looking few hundred satellites while low
+   * orbit — where the thousands actually are, and where the exhibit's motion
+   * is worth watching — sits almost empty. Splitting by orbital period makes
+   * that visible in one line.
+   */
+  let leo = 0
+  let meo = 0
+  let geo = 0
+  for (const e of entries) {
+    if (e.periodMin < 225) leo++
+    else if (e.periodMin < 1200) meo++
+    else geo++
+  }
+  opsLog(
+    `[sat] ${entries.length} satellites ready for propagation — ` +
+      `저궤도 ${leo} · 중궤도 ${meo} · 정지궤도 ${geo}`
+  )
   return entries.length
 }
 
@@ -246,8 +267,14 @@ export function startElementRefresh(onLoaded: (n: number) => void): void {
      */
     const FLOOR = 15 * 60_000
     const CEIL = 2 * 3600_000
+    // A partial set counts as a success — satellites ARE on screen — but it is
+    // a stopgap, so it gets the two-hour clock rather than the daily one.
+    const settled = tleIsPartial() ? TLE_PARTIAL_MAX_AGE_MS : TLE_MAX_AGE_MS
     const wait =
-      elementFailures > 0 ? Math.min(CEIL, FLOOR * 2 ** (elementFailures - 1)) : TLE_MAX_AGE_MS
+      elementFailures > 0 ? Math.min(CEIL, FLOOR * 2 ** (elementFailures - 1)) : settled
+    if (elementFailures === 0 && tleIsPartial()) {
+      opsLog('[sat] 임시 목록이라 2시간 뒤 전체 목록을 다시 받아옵니다')
+    }
     if (elementFailures > 0) {
       opsLog(
         `[sat] no elements yet — trying again in ${Math.round(wait / 60_000)}분 ` +

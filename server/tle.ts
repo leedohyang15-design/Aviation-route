@@ -55,7 +55,30 @@ export function tleLastError(): string | null {
   return lastError
 }
 
-function findCache(explicit?: string): { path: string; data: { text: string; age: number } } | null {
+/**
+ * True when what we have is the FALLBACK set — a handful of small groups —
+ * rather than the whole active catalogue.
+ *
+ * This distinction has to survive, because a partial set looks like a success
+ * from every angle: satellites appear, `fetchedAt` is now, no error is
+ * recorded. The refresh loop would then settle onto its daily cadence and the
+ * exhibit would show a few hundred satellites for the next 24 hours, with the
+ * sky conspicuously empty in low orbit — where the thousands actually are.
+ * A partial set is a stopgap, so it expires in hours, not a day.
+ */
+let partial = false
+export function tleIsPartial(): boolean {
+  return partial
+}
+
+/** How long a fallback set is allowed to stand before we try `active` again.
+ *  Celestrak's own refusal says the data changes every two hours, so that is
+ *  the soonest asking again could produce anything new. */
+export const TLE_PARTIAL_MAX_AGE_MS = 2 * 3600_000
+
+function findCache(
+  explicit?: string
+): { path: string; data: { text: string; age: number; partial: boolean } } | null {
   for (const p of explicit ? [explicit] : dataPathCandidates(CACHE_NAME)) {
     const data = readCache(p)
     if (data) return { path: p, data }
@@ -85,15 +108,18 @@ export function parseTle(text: string): TleRecord[] {
   return out
 }
 
-function readCache(path: string): { text: string; age: number } | null {
+function readCache(path: string): { text: string; age: number; partial: boolean } | null {
   try {
     const raw = readFileSync(path, 'utf8')
     const nl = raw.indexOf('\n')
     const header = raw.slice(0, nl)
     if (!header.startsWith('#saved ')) return null
-    const saved = Number(header.slice(7))
+    // "#saved <ms>" or "#saved <ms> partial" — the marker rides along so a
+    // fallback set is still recognisable as one after a restart.
+    const [stamp, mark] = header.slice(7).trim().split(/\s+/)
+    const saved = Number(stamp)
     if (!Number.isFinite(saved)) return null
-    return { text: raw.slice(nl + 1), age: Date.now() - saved }
+    return { text: raw.slice(nl + 1), age: Date.now() - saved, partial: mark === 'partial' }
   } catch {
     return null // no cache yet — normal on first run
   }
@@ -161,9 +187,9 @@ function isGroupRateLimit(message: string): boolean {
  * every single one refuses, the error thrown is the FIRST one, because that is
  * the primary group's answer and the one that explains what is going on.
  */
-async function download(): Promise<string> {
+async function download(): Promise<{ text: string; partial: boolean }> {
   try {
-    return await fetchTle(TLE_URL)
+    return { text: await fetchTle(TLE_URL), partial: false }
   } catch (err) {
     const primary = (err as Error).message
     if (!TLE_FALLBACK_URLS.length) throw err
@@ -199,8 +225,11 @@ async function download(): Promise<string> {
       }
     }
     if (!parts.length) throw new Error(primary)
-    opsLog(`[tle] 우회 성공 — ${won.join(', ')} (합계 ${seen.size}개)`)
-    return `${parts.join('\n')}\n`
+    opsLog(
+      `[tle] 우회 성공 — ${won.join(', ')} (합계 ${seen.size}개). ` +
+        `전체 목록이 아니라 임시입니다 — 2시간 뒤 다시 받아옵니다`
+    )
+    return { text: `${parts.join('\n')}\n`, partial: true }
   }
 }
 
@@ -217,26 +246,40 @@ export async function loadTles(explicitPath?: string, force = false): Promise<Tl
   // `force` is the 새로고침 button: skip the freshness rule and go and ask.
   // The stale-cache fallback below still applies if the download fails, so the
   // worst case of pressing it is that nothing changes.
-  if (!force && cached && cached.age < TLE_MAX_AGE_MS) {
+  // A fallback set on disk must not stand for a whole day — see `partial`.
+  const maxAge = cached?.partial ? TLE_PARTIAL_MAX_AGE_MS : TLE_MAX_AGE_MS
+  if (!force && cached && cached.age < maxAge) {
     const recs = parseTle(cached.text)
     fetchedAt = Date.now() - cached.age
     lastError = null
-    opsLog(`[tle] ${recs.length} satellites from cache (${Math.round(cached.age / 3600_000)}h old)`)
+    partial = cached.partial
+    opsLog(
+      `[tle] ${recs.length} satellites from cache (${Math.round(cached.age / 3600_000)}h old)` +
+        (cached.partial ? ' — 임시 목록이라 곧 다시 받아옵니다' : '')
+    )
     return recs
   }
 
   try {
-    const text = await download()
-    const recs = parseTle(text)
-    if (!recs.length) throw new Error(`downloaded ${text.length} bytes but parsed 0 satellites`)
+    const got = await download()
+    const recs = parseTle(got.text)
+    if (!recs.length) {
+      throw new Error(`downloaded ${got.text.length} bytes but parsed 0 satellites`)
+    }
     try {
-      writeFileSync(path, `#saved ${Date.now()}\n${text}`)
+      // The marker travels with the file: a restart must not mistake a
+      // stopgap for the real catalogue.
+      writeFileSync(path, `#saved ${Date.now()}${got.partial ? ' partial' : ''}\n${got.text}`)
     } catch (err) {
       opsLog(`[tle] could not cache to disk: ${(err as Error).message}`)
     }
     fetchedAt = Date.now()
     lastError = null
-    opsLog(`[tle] downloaded ${recs.length} satellites from Celestrak`)
+    partial = got.partial
+    opsLog(
+      `[tle] downloaded ${recs.length} satellites from Celestrak` +
+        (got.partial ? ' (임시 목록)' : '')
+    )
     return recs
   } catch (err) {
     // Loud, not silent: a satellite mode with no satellites should say why.
@@ -248,6 +291,7 @@ export async function loadTles(explicitPath?: string, force = false): Promise<Tl
       // A stale cache is still SOMETHING on screen, with its own age already
       // shown — not the dead end lastError exists to flag.
       lastError = null
+      partial = cached.partial
       opsLog(`[tle] falling back to cached set (${Math.round(cached.age / 3600_000)}h old, ${recs.length} satellites)`)
       return recs
     }
