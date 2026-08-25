@@ -136,6 +136,25 @@ let failures = 0
  * and cleared immediately, so it forces exactly the ONE press that asked for
  * it and never lingers into the polls after.
  */
+/**
+ * The earliest instant a newer frame could possibly exist — the timestamp of
+ * the step AFTER the one on screen, straight from the model's own index.
+ *
+ * Everything this tab draws is published hourly, but the poll runs every five
+ * minutes, so eleven polls in twelve used to ask a question whose answer could
+ * not have changed. The bytes were already guarded, so those polls were cheap
+ * on the wire — and expensive in the only place the exhibit can be observed:
+ * seven lines of "nothing new" each, eighty-four an hour, which filled the
+ * 2,000-line log the operator reads within a day and buried the lines that
+ * meant something.
+ *
+ * Polling exactly on the hour instead would be worse: the model publishes some
+ * minutes past, and a single mistimed request would leave the screen an hour
+ * behind until the next one. Knowing WHEN to start asking keeps both — silence
+ * while nothing can have changed, then five-minute checks until it lands.
+ */
+let nextStepDueAt = 0
+
 let forceOnce = false
 /** Bypass every "nothing changed" shortcut on the next poll. */
 export function forceWeatherRefresh(): void {
@@ -445,6 +464,8 @@ async function fetchMaptilerLayer(
       `taking ${wanted.length} ending ${clock(stamps[end])} local (${off(stamps[end])}), ` +
       `next step ${clock(stamps[end + 1])} (${off(stamps[end + 1])}), now ${clock(now)}`
   )
+  // Rain owns the shared clock, so its next step is the one worth waiting for.
+  if (layer === 'rain' && Number.isFinite(stamps[end + 1])) nextStepDueAt = stamps[end + 1]
 
   /*
    * The same moment as last time means there is nothing to download.
@@ -1282,6 +1303,13 @@ async function poll(onFrame: (f: WeatherFrame) => void): Promise<void> {
   const force = forceOnce
   forceOnce = false
   if (force) opsLog('[weather] 새로고침 요청 — 바뀐 게 없어도 다시 받습니다')
+  /*
+   * Nothing to ask yet. Not a cache and not a guess — the index itself said
+   * when its next step would be, and until that moment arrives the answer is
+   * known. Requires a picture actually on screen: a stale or empty one has to
+   * keep trying regardless of the schedule.
+   */
+  if (!force && nextStepDueAt && Date.now() < nextStepDueAt && haveFreshFrames()) return
   if (mtKey()) return pollMaptiler(onFrame, force)
   const frames = await fetchGibsCloud(null, force)
   if (!frames) throw new Error(`no cloud: ${lastTileError || 'every sensor failed'}`)
@@ -1300,6 +1328,9 @@ export function startWeather(onFrame: (f: WeatherFrame) => void): void {
   stopped = false
   if (running) return
   running = true
+  // Whatever was due before, ask once now — the source may have moved on while
+  // the exhibit was on another tab, or off.
+  nextStepDueAt = 0
   if (!latest.size) loadCache()
   /*
    * No replay here any more.
