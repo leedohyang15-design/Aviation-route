@@ -182,26 +182,29 @@ export async function initSatellites(path?: string, force = false): Promise<numb
   }
   entries = next
   /*
-   * Say how the sky is DISTRIBUTED, not just how full it is.
+   * Say how the sky is DISTRIBUTED, not just how full it is — and say it in
+   * the SAME words the screen uses.
    *
-   * A count on its own hides the failure that matters here: the fallback
-   * groups are mostly navigation and weather birds in high orbits, so a
-   * partial set can report a healthy-looking few hundred satellites while low
-   * orbit — where the thousands actually are, and where the exhibit's motion
-   * is worth watching — sits almost empty. Splitting by orbital period makes
-   * that visible in one line.
+   * A count on its own hides the failure that matters: the fallback groups are
+   * mostly navigation and weather birds in high orbits, so a partial set can
+   * report a healthy-looking few hundred satellites while low orbit — where
+   * the thousands actually are — sits almost empty.
+   *
+   * The categories have to be the exhibit's own, though. A first version of
+   * this line split purely by orbital period, which put Starlink inside
+   * "저궤도" and reported 10,965 of them while the 저궤도 chip on the screen
+   * said 222. Both numbers were right and the pair was useless: Starlink is
+   * named out into its own class (and hidden by default, being most of the
+   * sky), so a log that lumps it back in cannot be compared to the screen at
+   * all. Same rule as orbitClass, therefore — on mean altitude, since this
+   * runs before anything has been propagated.
    */
-  let leo = 0
-  let meo = 0
-  let geo = 0
-  for (const e of entries) {
-    if (e.periodMin < 225) leo++
-    else if (e.periodMin < 1200) meo++
-    else geo++
-  }
+  const by: Record<Satellite['orbit'], number> = { leo: 0, starlink: 0, meo: 0, geo: 0 }
+  for (const e of entries) by[orbitClass((e.apogeeKm + e.perigeeKm) / 2, e.name)]++
   opsLog(
     `[sat] ${entries.length} satellites ready for propagation — ` +
-      `저궤도 ${leo} · 중궤도 ${meo} · 정지궤도 ${geo}`
+      `저궤도 ${by.leo} · 스타링크 ${by.starlink} · 중궤도 ${by.meo} · 정지궤도 ${by.geo}` +
+      ' (스타링크는 화면에서 기본으로 숨겨집니다)'
   )
   return entries.length
 }
