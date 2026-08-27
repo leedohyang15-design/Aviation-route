@@ -393,8 +393,8 @@ export class Globe {
   /** Pulsing red lights on the selected object's wingtips (or solar panels) —
    * the marker for "this is the one you picked". */
   private selectedLights!: THREE.Mesh
-  private planeLightTex!: THREE.CanvasTexture
-  private satLightTex!: THREE.CanvasTexture
+  private planeLightTex!: THREE.Texture
+  private satLightTex!: THREE.Texture
   /** Halo behind the selection, which lights up as the map goes dark. */
   private selectedGlow!: THREE.Mesh
   // Sun position for this frame, shared by the background shader and the
@@ -477,12 +477,12 @@ export class Globe {
    * so several pieces of the flight presentation are suppressed for them. */
   private kind: ObjectKind = 'aircraft'
   private planeTex!: THREE.Texture
-  private dotTex!: THREE.CanvasTexture
-  private satTex!: THREE.CanvasTexture
-  private probeTex!: THREE.CanvasTexture
-  private roverTex!: THREE.CanvasTexture
-  private targetTex!: THREE.CanvasTexture
-  private moonTex!: THREE.CanvasTexture
+  private dotTex!: THREE.Texture
+  private satTex!: THREE.Texture
+  private probeTex!: THREE.Texture
+  private roverTex!: THREE.Texture
+  private targetTex!: THREE.Texture
+  private moonTex!: THREE.Texture
   private placeMesh!: THREE.Mesh
   /** Which tracked id is drawn by placeMesh instead of the instanced pass. */
   private placeId: string | null = null

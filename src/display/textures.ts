@@ -14,8 +14,51 @@ export function screenAngle(headingRad: number, latDeg: number): number {
   return Math.atan2(-dx, dy)
 }
 
+/**
+ * Hand the GPU raw PIXELS, not a canvas.
+ *
+ * Every sprite and label here is drawn into a `<canvas>`, and the obvious way
+ * to get one onto the GPU is `THREE.CanvasTexture`, which uploads the canvas
+ * element itself. That works on most machines and silently does not on some:
+ * copy the exhibit onto a PC whose Chromium accelerates 2D canvas down a path
+ * the driver mishandles and the upload arrives with its alpha gone — and for a
+ * blended sprite, no alpha means nothing is drawn at all. It showed up as
+ * "위성·화성·목성 스프라이트만 안 나온다" on one machine, while the aircraft
+ * icon — the single texture in this renderer built from a data URI rather than
+ * a canvas — carried on working.
+ *
+ * Reading the pixels out with `getImageData` and uploading those sidesteps the
+ * whole accelerated-canvas path: a DataTexture is just bytes. It is also
+ * synchronous, which matters here — baking to a PNG and loading it as an image
+ * would fix the same bug, but the dome caption is rebuilt whenever its
+ * countdown ticks, and an asynchronous swap would blank it for a frame every
+ * second.
+ *
+ * The rows are reversed on the way in. A canvas has row 0 at the TOP and an
+ * image texture is uploaded with `flipY`, so the two conventions agree; a
+ * DataTexture is uploaded as-is, and WebGL ignores `UNPACK_FLIP_Y` for raw
+ * arrays. Flipping here keeps every existing UV in the renderer correct.
+ */
+function bakedTexture(c: HTMLCanvasElement): THREE.Texture {
+  const { width: w, height: h } = c
+  const src = c.getContext('2d')!.getImageData(0, 0, w, h).data
+  const out = new Uint8Array(w * h * 4)
+  const stride = w * 4
+  for (let y = 0; y < h; y++) {
+    out.set(src.subarray((h - 1 - y) * stride, (h - y) * stride), y * stride)
+  }
+  const tex = new THREE.DataTexture(out, w, h, THREE.RGBAFormat, THREE.UnsignedByteType)
+  tex.colorSpace = THREE.SRGBColorSpace
+  // Pinned rather than left to the default: the rows are already in WebGL's
+  // order above, and a future default of `true` would stand everything on its
+  // head.
+  tex.flipY = false
+  tex.needsUpdate = true
+  return tex
+}
+
 /** A round dot with a white ring — the origin/departure marker. */
-export function dotTexture(color: string): THREE.CanvasTexture {
+export function dotTexture(color: string): THREE.Texture {
   const s = 64
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -27,13 +70,11 @@ export function dotTexture(color: string): THREE.CanvasTexture {
   ctx.lineWidth = s * 0.09
   ctx.strokeStyle = '#ffffff'
   ctx.stroke()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /** A teardrop location pin (tip at bottom-center) — the destination marker. */
-export function pinTexture(color: string): THREE.CanvasTexture {
+export function pinTexture(color: string): THREE.Texture {
   const W = 64
   const H = 96
   const c = document.createElement('canvas')
@@ -63,9 +104,7 @@ export function pinTexture(color: string): THREE.CanvasTexture {
   ctx.arc(cx, cy, r * 0.42, 0, Math.PI * 2)
   ctx.fillStyle = '#ffffff'
   ctx.fill()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -73,7 +112,7 @@ export function pinTexture(color: string): THREE.CanvasTexture {
  * once the map goes dark. Two stops rather than one: a bright small core that
  * looks like a lamp, and a wide faint falloff that lifts the map around it.
  */
-export function glowTexture(): THREE.CanvasTexture {
+export function glowTexture(): THREE.Texture {
   const s = 256
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -85,9 +124,7 @@ export function glowTexture(): THREE.CanvasTexture {
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
   g.fillRect(0, 0, s, s)
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -103,7 +140,7 @@ export function glowTexture(): THREE.CanvasTexture {
  * silhouette the way a real light does; the icon still maps to the middle of
  * it, so a spot lands exactly where it was placed whatever that scale is.
  */
-export function lightTexture(spots: readonly { x: number; y: number }[]): THREE.CanvasTexture {
+export function lightTexture(spots: readonly { x: number; y: number }[]): THREE.Texture {
   const S = 160
   const c = document.createElement('canvas')
   c.width = c.height = S
@@ -122,9 +159,7 @@ export function lightTexture(spots: readonly { x: number; y: number }[]): THREE.
     g.arc(cx, cy, r, 0, Math.PI * 2)
     g.fill()
   }
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -143,8 +178,8 @@ export const LIGHT_SPOTS = {
 /** How much larger the light quad is than the icon it rides on. */
 export const LIGHT_QUAD_SCALE = 1.7
 
-/** A CanvasTexture of a text label (white with dark outline). Returns aspect w/h. */
-export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
+/** A texture of a text label (white with dark outline). Returns aspect w/h. */
+export function textTexture(text: string): { tex: THREE.Texture; aspect: number } {
   const fontSize = 44
   const pad = 12
   const c = document.createElement('canvas')
@@ -163,8 +198,7 @@ export function textTexture(text: string): { tex: THREE.CanvasTexture; aspect: n
   ctx.strokeText(text, w / 2, h / 2)
   ctx.fillStyle = '#ffffff'
   ctx.fillText(text, w / 2, h / 2)
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
+  const tex = bakedTexture(c)
   return { tex, aspect: w / h }
 }
 
@@ -309,7 +343,7 @@ export function calloutTexture(
    * people read across the room, so only this one shrinks. */
   compact = false,
   skin: CalloutSkin = PAPER_SKIN
-): { tex: THREE.CanvasTexture; aspect: number; screenH: number } {
+): { tex: THREE.Texture; aspect: number; screenH: number } {
   const measuring = document.createElement('canvas').getContext('2d') as Ctx
   const valueFont = `700 ${27 * SS}px ${MONO}`
   const wordFont = `600 ${19 * SS}px ${SANS}`
@@ -410,8 +444,7 @@ export function calloutTexture(
     g.fillText(suffix, x, baseline)
   }
 
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
+  const tex = bakedTexture(c)
   return { tex, aspect: W / H, screenH: (H / CALLOUT_FRAME_H) * (compact ? 0.72 : 1) }
 }
 
@@ -454,7 +487,7 @@ export function orbitColor(orbit: string): THREE.Color {
  * sliver. An earlier version faded from the very centre outwards, which at the
  * ten-or-so screen pixels a dot actually occupies left no solid core at all —
  * every dot came out a grey smudge. */
-export function plainDotTexture(): THREE.CanvasTexture {
+export function plainDotTexture(): THREE.Texture {
   const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -468,15 +501,13 @@ export function plainDotTexture(): THREE.CanvasTexture {
   g.beginPath()
   g.arc(s / 2, s / 2, r, 0, Math.PI * 2)
   g.fill()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /** The selected satellite: a body with two solar panels, drawn white so the
  * per-object colour tints it. Unmistakably not an aeroplane, which is the whole
  * point — only one is ever on screen, so the detail costs nothing. */
-export function satelliteTexture(): THREE.CanvasTexture {
+export function satelliteTexture(): THREE.Texture {
   const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -507,9 +538,7 @@ export function satelliteTexture(): THREE.CanvasTexture {
   g.arc(0, -24, 8, 0, Math.PI * 2)
   g.fill()
 
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -527,7 +556,7 @@ export function satelliteTexture(): THREE.CanvasTexture {
  * grey-blue for the ones that finished, dim red for the ones that arrived and
  * were never heard from.
  */
-export function probeTexture(): THREE.CanvasTexture {
+export function probeTexture(): THREE.Texture {
   const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -550,9 +579,7 @@ export function probeTexture(): THREE.CanvasTexture {
   g.beginPath()
   g.arc(m, m, s * 0.13, 0, Math.PI * 2)
   g.fill()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -564,7 +591,7 @@ export function probeTexture(): THREE.CanvasTexture {
  * rovers and they get the same silhouette anyway; at this size the wheels read
  * as "a machine", which is the distinction that matters to a seven-year-old.
  */
-export function roverTexture(): THREE.CanvasTexture {
+export function roverTexture(): THREE.Texture {
   const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -598,9 +625,7 @@ export function roverTexture(): THREE.CanvasTexture {
   g.moveTo(s * 0.14, s * 0.83)
   g.lineTo(s * 0.86, s * 0.83)
   g.stroke()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -613,7 +638,7 @@ export function roverTexture(): THREE.CanvasTexture {
  * the shape of the thing itself, and at a glance across a room it is the only
  * shape on any of the five tabs that says "this is round".
  */
-export function moonTexture(): THREE.CanvasTexture {
+export function moonTexture(): THREE.Texture {
   const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -645,9 +670,7 @@ export function moonTexture(): THREE.CanvasTexture {
   g.beginPath()
   g.arc(m, m, s * 0.4, 0, Math.PI * 2)
   g.fill()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
 
 /**
@@ -658,7 +681,7 @@ export function moonTexture(): THREE.CanvasTexture {
  * reticle says "somebody has measured this spot and is thinking about it",
  * which is exactly the claim, and it is a shape with no vehicle in it at all.
  */
-export function targetTexture(): THREE.CanvasTexture {
+export function targetTexture(): THREE.Texture {
   const s = 128
   const c = document.createElement('canvas')
   c.width = c.height = s
@@ -688,7 +711,5 @@ export function targetTexture(): THREE.CanvasTexture {
   g.beginPath()
   g.arc(m, m, s * 0.075, 0, Math.PI * 2)
   g.fill()
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
+  return bakedTexture(c)
 }
