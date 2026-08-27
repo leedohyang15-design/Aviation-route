@@ -141,7 +141,7 @@ export interface WeatherFrame {
 }
 
 /** Orbit class — drives colour and the filter chips. */
-export type OrbitClass = 'leo' | 'starlink' | 'meo' | 'geo'
+export type OrbitClass = 'leo' | 'starlink' | 'meo' | 'geo' | 'heo'
 
 /** One satellite, propagated from its orbital elements. Deliberately the same
  * shape the renderer already needs for aircraft (id / name / position / heading

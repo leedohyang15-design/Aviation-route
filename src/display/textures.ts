@@ -439,6 +439,7 @@ const ORBIT_COLOR: Record<string, THREE.Color> = {
   starlink: new THREE.Color('#b48cff'),
   meo: new THREE.Color('#ffd166'),
   geo: new THREE.Color('#ff7b6b'),
+  heo: new THREE.Color('#7ee081'),
   leo: new THREE.Color('#5ce1e6')
 }
 export function orbitColor(orbit: string): THREE.Color {

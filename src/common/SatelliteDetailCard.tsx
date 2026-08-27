@@ -13,7 +13,8 @@ const ORBIT_LABEL: Record<OrbitClass, string> = {
   leo: '저궤도',
   starlink: '스타링크',
   meo: '중궤도',
-  geo: '정지궤도'
+  geo: '정지궤도',
+  heo: '먼 궤도'
 }
 
 /*
@@ -29,7 +30,8 @@ const ORBIT_GLOSS: Record<OrbitClass, string> = {
   leo: '지구에서 가장 가까운 길. 하늘을 빠르게 가로질러 지나가요.',
   starlink: '인터넷을 뿌려 주는 위성 무리. 낮게 떼로 몰려 다녀요.',
   meo: '길 찾기(GPS) 위성들이 도는 중간 높이예요.',
-  geo: '지구가 도는 속도와 똑같이 돌아서, 하늘 한자리에 멈춘 것처럼 보여요.'
+  geo: '지구가 도는 속도와 똑같이 돌아서, 하늘 한자리에 멈춘 것처럼 보여요.',
+  heo: '아주 멀리까지 길쭉하게 도는 길이에요. 한 바퀴 도는 데 며칠이 걸리기도 해요.'
 }
 
 // The notes below have to actually differ between satellites. An earlier set

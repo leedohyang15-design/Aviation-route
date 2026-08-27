@@ -346,7 +346,7 @@ export function ControlApp(): JSX.Element {
     return hidden.size ? satellites.filter((x) => !hidden.has(x.orbit)) : satellites
   }, [satellites, orbitsKey])
   const perOrbit = useMemo(() => {
-    const c: Record<OrbitClass, number> = { leo: 0, starlink: 0, meo: 0, geo: 0 }
+    const c: Record<OrbitClass, number> = { leo: 0, starlink: 0, meo: 0, geo: 0, heo: 0 }
     for (const s of satellites) c[s.orbit]++
     return c
   }, [satellites])
@@ -1040,7 +1040,8 @@ export function ControlApp(): JSX.Element {
                 ['leo', '저궤도', '#5ce1e6'],
                 ['starlink', '스타링크', '#b48cff'],
                 ['meo', '중궤도', '#ffd166'],
-                ['geo', '정지궤도', '#ff7b6b']
+                ['geo', '정지궤도', '#ff7b6b'],
+                ['heo', '먼 궤도', '#7ee081']
               ] as [OrbitClass, string, string][]
             ).map(([key, label, color]) => (
               <button

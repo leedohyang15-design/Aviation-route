@@ -3600,6 +3600,7 @@ export class Globe {
   private addRouteLines(points: GeoPoint[], mat: LineMaterial, z = 0.2): void {
     let positions: number[] = []
     let prevU = NaN
+    let prevY = NaN
     const flush = () => {
       if (positions.length >= 6) {
         const geo = new LineGeometry()
@@ -3612,9 +3613,33 @@ export class Globe {
     }
     for (const p of points) {
       const { u, v } = projectNorm(p.lon, p.lat, this.lonOffset)
-      if (!Number.isNaN(prevU) && Math.abs(u - prevU) > 0.5) flush() // wrapped the seam
-      positions.push(u, 1 - v, z)
+      const y = 1 - v
+      if (!Number.isNaN(prevU) && Math.abs(u - prevU) > 0.5) {
+        /*
+         * Carry both halves all the way to the seam.
+         *
+         * Cutting here and resuming at the next sample leaves the line ending
+         * wherever the last point before the wrap happened to fall and picking
+         * up wherever the first one after it did — a couple of degrees of
+         * longitude at 180 samples, which reads as an orbit that stops short
+         * of the edge of the map and starts again inset from the other side.
+         * The crossing is exactly determined: interpolate the latitude at the
+         * seam and hand it to both sides, so they meet the frame edge at the
+         * same height and the break stops being visible.
+         */
+        const edgePrev = u > prevU ? 0 : 1
+        const edgeNew = u > prevU ? 1 : 0
+        const dPrev = Math.abs(edgePrev - prevU)
+        const dNew = Math.abs(u - edgeNew)
+        const span = dPrev + dNew
+        const yCross = span > 0 ? prevY + (y - prevY) * (dPrev / span) : prevY
+        positions.push(edgePrev, yCross, z)
+        flush()
+        positions.push(edgeNew, yCross, z)
+      }
+      positions.push(u, y, z)
       prevU = u
+      prevY = y
     }
     flush()
   }

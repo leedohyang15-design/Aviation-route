@@ -12,7 +12,8 @@ const ORBIT_LABEL: Record<OrbitClass, string> = {
   leo: '저궤도',
   starlink: '스타링크',
   meo: '중궤도',
-  geo: '정지궤도'
+  geo: '정지궤도',
+  heo: '먼 궤도'
 }
 
 const MAX_RESULTS = 7

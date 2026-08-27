@@ -67,10 +67,38 @@ let latest: Satellite[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
 let stopped = true
 
-/** Orbit class, which is what the colours and the filter chips key off. */
-function orbitClass(altKm: number, name: string): Satellite['orbit'] {
-  if (/^STARLINK/i.test(name)) return 'starlink'
-  if (altKm >= 30000) return 'geo'
+/**
+ * Actually geostationary: one lap per rotation of the Earth, in a circle.
+ *
+ * One sidereal day is 1436 minutes; the window allows for drift and for the
+ * inclined-but-still-geosynchronous birds. The eccentricity test is what keeps
+ * the arcs out — a transfer orbit can share a period and share nothing else.
+ */
+function isGeostationary(e: Entry): boolean {
+  return e.periodMin >= 1300 && e.periodMin <= 1600 && e.eccentricity < 0.25
+}
+
+/**
+ * Orbit class, which is what the colours and the filter chips key off.
+ *
+ * "Geostationary" is a PERIOD, not a height. This used to call anything above
+ * 30,000 km geostationary, which put TESS — a quarter of a million kilometres
+ * out, on a thirteen-day ellipse — in the same bucket as a broadcast satellite
+ * and had the card tell a visitor it "hangs still over one spot". A satellite
+ * hangs still because it goes round once per rotation of the Earth and does it
+ * in a circle; nothing else about it qualifies.
+ *
+ * What that leaves is a real family with nowhere to go: Molniya arcs, transfer
+ * orbits, telescopes flung far out. They are neither "middle" nor "parked", so
+ * they get their own class rather than being filed under a word that is false
+ * for them.
+ */
+function orbitClass(e: Entry, altKm: number): Satellite['orbit'] {
+  if (/^STARLINK/i.test(e.name)) return 'starlink'
+  if (isGeostationary(e)) return 'geo'
+  // Far out, or stretched: apogee beyond the geostationary ring, or a lap that
+  // takes longer than a day.
+  if (e.apogeeKm >= 30000 || e.periodMin > 1600) return 'heo'
   if (altKm >= 2000) return 'meo'
   return 'leo'
 }
@@ -199,11 +227,12 @@ export async function initSatellites(path?: string, force = false): Promise<numb
    * all. Same rule as orbitClass, therefore — on mean altitude, since this
    * runs before anything has been propagated.
    */
-  const by: Record<Satellite['orbit'], number> = { leo: 0, starlink: 0, meo: 0, geo: 0 }
-  for (const e of entries) by[orbitClass((e.apogeeKm + e.perigeeKm) / 2, e.name)]++
+  const by: Record<Satellite['orbit'], number> = { leo: 0, starlink: 0, meo: 0, geo: 0, heo: 0 }
+  for (const e of entries) by[orbitClass(e, (e.apogeeKm + e.perigeeKm) / 2)]++
   opsLog(
     `[sat] ${entries.length} satellites ready for propagation — ` +
-      `저궤도 ${by.leo} · 스타링크 ${by.starlink} · 중궤도 ${by.meo} · 정지궤도 ${by.geo}` +
+      `저궤도 ${by.leo} · 스타링크 ${by.starlink} · 중궤도 ${by.meo} · ` +
+      `정지궤도 ${by.geo} · 먼궤도 ${by.heo}` +
       ' (스타링크는 화면에서 기본으로 숨겨집니다)'
   )
   return entries.length
@@ -321,7 +350,7 @@ async function propagateAll(): Promise<Satellite[]> {
         altKm: fix.altKm,
         speedKmS: fix.groundSpeed,
         heading: fix.heading,
-        orbit: orbitClass(fix.altKm, e.name)
+        orbit: orbitClass(e, fix.altKm)
       })
     }
     if (Date.now() - sliceStart >= SAT_SLICE_MS) {
@@ -443,7 +472,17 @@ export function stopSatellites(): void {
 function orbitTrack(id: string, samples = 180): GeoPoint[] | null {
   const e = entries.find((x) => x.id === id)
   if (!e) return null
-  const periodMs = e.periodMin * 60_000
+  /*
+   * At most one rotation of the Earth, however long the orbit takes.
+   *
+   * Drawing a whole period is right for anything that laps in hours. For the
+   * far ones it is not: TESS takes thirteen days, so "one orbit" of ground
+   * track is thirteen days of the Earth turning underneath, and it came out as
+   * a dozen straight lines ruled across the whole map. The path stopped
+   * describing where the satellite goes and became a picture of the planet
+   * spinning. A day's worth still shows the direction it is travelling.
+   */
+  const periodMs = Math.min(e.periodMin * 60_000, 24 * 3600_000)
   const start = Date.now() - periodMs / 2
   const step = periodMs / samples
 
@@ -523,9 +562,19 @@ function nextPass(
 
   const startEl = elevationAt(t0)
   if (startEl == null) return null
-  // Geostationary satellites are either permanently up or permanently below the
-  // horizon; "next pass" is the wrong question for them.
-  if (e.periodMin > 1400) return { inSec: 0, maxElevationDeg: startEl, alwaysUp: startEl > 0 }
+  /*
+   * Geostationary satellites are either permanently up or permanently below
+   * the horizon; "next pass" is the wrong question for them.
+   *
+   * The test used to be "period over 1400 minutes", which is true of a
+   * geostationary satellite and also of everything slower than one — so TESS,
+   * thirteen days to the lap and very much rising and setting, was declared
+   * fixed in the sky and its card read "NOW" while the thing was fifteen
+   * degrees BELOW the horizon. Slow is not the same as stationary. Anything
+   * not actually geostationary goes to the search below, and if it does not
+   * rise inside the horizon the card says so honestly.
+   */
+  if (isGeostationary(e)) return { inSec: 0, maxElevationDeg: startEl, alwaysUp: startEl > 0 }
   if (startEl > 0) return { inSec: 0, maxElevationDeg: startEl, alwaysUp: false }
 
   for (let s = STEP_SEC; s <= HORIZON_SEC; s += STEP_SEC) {
