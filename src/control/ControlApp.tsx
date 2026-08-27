@@ -12,6 +12,16 @@ import { MARS_PLAN, MARS_TARGETS, TARGET_COLOR } from '@shared/mars-future'
 import { GALILEAN, GALILEO_PROBE } from '@shared/jupiter'
 import { MoonCard, ProbeEntryCard } from '../common/JupiterCard'
 import type { Aircraft, ExhibitMode, OrbitClass, Satellite, WeatherLayer } from '@shared/types'
+import {
+  IconCloud,
+  IconHand,
+  IconJupiter,
+  IconMars,
+  IconPlane,
+  IconRain,
+  IconSatellite,
+  IconWind
+} from '../common/icons'
 import { MapView } from './MapView'
 import type { SelectionAnchor } from '../display/globe'
 import { SatelliteSearch } from './SatelliteSearch'
@@ -732,7 +742,11 @@ export function ControlApp(): JSX.Element {
                   </b>{' '}
                   기준 지구의 하늘
                   {/* The one place the world map cannot answer for: here. */}
-                  {here && <span className="here-sky">{here.icon} {here.text}</span>}
+                  {here && (
+                    <span className="here-sky">
+                      <IconRain /> {here.text}
+                    </span>
+                  )}
                 </>
               )}
             </>
@@ -749,7 +763,7 @@ export function ControlApp(): JSX.Element {
             </>
           ) : isSat ? (
             <>
-              지금 지구 위에 🛰 <b>{satVisible.length.toLocaleString()}</b>개
+              지금 지구 위에 <IconSatellite /> <b>{satVisible.length.toLocaleString()}</b>개
             </>
           ) : (
             <>
@@ -802,7 +816,7 @@ export function ControlApp(): JSX.Element {
               send({ type: 'setMode', mode: 'flight' })
             }}
           >
-            ✈ 비행기
+            <IconPlane /> 비행기
           </button>
           <button
             role="tab"
@@ -813,7 +827,7 @@ export function ControlApp(): JSX.Element {
               send({ type: 'setMode', mode: 'satellite' })
             }}
           >
-            🛰 위성
+            <IconSatellite /> 위성
           </button>
           <button
             role="tab"
@@ -824,7 +838,7 @@ export function ControlApp(): JSX.Element {
               send({ type: 'setMode', mode: 'weather' })
             }}
           >
-            ☁ 날씨
+            <IconCloud /> 날씨
           </button>
           <button
             role="tab"
@@ -835,7 +849,7 @@ export function ControlApp(): JSX.Element {
               send({ type: 'setMode', mode: 'mars' })
             }}
           >
-            🔴 화성
+            <IconMars /> 화성
           </button>
           <button
             role="tab"
@@ -846,7 +860,7 @@ export function ControlApp(): JSX.Element {
               send({ type: 'setMode', mode: 'jupiter' })
             }}
           >
-            🪐 목성
+            <IconJupiter /> 목성
           </button>
         </div>
         {/* There is no live/simulation choice because there is no simulation.
@@ -858,18 +872,18 @@ export function ControlApp(): JSX.Element {
           <div className="legend">
             {(
               [
-                ['cloud', '☁ 구름', '#dfe8f5'],
-                ['rain', '🌧 비 · 눈', '#5aa9ff'],
-                ['wind', '💨 바람', '#bfe3ff']
-              ] as [WeatherLayer, string, string][]
-            ).map(([key, label, color]) => (
+                ['cloud', '구름', '#dfe8f5', IconCloud],
+                ['rain', '비 · 눈', '#5aa9ff', IconRain],
+                ['wind', '바람', '#bfe3ff', IconWind]
+              ] as [WeatherLayer, string, string, () => JSX.Element][]
+            ).map(([key, label, color, Icon]) => (
               <button
                 key={key}
                 className={'leg' + (hiddenWeather.includes(key) ? ' off' : '')}
                 onClick={() => toggleWeather(key)}
               >
                 <i style={{ background: color }} />
-                {label}
+                <Icon /> {label}
               </button>
             ))}
             {/* Radar colour is a scale, not a category, and without the key the
@@ -1145,11 +1159,12 @@ export function ControlApp(): JSX.Element {
           a plane is selected so it doesn't fight the boarding-pass card. */}
       {(!state.selected || attract) && (
         <div className="touch-hint">
+          <IconHand />{' '}
           {isJupiter
-            ? '🖐 목성을 돌려보고, 달 이름을 눌러보세요!'
+            ? '목성을 돌려보고, 달 이름을 눌러보세요!'
             : isMars
-            ? '🖐 화성을 돌려보고, 로봇을 눌러보세요!'
-            : `🖐 지구를 돌려${isWeather ? '보세요!' : `보고, ${isSat ? '위성을' : '비행기를'} 눌러보세요!`}`}
+            ? '화성을 돌려보고, 로봇을 눌러보세요!'
+            : `지구를 돌려${isWeather ? '보세요!' : `보고, ${isSat ? '위성을' : '비행기를'} 눌러보세요!`}`}
         </div>
       )}
     </div>

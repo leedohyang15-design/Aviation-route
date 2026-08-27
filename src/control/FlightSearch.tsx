@@ -115,7 +115,7 @@ export function FlightSearch({ aircraft, hiddenCategories, onPick }: Props): JSX
         className="sat-search-input"
         type="search"
         value={query}
-        placeholder="🔍 편명 · 항공사 검색 (예: KAL, KE902, Korean)"
+        placeholder="편명 · 항공사 검색 (예: KAL, KE902, Korean)"
         aria-label="편명 또는 항공사 검색"
         onChange={(e) => {
           setQuery(e.target.value)

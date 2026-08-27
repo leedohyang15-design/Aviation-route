@@ -2743,7 +2743,7 @@ export class Globe {
   }
 
   /** Reset the interactive view to the home (whole-world, Korea-centered) view
-   * and clear the selection. Wired to the "🌏 전체 보기" button. */
+   * and clear the selection. Wired to the "전체 보기" button. */
   home(): void {
     this.iCenterLon = HOME_LON
     this.iCenterLat = HOME_LAT

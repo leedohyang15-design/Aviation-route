@@ -102,7 +102,7 @@ export function SatelliteSearch({ satellites, hiddenOrbits, onPick }: Props): JS
         className="sat-search-input"
         type="search"
         value={query}
-        placeholder="🔍 위성 이름 검색 (예: ISS, STARLINK, NOAA)"
+        placeholder="위성 이름 검색 (예: ISS, STARLINK, NOAA)"
         aria-label="위성 이름 검색"
         onChange={(e) => {
           setQuery(e.target.value)

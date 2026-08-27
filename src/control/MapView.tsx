@@ -18,6 +18,7 @@ import { MARS_TARGETS, TARGET_COLOR, isTargetId, targetPosition } from '@shared/
 import { GALILEAN, GALILEO_PROBE, moonMapLon, toMapLat, westToRendererLon } from '@shared/jupiter'
 import { CompassRose } from '../common/CompassRose'
 import { Globe, type SelectionAnchor } from '../display/globe'
+import { IconGlobe } from '../common/icons'
 
 interface Props {
   /** Which layer to render; switching clears the other one's objects. */
@@ -287,7 +288,7 @@ export function MapView({
             globeRef.current?.home()
           }}
         >
-          🌏 전체 보기
+          <IconGlobe /> 전체 보기
         </button>
       </div>
     </div>

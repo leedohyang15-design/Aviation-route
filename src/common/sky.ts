@@ -43,13 +43,18 @@
 export interface SkyLine {
   /** The sentence itself. */
   text: string
-  /** One character that carries it across a room, for the control screen. */
-  icon: string
+  /**
+   * Which icon carries it across the room, for the control screen.
+   *
+   * A key rather than a character: this used to be an emoji, and an emoji is a
+   * font. On a PC without one it rendered as nothing (see common/icons.tsx).
+   */
+  icon: 'rain' | 'drizzle'
 }
 
 export function skyOverhead(level: number | null): SkyLine | null {
   if (level == null || level <= 0) return null
-  if (level >= 3) return { text: '지금 우리 머리 위엔 비가 세차게 내려요', icon: '🌧' }
-  if (level >= 2) return { text: '지금 우리 머리 위엔 비가 내리고 있어요', icon: '🌧' }
-  return { text: '지금 우리 머리 위엔 빗방울이 조금 떨어져요', icon: '🌦' }
+  if (level >= 3) return { text: '지금 우리 머리 위엔 비가 세차게 내려요', icon: 'rain' }
+  if (level >= 2) return { text: '지금 우리 머리 위엔 비가 내리고 있어요', icon: 'rain' }
+  return { text: '지금 우리 머리 위엔 빗방울이 조금 떨어져요', icon: 'drizzle' }
 }
